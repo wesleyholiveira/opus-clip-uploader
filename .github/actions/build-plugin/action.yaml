@@ -49,12 +49,22 @@ runs:
       if: runner.os == 'Linux'
       shell: bash
       run: |
-        : Install Dependencies 🛍️
-        echo ::group::Install Dependencies
+        set -e
+
+        echo "::group::Install Dependencies"
+
+        sudo apt-get update
+        sudo apt-get install -y \
+          libcurl4-openssl-dev \
+          pkg-config
+
+        # brew (se realmente precisar)
         eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
         echo "/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin" >> $GITHUB_PATH
+
         brew install --quiet zsh
-        echo ::endgroup::
+
+        echo "::endgroup::"
 
     - name: Run Ubuntu Build
       if: runner.os == 'Linux'

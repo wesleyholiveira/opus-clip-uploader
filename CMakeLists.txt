@@ -59,6 +59,8 @@ if(ENABLE_QT)
       Qt6::Network
   )
 
+  target_compile_definitions(clip-cropper PRIVATE NOMINMAX)
+
   target_compile_options(${CMAKE_PROJECT_NAME}
     PRIVATE
       $<$<C_COMPILER_ID:Clang,AppleClang>:-Wno-quoted-include-in-framework-header -Wno-comma>
