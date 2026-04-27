@@ -4,14 +4,14 @@
 
 class FileInfo {
 public:
-    explicit FileInfo(const std::string &path);
+	explicit FileInfo(const std::string &path);
 
-    void parseFile();
+	void parseFile();
 
-    std::string filePath;
-    std::string fileName;
-    std::string mimeType;
+	std::string filePath;
+	std::string fileName;
+	std::string mimeType;
 
 private:
-    std::string path;
+	std::string path;
 };

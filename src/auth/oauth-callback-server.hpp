@@ -5,25 +5,25 @@
 #include <QString>
 
 class OAuthCallbackServer : public QObject {
-    Q_OBJECT
+	Q_OBJECT
 
 public:
-    explicit OAuthCallbackServer(QObject* parent = nullptr);
+	explicit OAuthCallbackServer(QObject *parent = nullptr);
 
-    bool start(quint16 port = 0);
-    void stop();
+	bool start(quint16 port = 0);
+	void stop();
 
-    QString redirectUri() const;
+	QString redirectUri() const;
 
 signals:
-    void codeReceived(QString code);
-    void errorReceived(QString error);
-    void serverError(QString message);
+	void codeReceived(QString code);
+	void errorReceived(QString error);
+	void serverError(QString message);
 
 private slots:
-    void handleNewConnection();
+	void handleNewConnection();
 
 private:
-    QTcpServer server;
-    quint16 selectedPort = 0;
+	QTcpServer server;
+	quint16 selectedPort = 0;
 };

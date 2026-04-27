@@ -4,30 +4,24 @@
 #include <QString>
 
 class UploadWorker : public QObject {
-    Q_OBJECT
+	Q_OBJECT
 
 public:
-    explicit UploadWorker(
-        QString accessToken,
-        QString filePath,
-        QString fileName,
-        QString mimeType,
-        QString folderId = {},
-        QObject* parent = nullptr
-    );
+	explicit UploadWorker(QString accessToken, QString filePath, QString fileName, QString mimeType,
+			      QString folderId = {}, QObject *parent = nullptr);
 
 public slots:
-    void run();
+	void run();
 
 signals:
-    void progressChanged(int value);
-    void finished();
-    void failed(QString message);
+	void progressChanged(int value);
+	void finished();
+	void failed(QString message);
 
 private:
-    QString accessToken;
-    QString filePath;
-    QString fileName;
-    QString mimeType;
-    QString folderId;
+	QString accessToken;
+	QString filePath;
+	QString fileName;
+	QString mimeType;
+	QString folderId;
 };
