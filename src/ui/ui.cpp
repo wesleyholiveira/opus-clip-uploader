@@ -38,6 +38,36 @@ static const QString GOOGLE_CLIENT_SECRET = "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
 // Para testar sem pasta específica, deixe vazio.
 // Se quiser pasta específica, coloque o ID real da pasta do Drive.
 static const QString DEFAULT_FOLDER_ID = "";
+static bool oauthFlowInProgress = false;
+static QString pendingRecordingPath;
+
+void set_pending_recording_path(const QString &path)
+{
+	pendingRecordingPath = path;
+	obs_log(LOG_INFO, "Pending recording path set: %s", pendingRecordingPath.toUtf8().constData());
+}
+
+void clear_pending_recording_path()
+{
+	pendingRecordingPath.clear();
+	obs_log(LOG_INFO, "Pending recording path cleared");
+}
+
+static QString get_recording_path_for_upload()
+{
+	if (!pendingRecordingPath.trimmed().isEmpty()) {
+		return pendingRecordingPath;
+	}
+
+	using ObsCharPtr = std::unique_ptr<char, decltype(&bfree)>;
+	ObsCharPtr safePath(obs_frontend_get_last_recording(), bfree);
+
+	if (!safePath || !safePath.get() || safePath.get()[0] == '\0') {
+		return {};
+	}
+
+	return QString::fromUtf8(safePath.get());
+}
 
 void ensure_google_access_token(QWidget *parent)
 {
@@ -48,11 +78,18 @@ void ensure_google_access_token(QWidget *parent)
 		return;
 	}
 
-	obs_log(LOG_INFO, "No Google OAuth access token found. Starting OAuth flow.");
+	if (oauthFlowInProgress) {
+		obs_log(LOG_INFO, "OAuth flow already in progress, ignoring duplicate event");
+		return;
+	}
+
+	oauthFlowInProgress = true;
 
 	auto *oauthServer = new OAuthCallbackServer(parent);
 
 	if (!oauthServer->start(53682)) {
+		oauthFlowInProgress = false;
+
 		obs_log(LOG_ERROR, "Failed to start OAuth callback server");
 
 		QMessageBox::critical(parent, title,
@@ -63,84 +100,70 @@ void ensure_google_access_token(QWidget *parent)
 	}
 
 	const QString redirectUri = oauthServer->redirectUri();
-
 	const QString authUrl = GoogleOAuth::buildAuthUrl(GOOGLE_CLIENT_ID, redirectUri);
 
-	QObject::connect(
-		oauthServer, &OAuthCallbackServer::codeReceived, parent,
-		[oauthServer, parent, redirectUri](const QString &code) {
-			obs_log(LOG_INFO, "OAuth authorization code received");
+	QObject::connect(oauthServer, &OAuthCallbackServer::codeReceived, parent,
+			 [oauthServer, parent, redirectUri](const QString &code) {
+				 oauthFlowInProgress = false;
 
-			TokenResult tokenResult = GoogleOAuth::exchangeCodeForToken(
-				GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, redirectUri, code);
+				 TokenResult tokenResult = GoogleOAuth::exchangeCodeForToken(
+					 GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, redirectUri, code);
 
-			oauthServer->deleteLater();
+				 oauthServer->deleteLater();
 
-			if (!tokenResult.ok) {
-				obs_log(LOG_ERROR, "Failed to exchange OAuth code for token: %s",
-					tokenResult.error.toStdString().c_str());
+				 if (!tokenResult.ok) {
+					 QMessageBox::critical(parent, title,
+							       "Falha ao trocar o código OAuth pelo access token:\n" +
+								       tokenResult.error);
+					 return;
+				 }
 
-				QMessageBox::critical(parent, title,
-						      "Falha ao trocar o código OAuth pelo access token:\n" +
-							      tokenResult.error);
-
-				return;
-			}
-
-			if (tokenResult.accessToken.trimmed().isEmpty()) {
-				obs_log(LOG_ERROR, "OAuth token exchange returned empty access token");
-
-				QMessageBox::critical(parent, title, "O Google retornou um access token vazio.");
-
-				return;
-			}
-
-			save_settings(tokenResult.accessToken);
-
-			obs_log(LOG_INFO, "Google OAuth access token generated and saved successfully");
-
-			QMessageBox::information(
-				parent, title,
-				"Google Drive conectado com sucesso.\nO upload poderá ser feito ao parar a gravação.");
-		});
+				 save_settings(tokenResult.accessToken);
+			 });
 
 	QObject::connect(oauthServer, &OAuthCallbackServer::errorReceived, parent,
 			 [oauthServer, parent](const QString &error) {
+				 oauthFlowInProgress = false;
 				 oauthServer->deleteLater();
-
-				 obs_log(LOG_ERROR, "OAuth authorization failed: %s", error.toStdString().c_str());
 
 				 QMessageBox::critical(parent, title, "Autenticação OAuth falhou:\n" + error);
 			 });
 
 	QObject::connect(oauthServer, &OAuthCallbackServer::serverError, parent,
 			 [oauthServer, parent](const QString &error) {
+				 oauthFlowInProgress = false;
 				 oauthServer->deleteLater();
-
-				 obs_log(LOG_ERROR, "OAuth callback server error: %s", error.toStdString().c_str());
 
 				 QMessageBox::critical(parent, title, "Erro no servidor local OAuth:\n" + error);
 			 });
 
-	const bool opened = QDesktopServices::openUrl(QUrl(authUrl));
-
-	if (!opened) {
-		obs_log(LOG_ERROR, "Failed to open OAuth URL in browser");
-
-		QMessageBox::critical(parent, title, "Não foi possível abrir o navegador para autenticação OAuth.");
+	if (!QDesktopServices::openUrl(QUrl(authUrl))) {
+		oauthFlowInProgress = false;
 
 		oauthServer->stop();
 		oauthServer->deleteLater();
+
+		QMessageBox::critical(parent, title, "Não foi possível abrir o navegador para autenticação OAuth.");
 	}
 }
 
 static void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCancel, QProgressBar *progressBar,
 			 const QString &accessToken)
 {
-	using ObsCharPtr = std::unique_ptr<char, decltype(&bfree)>;
-	ObsCharPtr safePath(obs_frontend_get_last_recording(), bfree);
+	const QString recordingPath = get_recording_path_for_upload();
 
-	FileInfo fInfo(safePath.get());
+	if (recordingPath.trimmed().isEmpty()) {
+		obs_log(LOG_ERROR, "No recording path found for upload.");
+
+		QMessageBox::critical(dialog, title, "Não foi possível identificar o arquivo da gravação.");
+
+		btnUpload->setEnabled(true);
+		btnCancel->setEnabled(true);
+
+		return;
+	}
+
+	FileInfo fInfo(recordingPath.toStdString());
 	fInfo.parseFile();
 
 	btnUpload->setEnabled(false);
@@ -170,7 +193,12 @@ static void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *b
 	QObject::connect(thread, &QThread::finished, thread, &QObject::deleteLater);
 
 	QObject::connect(
-		worker, &UploadWorker::finished, dialog, [dialog]() { dialog->accept(); }, Qt::QueuedConnection);
+		worker, &UploadWorker::finished, dialog,
+		[dialog]() {
+			clear_pending_recording_path();
+			dialog->accept();
+		},
+		Qt::QueuedConnection);
 
 	thread->start();
 }
