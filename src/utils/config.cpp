@@ -4,19 +4,16 @@ extern "C" {
 
 #include <obs-module.h>
 #include <obs-frontend-api.h>
-#include <plugin-support.h>
-#include <util/platform.h>
+#include <obs/util/platform.h>
 
 #ifdef __cplusplus
 }
 #endif
 
-#include <QString>
+#include "config.hpp"
 
-void save_settings(const QString &apiKey)
+void save_access_token(const QString &accessToken)
 {
-	obs_log(LOG_INFO, "Salvando config");
-
 	char *configDir = obs_module_config_path("");
 	if (configDir) {
 		os_mkdirs(configDir);
@@ -24,43 +21,78 @@ void save_settings(const QString &apiKey)
 	}
 
 	char *configPath = obs_module_config_path("settings.json");
-	if (!configPath) {
-		obs_log(LOG_ERROR, "Falha ao obter caminho de config");
+	if (!configPath)
 		return;
-	}
 
-	obs_data_t *settings = obs_data_create();
+	obs_data_t *settings = obs_data_create_from_json_file_safe(configPath, "bak");
+	if (!settings)
+		settings = obs_data_create();
 
-	QByteArray apiKeyBytes = apiKey.toUtf8();
+	obs_data_set_string(settings, "google_access_token", accessToken.toUtf8().constData());
 
-	obs_data_set_string(settings, "drive_api_key", apiKeyBytes.constData());
-
-	bool saved = obs_data_save_json(settings, configPath);
-
-	obs_log(LOG_INFO, "Config path: %s | saved: %s", configPath, saved ? "true" : "false");
+	obs_data_save_json(settings, configPath);
 
 	obs_data_release(settings);
 	bfree(configPath);
 }
 
-QString load_settings()
+QString load_access_token()
 {
 	char *configPath = obs_module_config_path("settings.json");
+	if (!configPath)
+		return {};
 
-	if (!configPath) {
-		obs_log(LOG_ERROR, "Falha ao obter caminho de config");
+	obs_data_t *settings = obs_data_create_from_json_file_safe(configPath, "bak");
+	if (!settings) {
+		bfree(configPath);
 		return {};
 	}
 
-	obs_log(LOG_INFO, "Carregando config de: %s", configPath);
+	QString result = QString::fromUtf8(obs_data_get_string(settings, "google_access_token"));
+
+	obs_data_release(settings);
+	bfree(configPath);
+
+	return result;
+}
+
+void save_drive_folder_name(const QString &folderName)
+{
+	char *configDir = obs_module_config_path("");
+	if (configDir) {
+		os_mkdirs(configDir);
+		bfree(configDir);
+	}
+
+	char *configPath = obs_module_config_path("settings.json");
+	if (!configPath)
+		return;
 
 	obs_data_t *settings = obs_data_create_from_json_file_safe(configPath, "bak");
+	if (!settings)
+		settings = obs_data_create();
 
-	const char *apiKey = obs_data_get_string(settings, "drive_api_key");
+	obs_data_set_string(settings, "drive_folder_name", folderName.toUtf8().constData());
 
-	QString result = QString::fromUtf8(apiKey);
+	obs_data_save_json(settings, configPath);
 
-	obs_log(LOG_INFO, "API Key carregada? %s", result.isEmpty() ? "false" : "true");
+	obs_data_release(settings);
+	bfree(configPath);
+}
+
+QString load_drive_folder_name()
+{
+	char *configPath = obs_module_config_path("settings.json");
+	if (!configPath)
+		return {};
+
+	obs_data_t *settings = obs_data_create_from_json_file_safe(configPath, "bak");
+	if (!settings) {
+		bfree(configPath);
+		return {};
+	}
+
+	QString result = QString::fromUtf8(obs_data_get_string(settings, "drive_folder_name"));
 
 	obs_data_release(settings);
 	bfree(configPath);

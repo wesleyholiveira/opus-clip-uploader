@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -45,4 +46,5 @@ private:
 				 ProgressCallback onProgress);
 
 	UploadResult queryUploadStatus(const std::string &sessionUrl, std::uint64_t totalSize);
+	std::optional<std::string> findFolderIdByName(const std::string &folderName);
 };

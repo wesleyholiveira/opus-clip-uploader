@@ -35,9 +35,6 @@ static const QString title("Clip Cropper");
 static const QString GOOGLE_CLIENT_ID = "778552824803-040l6873ccpv87l93n1qfnjkqc3cgit7.apps.googleusercontent.com";
 static const QString GOOGLE_CLIENT_SECRET = "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";
 
-// Para testar sem pasta específica, deixe vazio.
-// Se quiser pasta específica, coloque o ID real da pasta do Drive.
-static const QString DEFAULT_FOLDER_ID = "";
 static bool oauthFlowInProgress = false;
 static QString pendingRecordingPath;
 
@@ -71,7 +68,7 @@ static QString get_recording_path_for_upload()
 
 void ensure_google_access_token(QWidget *parent)
 {
-	QString accessToken = load_settings();
+	QString accessToken = load_access_token();
 
 	if (!accessToken.trimmed().isEmpty()) {
 		obs_log(LOG_INFO, "Google OAuth access token already exists");
@@ -118,7 +115,7 @@ void ensure_google_access_token(QWidget *parent)
 					 return;
 				 }
 
-				 save_settings(tokenResult.accessToken);
+				 save_access_token(tokenResult.accessToken);
 			 });
 
 	QObject::connect(oauthServer, &OAuthCallbackServer::errorReceived, parent,
@@ -178,7 +175,7 @@ static void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *b
 	auto *thread = new QThread;
 	auto *worker = new UploadWorker(accessToken, QString::fromStdString(fInfo.filePath),
 					QString::fromStdString(fInfo.fileName), QString::fromStdString(fInfo.mimeType),
-					DEFAULT_FOLDER_ID);
+					load_drive_folder_name());
 
 	worker->moveToThread(thread);
 	QObject::connect(thread, &QThread::started, worker, &UploadWorker::run);
@@ -259,9 +256,9 @@ static void start_google_oauth_flow(QDialog *dialog, QPushButton *btnUpload, QPu
 					 return;
 				 }
 
-				 // Temporário: usando o mesmo save_settings que você já tinha.
+				 // Temporário: usando o mesmo save_access_token que você já tinha.
 				 // Depois o ideal é salvar access_token, refresh_token e expires_at separadamente.
-				 save_settings(tokenResult.accessToken);
+				 save_access_token(tokenResult.accessToken);
 
 				 obs_log(LOG_INFO, "OAuth access token obtained successfully");
 
@@ -327,12 +324,11 @@ void open_settings(void *private_data)
 	QFormLayout *formLayout = new QFormLayout();
 	formLayout->setLabelAlignment(Qt::AlignLeft);
 
-	QLineEdit *accessTokenInput = new QLineEdit(&dialog);
-	accessTokenInput->setEchoMode(QLineEdit::Password);
-	accessTokenInput->setPlaceholderText("OAuth Access Token temporário");
-	accessTokenInput->setText(load_settings());
+	QLineEdit *folderNameInput = new QLineEdit(&dialog);
+	folderNameInput->setPlaceholderText("Ex: Clips OBS");
+	folderNameInput->setText(load_drive_folder_name());
 
-	formLayout->addRow("Drive Access Token:", accessTokenInput);
+	formLayout->addRow("Nome da pasta no Drive:", folderNameInput);
 
 	QPushButton *btn = new QPushButton("Salvar", &dialog);
 
@@ -340,12 +336,12 @@ void open_settings(void *private_data)
 	mainLayout->addWidget(btn);
 	mainLayout->addStretch();
 
-	QObject::connect(btn, &QPushButton::clicked, [&dialog, accessTokenInput]() {
-		QString accessToken = accessTokenInput->text();
+	QObject::connect(btn, &QPushButton::clicked, [&dialog, folderNameInput]() {
+		QString folderName = folderNameInput->text();
 
-		save_settings(accessToken);
+		save_drive_folder_name(folderName);
 
-		obs_log(LOG_INFO, "Drive access token saved");
+		obs_log(LOG_INFO, "Drive folder name saved");
 		dialog.accept();
 	});
 
@@ -399,7 +395,7 @@ void open_confirm_dialog(void *private_data)
 	});
 
 	QObject::connect(btnUpload, &QPushButton::clicked, [&dialog, btnUpload, btnCancel, progressBar]() {
-		QString accessToken = load_settings();
+		QString accessToken = load_access_token();
 
 		if (accessToken.trimmed().isEmpty()) {
 			obs_log(LOG_INFO, "No access token found. Starting Google OAuth flow.");

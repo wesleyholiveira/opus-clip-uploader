@@ -95,8 +95,6 @@ static void clip_cropper_vertical_recording_started(void *data, calldata_t *cd)
 	ensure_google_oauth_on_ui_thread();
 }
 
-static std::string pendingVerticalRecordingPath;
-
 static void clip_cropper_vertical_recording_stopped(void *data, calldata_t *cd)
 {
 	UNUSED_PARAMETER(data);
@@ -138,7 +136,7 @@ bool obs_module_load(void)
 	obs_frontend_add_tools_menu_item("Clip Cropper Settings", open_settings, nullptr);
 	obs_frontend_add_event_callback(on_frontend_event, nullptr);
 
-	const QString savedSettings = load_settings();
+	const QString savedSettings = load_access_token();
 
 	if (savedSettings.isEmpty()) {
 		obs_log(LOG_INFO, "Clip Cropper loaded with no Google access token");
@@ -153,7 +151,7 @@ bool obs_module_load(void)
 
 void obs_module_unload(void)
 {
-	save_settings(nullptr);
+	save_access_token(nullptr);
 	obs_frontend_remove_event_callback(on_frontend_event, nullptr);
 
 	if (curlInitialized) {

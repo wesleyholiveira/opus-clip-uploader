@@ -140,7 +140,7 @@ QString GoogleOAuth::buildAuthUrl(const QString &clientId, const QString &redire
 	query.addQueryItem("client_id", clientId);
 	query.addQueryItem("redirect_uri", redirectUri);
 	query.addQueryItem("response_type", "code");
-	query.addQueryItem("scope", "https://www.googleapis.com/auth/drive.file");
+	query.addQueryItem("scope", "https://www.googleapis.com/auth/drive");
 	query.addQueryItem("access_type", "offline");
 	query.addQueryItem("prompt", "consent");
 

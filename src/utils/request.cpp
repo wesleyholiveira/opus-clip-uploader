@@ -1,5 +1,15 @@
-#include "utils/request.hpp"
+#ifdef __cplusplus
+extern "C" {
+#endif
 
+#include <obs-module.h>
+#include "plugin-support.h"
+
+#ifdef __cplusplus
+}
+#endif
+
+#include "utils/request.hpp"
 #include <curl/curl.h>
 
 #include <algorithm>
@@ -490,9 +500,22 @@ UploadResult DriveRequest::uploadChunk(const std::string &sessionUrl, const std:
 }
 
 UploadResult DriveRequest::uploadFileResumable(const std::string &path, const std::string &fileName,
-					       const std::string &mimeType, const std::string &folderId,
+					       const std::string &mimeType, const std::string &folderName,
 					       ProgressCallback onProgress)
 {
+	std::string folderId;
+
+	if (!folderName.empty()) {
+		auto foundFolderId = findFolderIdByName(folderName);
+
+		if (!foundFolderId.has_value()) {
+			return {false, false, 0, {},
+				{},    0,     0, {-1, "Could not find Google Drive folder by name: " + folderName}};
+		}
+
+		folderId = foundFolderId.value();
+	}
+
 	const auto fileSizeResult = getFileSize(path);
 
 	if (!fileSizeResult.has_value()) {
@@ -566,4 +589,88 @@ UploadResult DriveRequest::uploadFileResumable(const std::string &path, const st
 	}
 
 	return {true, true, 200, {}, uploadSessionUrl, fileSize, fileSize, {}};
+}
+
+std::optional<std::string> DriveRequest::findFolderIdByName(const std::string &folderName)
+{
+	if (folderName.empty())
+		return std::nullopt;
+
+	CurlHandle curl(curl_easy_init(), curl_easy_cleanup);
+
+	if (!curl)
+		return std::nullopt;
+
+	std::string safeFolderName;
+	for (char ch : folderName) {
+		if (ch == '\'')
+			safeFolderName += "\\'";
+		else
+			safeFolderName += ch;
+	}
+
+	std::string query =
+		"name='" + safeFolderName + "' and mimeType='application/vnd.google-apps.folder' and trashed=false";
+
+	char *escapedQuery = curl_easy_escape(curl.get(), query.c_str(), 0);
+	if (!escapedQuery)
+		return std::nullopt;
+
+	std::string url = "https://www.googleapis.com/drive/v3/files"
+			  "?q=" +
+			  std::string(escapedQuery) +
+			  "&fields=files(id,name)"
+			  "&pageSize=10"
+			  "&spaces=drive";
+
+	curl_free(escapedQuery);
+
+	std::string response;
+	char errorBuffer[CURL_ERROR_SIZE] = {};
+
+	curl_slist *rawHeaders = nullptr;
+	rawHeaders = appendHeader(rawHeaders, "Authorization: Bearer " + accessToken);
+
+	HeaderList headers(rawHeaders, curl_slist_free_all);
+
+	curl_easy_setopt(curl.get(), CURLOPT_ERRORBUFFER, errorBuffer);
+	curl_easy_setopt(curl.get(), CURLOPT_URL, url.c_str());
+	curl_easy_setopt(curl.get(), CURLOPT_HTTPHEADER, headers.get());
+	curl_easy_setopt(curl.get(), CURLOPT_WRITEFUNCTION, writeCallback);
+	curl_easy_setopt(curl.get(), CURLOPT_WRITEDATA, &response);
+
+	CURLcode result = curl_easy_perform(curl.get());
+
+	if (result != CURLE_OK) {
+		return std::nullopt;
+	}
+
+	long httpStatus = 0;
+	curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &httpStatus);
+
+	obs_log(LOG_INFO, "[clip-cropper] Find folder HTTP: %ld Response: %s", httpStatus, response.c_str());
+
+	if (httpStatus < 200 || httpStatus >= 300) {
+		return std::nullopt;
+	}
+
+	const std::string marker = "\"id\"";
+	std::size_t idKey = response.find(marker);
+
+	if (idKey == std::string::npos)
+		return std::nullopt;
+
+	std::size_t colon = response.find(':', idKey);
+	if (colon == std::string::npos)
+		return std::nullopt;
+
+	std::size_t firstQuote = response.find('"', colon);
+	if (firstQuote == std::string::npos)
+		return std::nullopt;
+
+	std::size_t secondQuote = response.find('"', firstQuote + 1);
+	if (secondQuote == std::string::npos)
+		return std::nullopt;
+
+	return response.substr(firstQuote + 1, secondQuote - firstQuote - 1);
 }
