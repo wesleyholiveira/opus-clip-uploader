@@ -16,6 +16,8 @@ extern "C" {
 #include <auth/oauth-callback-server.hpp>
 #include <auth/google-oauth.hpp>
 
+#include <QVector>
+#include <QStringList>
 #include <QDialog>
 #include <QProgressBar>
 #include <QVBoxLayout>
@@ -29,11 +31,14 @@ extern "C" {
 #include <QDesktopServices>
 #include <QUrl>
 #include <QMessageBox>
+#include <QFileInfo>
+
+#include <functional>
 
 static const QString title("Clip Cropper");
 
 static bool oauthFlowInProgress = false;
-static QString pendingRecordingPath;
+static QStringList pendingRecordingPaths;
 
 static QString get_google_client_id()
 {
@@ -45,32 +50,24 @@ static QString get_google_client_secret()
 	return PluginConfig::getValue("google_client_secret");
 }
 
-void set_pending_recording_path(const QString &path)
+void set_pending_recording_paths(const QStringList &paths)
 {
-	pendingRecordingPath = path;
-	obs_log(LOG_INFO, "Pending recording path set: %s", pendingRecordingPath.toUtf8().constData());
+	pendingRecordingPaths = paths;
+
+	for (const QString &path : pendingRecordingPaths) {
+		obs_log(LOG_INFO, "Pending recording path set: %s", path.toUtf8().constData());
+	}
 }
 
-void clear_pending_recording_path()
+void clear_pending_recording_paths()
 {
-	pendingRecordingPath.clear();
-	obs_log(LOG_INFO, "Pending recording path cleared");
+	pendingRecordingPaths.clear();
+	obs_log(LOG_INFO, "Pending recording paths cleared");
 }
 
-static QString get_recording_path_for_upload()
+static QStringList get_recording_paths_for_upload()
 {
-	if (!pendingRecordingPath.trimmed().isEmpty()) {
-		return pendingRecordingPath;
-	}
-
-	using ObsCharPtr = std::unique_ptr<char, decltype(&bfree)>;
-	ObsCharPtr safePath(obs_frontend_get_last_recording(), bfree);
-
-	if (!safePath || !safePath.get() || safePath.get()[0] == '\0') {
-		return {};
-	}
-
-	return QString::fromUtf8(safePath.get());
+	return pendingRecordingPaths;
 }
 
 void ensure_google_access_token(QWidget *parent)
@@ -87,63 +84,179 @@ void ensure_google_access_token(QWidget *parent)
 	obs_log(LOG_INFO, "Google OAuth access token does not exist yet");
 }
 
-static void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCancel, QProgressBar *progressBar,
-			 const QString &accessToken)
+static void resize_upload_dialog(QDialog *dialog, bool expanded)
 {
-	const QString recordingPath = get_recording_path_for_upload();
+	dialog->setMinimumWidth(560);
 
-	if (recordingPath.trimmed().isEmpty()) {
+	if (expanded) {
+		dialog->setMinimumHeight(240);
+		dialog->setMaximumHeight(QWIDGETSIZE_MAX);
+	} else {
+		dialog->setMinimumHeight(0);
+		dialog->setMaximumHeight(QWIDGETSIZE_MAX);
+	}
+
+	dialog->adjustSize();
+}
+
+static void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCancel, QProgressBar *progressBar,
+			 QLabel *uploadStatusLabel, const QString &accessToken)
+{
+	const QStringList recordingPaths = get_recording_paths_for_upload();
+
+	if (recordingPaths.isEmpty()) {
 		obs_log(LOG_ERROR, "No recording path found for upload.");
 
-		QMessageBox::critical(dialog, title, "Não foi possível identificar o arquivo da gravação.");
+		QMessageBox::critical(dialog, title, "Nenhum arquivo de gravação válido foi encontrado.");
 
 		btnUpload->setEnabled(true);
 		btnCancel->setEnabled(true);
+		progressBar->hide();
+
+		if (uploadStatusLabel) {
+			uploadStatusLabel->hide();
+			uploadStatusLabel->clear();
+		}
 
 		return;
 	}
 
-	FileInfo fInfo(recordingPath.toStdString());
-	fInfo.parseFile();
+	static constexpr int MAX_PARALLEL_UPLOADS = 3;
+
+	struct UploadBatchState {
+		QStringList paths;
+		QVector<int> progress;
+		int nextIndex = 0;
+		int running = 0;
+		int completed = 0;
+		int failed = 0;
+	};
+
+	auto *state = new UploadBatchState();
+	state->paths = recordingPaths;
+	state->progress = QVector<int>(recordingPaths.size(), 0);
 
 	btnUpload->setEnabled(false);
-	btnCancel->setEnabled(true);
+	btnCancel->setEnabled(false);
 
 	progressBar->show();
 	progressBar->setValue(0);
 
-	obs_log(LOG_INFO, "Path: %s, Name: %s, Mime: %s", fInfo.filePath.c_str(), fInfo.fileName.c_str(),
-		fInfo.mimeType.c_str());
+	if (uploadStatusLabel) {
+		uploadStatusLabel->show();
+		uploadStatusLabel->setText(QString("Preparando upload de %1 arquivo(s)...").arg(state->paths.size()));
+	}
 
-	auto *thread = new QThread;
-	auto *worker = new UploadWorker(accessToken, QString::fromStdString(fInfo.filePath),
-					QString::fromStdString(fInfo.fileName), QString::fromStdString(fInfo.mimeType),
-					PluginConfig::getValue("drive_folder_name"));
+	resize_upload_dialog(dialog, true);
+	auto updateProgress = [=]() {
+		int totalProgress = 0;
 
-	worker->moveToThread(thread);
+		for (int value : state->progress) {
+			totalProgress += value;
+		}
 
-	QObject::connect(thread, &QThread::started, worker, &UploadWorker::run);
+		const int globalProgress = state->paths.isEmpty() ? 0 : totalProgress / state->paths.size();
 
-	QObject::connect(worker, &UploadWorker::progressChanged, progressBar, &QProgressBar::setValue,
-			 Qt::QueuedConnection);
+		progressBar->setValue(globalProgress);
 
-	QObject::connect(worker, &UploadWorker::finished, thread, &QThread::quit);
-	QObject::connect(worker, &UploadWorker::finished, worker, &QObject::deleteLater);
-	QObject::connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+		if (uploadStatusLabel) {
+			uploadStatusLabel->setText(
+				QString("Enviando vídeos: %1/%2")
+					.arg(qMin(state->completed + state->running, state->paths.size()))
+					.arg(state->paths.size()));
+		}
+	};
 
-	QObject::connect(
-		worker, &UploadWorker::finished, dialog,
-		[dialog]() {
-			clear_pending_recording_path();
-			dialog->accept();
-		},
-		Qt::QueuedConnection);
+	auto *startNext = new std::function<void()>();
 
-	thread->start();
+	*startNext = [=]() mutable {
+		while (state->running < MAX_PARALLEL_UPLOADS && state->nextIndex < state->paths.size()) {
+			const int index = state->nextIndex++;
+			const QString recordingPath = state->paths.at(index);
+			const QFileInfo qFileInfo(recordingPath);
+
+			if (!qFileInfo.exists() || !qFileInfo.isFile()) {
+				obs_log(LOG_ERROR, "Invalid upload path. Expected file, got: %s",
+					recordingPath.toUtf8().constData());
+
+				state->progress[index] = 100;
+				state->completed++;
+				state->failed++;
+
+				updateProgress();
+				continue;
+			}
+
+			FileInfo fInfo(recordingPath.toStdString());
+			fInfo.parseFile();
+
+			obs_log(LOG_INFO, "Uploading part %d/%d - Path: %s, Name: %s, Mime: %s", index + 1,
+				state->paths.size(), fInfo.filePath.c_str(), fInfo.fileName.c_str(),
+				fInfo.mimeType.c_str());
+
+			auto *thread = new QThread;
+			auto *worker = new UploadWorker(accessToken, QString::fromStdString(fInfo.filePath),
+							QString::fromStdString(fInfo.fileName),
+							QString::fromStdString(fInfo.mimeType),
+							PluginConfig::getValue("drive_folder_name"));
+
+			state->running++;
+
+			worker->moveToThread(thread);
+
+			QObject::connect(thread, &QThread::started, worker, &UploadWorker::run);
+
+			QObject::connect(
+				worker, &UploadWorker::progressChanged, progressBar,
+				[=](int value) {
+					state->progress[index] = value;
+					updateProgress();
+				},
+				Qt::QueuedConnection);
+
+			QObject::connect(worker, &UploadWorker::finished, thread, &QThread::quit);
+			QObject::connect(worker, &UploadWorker::finished, worker, &QObject::deleteLater);
+			QObject::connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+
+			QObject::connect(
+				worker, &UploadWorker::finished, dialog,
+				[=]() mutable {
+					state->running--;
+					state->completed++;
+					state->progress[index] = 100;
+
+					updateProgress();
+
+					if (state->completed >= state->paths.size()) {
+						clear_pending_recording_paths();
+
+						if (state->failed > 0) {
+							QMessageBox::warning(
+								dialog, title,
+								QString("Upload finalizado com %1 falha(s).")
+									.arg(state->failed));
+						}
+
+						delete state;
+						delete startNext;
+
+						dialog->accept();
+						return;
+					}
+
+					(*startNext)();
+				},
+				Qt::QueuedConnection);
+
+			thread->start();
+		}
+	};
+
+	(*startNext)();
 }
 
 static void start_google_oauth_flow(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCancel,
-				    QProgressBar *progressBar)
+				    QProgressBar *progressBar, QLabel *uploadStatusLabel)
 {
 	if (oauthFlowInProgress) {
 		obs_log(LOG_INFO, "OAuth flow already in progress, ignoring duplicate request");
@@ -199,8 +312,8 @@ static void start_google_oauth_flow(QDialog *dialog, QPushButton *btnUpload, QPu
 	const QString authUrl = GoogleOAuth::buildAuthUrl(clientId, redirectUri);
 
 	QObject::connect(oauthServer, &OAuthCallbackServer::codeReceived, dialog,
-			 [dialog, btnUpload, btnCancel, progressBar, oauthServer, redirectUri, clientId,
-			  clientSecret](const QString &code) {
+			 [dialog, btnUpload, btnCancel, progressBar, uploadStatusLabel, oauthServer, redirectUri,
+			  clientId, clientSecret](const QString &code) {
 				 oauthFlowInProgress = false;
 
 				 obs_log(LOG_INFO, "OAuth authorization code received");
@@ -244,7 +357,8 @@ static void start_google_oauth_flow(QDialog *dialog, QPushButton *btnUpload, QPu
 
 				 obs_log(LOG_INFO, "OAuth access token obtained successfully");
 
-				 start_upload(dialog, btnUpload, btnCancel, progressBar, tokenResult.accessToken);
+				 start_upload(dialog, btnUpload, btnCancel, progressBar, uploadStatusLabel,
+					      tokenResult.accessToken);
 			 });
 
 	QObject::connect(oauthServer, &OAuthCallbackServer::errorReceived, dialog,
@@ -371,6 +485,12 @@ void open_confirm_dialog(void *private_data)
 	QLabel *label = new QLabel("Deseja fazer o upload do arquivo para o Drive?", &dialog);
 	mainLayout->addWidget(label);
 
+	QLabel *uploadStatusLabel = new QLabel("", &dialog);
+	uploadStatusLabel->setWordWrap(true);
+	uploadStatusLabel->setMinimumHeight(36);
+	uploadStatusLabel->hide();
+	mainLayout->addWidget(uploadStatusLabel);
+
 	QProgressBar *progressBar = new QProgressBar(&dialog);
 	progressBar->setRange(0, 100);
 	progressBar->setValue(0);
@@ -390,29 +510,28 @@ void open_confirm_dialog(void *private_data)
 
 	mainLayout->addLayout(btnLayout);
 
+	dialog.setMinimumWidth(520);
 	dialog.adjustSize();
-
-	QSize size = dialog.sizeHint();
-	size.setWidth(420);
-	dialog.setFixedSize(size);
+	dialog.setFixedSize(dialog.sizeHint());
 
 	QObject::connect(btnCancel, &QPushButton::clicked, [&dialog]() {
 		obs_log(LOG_INFO, "Fechando Dialog de Upload");
 		dialog.reject();
 	});
 
-	QObject::connect(btnUpload, &QPushButton::clicked, [&dialog, btnUpload, btnCancel, progressBar]() {
-		const QString accessToken = PluginConfig::getValue("google_access_token");
+	QObject::connect(
+		btnUpload, &QPushButton::clicked, [&dialog, btnUpload, btnCancel, progressBar, uploadStatusLabel]() {
+			const QString accessToken = PluginConfig::getValue("google_access_token");
 
-		if (accessToken.trimmed().isEmpty()) {
-			obs_log(LOG_INFO, "No access token found. Starting Google OAuth flow.");
-			start_google_oauth_flow(&dialog, btnUpload, btnCancel, progressBar);
-			return;
-		}
+			if (accessToken.trimmed().isEmpty()) {
+				obs_log(LOG_INFO, "No access token found. Starting Google OAuth flow.");
+				start_google_oauth_flow(&dialog, btnUpload, btnCancel, progressBar, uploadStatusLabel);
+				return;
+			}
 
-		obs_log(LOG_INFO, "Access token found. Starting upload.");
-		start_upload(&dialog, btnUpload, btnCancel, progressBar, accessToken);
-	});
+			obs_log(LOG_INFO, "Access token found. Starting upload.");
+			start_upload(&dialog, btnUpload, btnCancel, progressBar, uploadStatusLabel, accessToken);
+		});
 
 	dialog.exec();
 }
