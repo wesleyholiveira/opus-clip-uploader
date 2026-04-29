@@ -4,7 +4,7 @@ extern "C" {
 
 #include <obs-module.h>
 #include <obs-frontend-api.h>
-#include <obs/util/platform.h>
+#include <util/platform.h>
 #include "plugin-support.h"
 
 #ifdef __cplusplus
