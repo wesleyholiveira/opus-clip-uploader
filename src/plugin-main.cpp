@@ -136,7 +136,7 @@ bool obs_module_load(void)
 	obs_frontend_add_tools_menu_item("Clip Cropper Settings", open_settings, nullptr);
 	obs_frontend_add_event_callback(on_frontend_event, nullptr);
 
-	const QString savedSettings = load_access_token();
+	const QString savedSettings = PluginConfig::getValue("google_access_token");
 
 	if (savedSettings.isEmpty()) {
 		obs_log(LOG_INFO, "Clip Cropper loaded with no Google access token");
@@ -151,7 +151,7 @@ bool obs_module_load(void)
 
 void obs_module_unload(void)
 {
-	save_access_token(nullptr);
+	PluginConfig::setValue("google_access_token", nullptr);
 	obs_frontend_remove_event_callback(on_frontend_event, nullptr);
 
 	if (curlInitialized) {

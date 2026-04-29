@@ -2,8 +2,15 @@
 
 #include <QString>
 
-void save_access_token(const QString &accessToken);
-QString load_access_token();
+class PluginConfig {
+public:
+	static void setValue(const QString &key, const QString &value);
+	static QString getValue(const QString &key, const QString &defaultValue = {});
 
-void save_drive_folder_name(const QString &folderName);
-QString load_drive_folder_name();
+	static void removeValue(const QString &key);
+
+private:
+	static char *getConfigPath();
+	static obs_data_t *loadConfig();
+	static bool ensureConfigDir();
+};

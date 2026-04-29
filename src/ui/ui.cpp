@@ -32,11 +32,18 @@ extern "C" {
 
 static const QString title("Clip Cropper");
 
-static const QString GOOGLE_CLIENT_ID = "778552824803-040l6873ccpv87l93n1qfnjkqc3cgit7.apps.googleusercontent.com";
-static const QString GOOGLE_CLIENT_SECRET = "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";
-
 static bool oauthFlowInProgress = false;
 static QString pendingRecordingPath;
+
+static QString get_google_client_id()
+{
+	return PluginConfig::getValue("google_client_id");
+}
+
+static QString get_google_client_secret()
+{
+	return PluginConfig::getValue("google_client_secret");
+}
 
 void set_pending_recording_path(const QString &path)
 {
@@ -68,80 +75,16 @@ static QString get_recording_path_for_upload()
 
 void ensure_google_access_token(QWidget *parent)
 {
-	QString accessToken = load_access_token();
+	UNUSED_PARAMETER(parent);
+
+	const QString accessToken = PluginConfig::getValue("google_access_token");
 
 	if (!accessToken.trimmed().isEmpty()) {
 		obs_log(LOG_INFO, "Google OAuth access token already exists");
 		return;
 	}
 
-	if (oauthFlowInProgress) {
-		obs_log(LOG_INFO, "OAuth flow already in progress, ignoring duplicate event");
-		return;
-	}
-
-	oauthFlowInProgress = true;
-
-	auto *oauthServer = new OAuthCallbackServer(parent);
-
-	if (!oauthServer->start(53682)) {
-		oauthFlowInProgress = false;
-
-		obs_log(LOG_ERROR, "Failed to start OAuth callback server");
-
-		QMessageBox::critical(parent, title,
-				      "Não foi possível iniciar o servidor local para autenticação OAuth.");
-
-		oauthServer->deleteLater();
-		return;
-	}
-
-	const QString redirectUri = oauthServer->redirectUri();
-	const QString authUrl = GoogleOAuth::buildAuthUrl(GOOGLE_CLIENT_ID, redirectUri);
-
-	QObject::connect(oauthServer, &OAuthCallbackServer::codeReceived, parent,
-			 [oauthServer, parent, redirectUri](const QString &code) {
-				 oauthFlowInProgress = false;
-
-				 TokenResult tokenResult = GoogleOAuth::exchangeCodeForToken(
-					 GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, redirectUri, code);
-
-				 oauthServer->deleteLater();
-
-				 if (!tokenResult.ok) {
-					 QMessageBox::critical(parent, title,
-							       "Falha ao trocar o código OAuth pelo access token:\n" +
-								       tokenResult.error);
-					 return;
-				 }
-
-				 save_access_token(tokenResult.accessToken);
-			 });
-
-	QObject::connect(oauthServer, &OAuthCallbackServer::errorReceived, parent,
-			 [oauthServer, parent](const QString &error) {
-				 oauthFlowInProgress = false;
-				 oauthServer->deleteLater();
-
-				 QMessageBox::critical(parent, title, "Autenticação OAuth falhou:\n" + error);
-			 });
-
-	QObject::connect(oauthServer, &OAuthCallbackServer::serverError, parent,
-			 [oauthServer, parent](const QString &error) {
-				 oauthFlowInProgress = false;
-				 oauthServer->deleteLater();
-
-				 QMessageBox::critical(parent, title, "Erro no servidor local OAuth:\n" + error);
-			 });
-
-	if (!QDesktopServices::openUrl(QUrl(authUrl))) {
-		oauthFlowInProgress = false;
-
-		oauthServer->stop();
-		oauthServer->deleteLater();
-
-		QMessageBox::critical(parent, title, "Não foi possível abrir o navegador para autenticação OAuth.");
-	}
+	obs_log(LOG_INFO, "Google OAuth access token does not exist yet");
 }
 
 static void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCancel, QProgressBar *progressBar,
@@ -164,7 +107,7 @@ static void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *b
 	fInfo.parseFile();
 
 	btnUpload->setEnabled(false);
-	btnCancel->setEnabled(false);
+	btnCancel->setEnabled(true);
 
 	progressBar->show();
 	progressBar->setValue(0);
@@ -175,18 +118,17 @@ static void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *b
 	auto *thread = new QThread;
 	auto *worker = new UploadWorker(accessToken, QString::fromStdString(fInfo.filePath),
 					QString::fromStdString(fInfo.fileName), QString::fromStdString(fInfo.mimeType),
-					load_drive_folder_name());
+					PluginConfig::getValue("drive_folder_name"));
 
 	worker->moveToThread(thread);
+
 	QObject::connect(thread, &QThread::started, worker, &UploadWorker::run);
 
 	QObject::connect(worker, &UploadWorker::progressChanged, progressBar, &QProgressBar::setValue,
 			 Qt::QueuedConnection);
 
 	QObject::connect(worker, &UploadWorker::finished, thread, &QThread::quit);
-
 	QObject::connect(worker, &UploadWorker::finished, worker, &QObject::deleteLater);
-
 	QObject::connect(thread, &QThread::finished, thread, &QObject::deleteLater);
 
 	QObject::connect(
@@ -203,34 +145,73 @@ static void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *b
 static void start_google_oauth_flow(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCancel,
 				    QProgressBar *progressBar)
 {
+	if (oauthFlowInProgress) {
+		obs_log(LOG_INFO, "OAuth flow already in progress, ignoring duplicate request");
+
+		QMessageBox::information(
+			dialog, title,
+			"Já existe um fluxo OAuth em andamento. Conclua ou cancele a autenticação aberta no navegador.");
+
+		btnUpload->setEnabled(true);
+		btnCancel->setEnabled(true);
+
+		return;
+	}
+
+	oauthFlowInProgress = true;
 	auto *oauthServer = new OAuthCallbackServer(dialog);
 
-	// Porta fixa. Essa redirect URI precisa estar cadastrada no Google Cloud:
-	// http://127.0.0.1:53682/callback
 	if (!oauthServer->start(53682)) {
+		oauthFlowInProgress = false;
+
 		obs_log(LOG_ERROR, "Failed to start OAuth callback server");
 
 		QMessageBox::critical(dialog, title,
 				      "Não foi possível iniciar o servidor local para autenticação OAuth.");
 
 		oauthServer->deleteLater();
+
+		btnUpload->setEnabled(true);
+		btnCancel->setEnabled(true);
+
 		return;
 	}
 
 	const QString redirectUri = oauthServer->redirectUri();
+	const QString clientId = get_google_client_id();
+	const QString clientSecret = get_google_client_secret();
 
-	const QString authUrl = GoogleOAuth::buildAuthUrl(GOOGLE_CLIENT_ID, redirectUri);
+	if (clientId.trimmed().isEmpty() || clientSecret.trimmed().isEmpty()) {
+		oauthFlowInProgress = false;
+
+		QMessageBox::warning(dialog, title, "Configure o Client ID e o Client Secret antes de autenticar.");
+
+		oauthServer->stop();
+		oauthServer->deleteLater();
+
+		btnUpload->setEnabled(true);
+		btnCancel->setEnabled(true);
+
+		return;
+	}
+
+	const QString authUrl = GoogleOAuth::buildAuthUrl(clientId, redirectUri);
 
 	QObject::connect(oauthServer, &OAuthCallbackServer::codeReceived, dialog,
-			 [dialog, btnUpload, btnCancel, progressBar, oauthServer, redirectUri](const QString &code) {
+			 [dialog, btnUpload, btnCancel, progressBar, oauthServer, redirectUri, clientId,
+			  clientSecret](const QString &code) {
+				 oauthFlowInProgress = false;
+
 				 obs_log(LOG_INFO, "OAuth authorization code received");
 
-				 TokenResult tokenResult = GoogleOAuth::exchangeCodeForToken(
-					 GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, redirectUri, code);
+				 TokenResult tokenResult =
+					 GoogleOAuth::exchangeCodeForToken(clientId, clientSecret, redirectUri, code);
 
 				 oauthServer->deleteLater();
 
 				 if (!tokenResult.ok) {
+					 PluginConfig::removeValue("google_access_token");
+
 					 obs_log(LOG_ERROR, "Failed to exchange OAuth code for token: %s",
 						 tokenResult.error.toStdString().c_str());
 
@@ -245,6 +226,8 @@ static void start_google_oauth_flow(QDialog *dialog, QPushButton *btnUpload, QPu
 				 }
 
 				 if (tokenResult.accessToken.trimmed().isEmpty()) {
+					 PluginConfig::removeValue("google_access_token");
+
 					 obs_log(LOG_ERROR, "OAuth token exchange returned empty access token");
 
 					 QMessageBox::critical(dialog, title,
@@ -256,9 +239,7 @@ static void start_google_oauth_flow(QDialog *dialog, QPushButton *btnUpload, QPu
 					 return;
 				 }
 
-				 // Temporário: usando o mesmo save_access_token que você já tinha.
-				 // Depois o ideal é salvar access_token, refresh_token e expires_at separadamente.
-				 save_access_token(tokenResult.accessToken);
+				 PluginConfig::setValue("google_access_token", tokenResult.accessToken);
 
 				 obs_log(LOG_INFO, "OAuth access token obtained successfully");
 
@@ -267,6 +248,9 @@ static void start_google_oauth_flow(QDialog *dialog, QPushButton *btnUpload, QPu
 
 	QObject::connect(oauthServer, &OAuthCallbackServer::errorReceived, dialog,
 			 [dialog, btnUpload, btnCancel, oauthServer](const QString &error) {
+				 oauthFlowInProgress = false;
+				 PluginConfig::removeValue("google_access_token");
+
 				 oauthServer->deleteLater();
 
 				 obs_log(LOG_ERROR, "OAuth authorization failed: %s", error.toStdString().c_str());
@@ -279,6 +263,9 @@ static void start_google_oauth_flow(QDialog *dialog, QPushButton *btnUpload, QPu
 
 	QObject::connect(oauthServer, &OAuthCallbackServer::serverError, dialog,
 			 [dialog, btnUpload, btnCancel, oauthServer](const QString &error) {
+				 oauthFlowInProgress = false;
+				 PluginConfig::removeValue("google_access_token");
+
 				 oauthServer->deleteLater();
 
 				 obs_log(LOG_ERROR, "OAuth callback server error: %s", error.toStdString().c_str());
@@ -290,20 +277,19 @@ static void start_google_oauth_flow(QDialog *dialog, QPushButton *btnUpload, QPu
 			 });
 
 	btnUpload->setEnabled(false);
-	btnCancel->setEnabled(false);
+	btnCancel->setEnabled(true);
 
-	const bool opened = QDesktopServices::openUrl(QUrl(authUrl));
+	if (!QDesktopServices::openUrl(QUrl(authUrl))) {
+		oauthFlowInProgress = false;
+		PluginConfig::removeValue("google_access_token");
 
-	if (!opened) {
-		obs_log(LOG_ERROR, "Failed to open OAuth URL in browser");
+		oauthServer->stop();
+		oauthServer->deleteLater();
 
 		QMessageBox::critical(dialog, title, "Não foi possível abrir o navegador para autenticação OAuth.");
 
 		btnUpload->setEnabled(true);
 		btnCancel->setEnabled(true);
-
-		oauthServer->stop();
-		oauthServer->deleteLater();
 	}
 }
 
@@ -315,7 +301,7 @@ void open_settings(void *private_data)
 
 	QDialog dialog(parent);
 	dialog.setWindowTitle(title);
-	dialog.resize(420, 160);
+	dialog.resize(520, 220);
 
 	QVBoxLayout *mainLayout = new QVBoxLayout(&dialog);
 	mainLayout->setContentsMargins(20, 20, 20, 0);
@@ -325,10 +311,21 @@ void open_settings(void *private_data)
 	formLayout->setLabelAlignment(Qt::AlignLeft);
 
 	QLineEdit *folderNameInput = new QLineEdit(&dialog);
-	folderNameInput->setPlaceholderText("Ex: Clips OBS");
-	folderNameInput->setText(load_drive_folder_name());
+	folderNameInput->setPlaceholderText("Ex: GRAVACIONES");
+	folderNameInput->setText(PluginConfig::getValue("drive_folder_name"));
+
+	QLineEdit *clientIdInput = new QLineEdit(&dialog);
+	clientIdInput->setPlaceholderText("Google OAuth Client ID");
+	clientIdInput->setText(PluginConfig::getValue("google_client_id"));
+
+	QLineEdit *clientSecretInput = new QLineEdit(&dialog);
+	clientSecretInput->setEchoMode(QLineEdit::Password);
+	clientSecretInput->setPlaceholderText("Google OAuth Client Secret");
+	clientSecretInput->setText(PluginConfig::getValue("google_client_secret"));
 
 	formLayout->addRow("Nome da pasta no Drive:", folderNameInput);
+	formLayout->addRow("Client ID:", clientIdInput);
+	formLayout->addRow("Client Secret:", clientSecretInput);
 
 	QPushButton *btn = new QPushButton("Salvar", &dialog);
 
@@ -336,12 +333,16 @@ void open_settings(void *private_data)
 	mainLayout->addWidget(btn);
 	mainLayout->addStretch();
 
-	QObject::connect(btn, &QPushButton::clicked, [&dialog, folderNameInput]() {
-		QString folderName = folderNameInput->text();
+	QObject::connect(btn, &QPushButton::clicked, [&dialog, folderNameInput, clientIdInput, clientSecretInput]() {
+		PluginConfig::setValue("drive_folder_name", folderNameInput->text().trimmed());
+		PluginConfig::setValue("google_client_id", clientIdInput->text().trimmed());
+		PluginConfig::setValue("google_client_secret", clientSecretInput->text().trimmed());
 
-		save_drive_folder_name(folderName);
+		PluginConfig::removeValue("google_access_token");
+		oauthFlowInProgress = false;
 
-		obs_log(LOG_INFO, "Drive folder name saved");
+		obs_log(LOG_INFO, "Clip Cropper settings saved. Access token invalidated.");
+
 		dialog.accept();
 	});
 
@@ -395,18 +396,15 @@ void open_confirm_dialog(void *private_data)
 	});
 
 	QObject::connect(btnUpload, &QPushButton::clicked, [&dialog, btnUpload, btnCancel, progressBar]() {
-		QString accessToken = load_access_token();
+		const QString accessToken = PluginConfig::getValue("google_access_token");
 
 		if (accessToken.trimmed().isEmpty()) {
 			obs_log(LOG_INFO, "No access token found. Starting Google OAuth flow.");
-
 			start_google_oauth_flow(&dialog, btnUpload, btnCancel, progressBar);
-
 			return;
 		}
 
 		obs_log(LOG_INFO, "Access token found. Starting upload.");
-
 		start_upload(&dialog, btnUpload, btnCancel, progressBar, accessToken);
 	});
 
