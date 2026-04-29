@@ -160,8 +160,9 @@ static void start_google_oauth_flow(QDialog *dialog, QPushButton *btnUpload, QPu
 
 	oauthFlowInProgress = true;
 	auto *oauthServer = new OAuthCallbackServer(dialog);
+	auto port = PluginConfig::getValue("webserver_port", "53682").toInt();
 
-	if (!oauthServer->start(53682)) {
+	if (!oauthServer->start(port)) {
 		oauthFlowInProgress = false;
 
 		obs_log(LOG_ERROR, "Failed to start OAuth callback server");
@@ -318,6 +319,10 @@ void open_settings(void *private_data)
 	clientIdInput->setPlaceholderText("Google OAuth Client ID");
 	clientIdInput->setText(PluginConfig::getValue("google_client_id"));
 
+	QLineEdit *webServerPortInput = new QLineEdit(&dialog);
+	webServerPortInput->setPlaceholderText("53682");
+	webServerPortInput->setText(PluginConfig::getValue("webserver_port", "53682"));
+
 	QLineEdit *clientSecretInput = new QLineEdit(&dialog);
 	clientSecretInput->setEchoMode(QLineEdit::Password);
 	clientSecretInput->setPlaceholderText("Google OAuth Client Secret");
@@ -326,6 +331,7 @@ void open_settings(void *private_data)
 	formLayout->addRow("Nome da pasta no Drive:", folderNameInput);
 	formLayout->addRow("Client ID:", clientIdInput);
 	formLayout->addRow("Client Secret:", clientSecretInput);
+	formLayout->addRow("Webserver Port:", webServerPortInput);
 
 	QPushButton *btn = new QPushButton("Salvar", &dialog);
 
