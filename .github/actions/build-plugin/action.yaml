@@ -1,5 +1,6 @@
 name: Set up and build plugin
 description: Builds the plugin for specified architecture and build config
+
 inputs:
   target:
     description: Target architecture for dependencies
@@ -24,9 +25,27 @@ inputs:
     description: Working directory for packaging
     required: false
     default: ${{ github.workspace }}
+
 runs:
   using: composite
   steps:
+
+    # 🔥 FIX macOS SDK
+    - name: Setup Xcode
+      if: runner.os == 'macOS'
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: '16.0'
+
+    - name: Verify Xcode
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        xcode-select -p
+        xcodebuild -version
+        xcrun --sdk macosx --show-sdk-version
+
+    # 🍎 macOS build
     - name: Run macOS Build
       if: runner.os == 'macOS'
       shell: zsh --no-rcs --errexit --pipefail {0}
@@ -45,6 +64,7 @@ runs:
 
         .github/scripts/build-macos ${build_args}
 
+    # 🐧 Linux deps
     - name: Install Dependencies 🛍️
       if: runner.os == 'Linux'
       shell: bash
@@ -58,7 +78,6 @@ runs:
           libcurl4-openssl-dev \
           pkg-config
 
-        # brew (se realmente precisar)
         eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
         echo "/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin" >> $GITHUB_PATH
 
@@ -66,6 +85,7 @@ runs:
 
         echo "::endgroup::"
 
+    # 🐧 Linux build
     - name: Run Ubuntu Build
       if: runner.os == 'Linux'
       shell: zsh --no-rcs --errexit --pipefail {0}
@@ -79,15 +99,16 @@ runs:
           --target ubuntu-${{ inputs.target }}
           --config ${{ inputs.config }}
         )
+
         if (( ${+RUNNER_DEBUG} )) build_args+=(--debug)
 
         .github/scripts/build-ubuntu ${build_args}
 
+    # 🪟 Windows build
     - name: Run Windows Build
       if: runner.os == 'Windows'
       shell: pwsh
       run: |
-        # Run Windows Build
         if ( $Env:RUNNER_DEBUG -ne $null ) {
           Set-PSDebug -Trace 1
         }
@@ -99,8 +120,9 @@ runs:
 
         .github/scripts/Build-Windows.ps1 @BuildArgs
 
+    # 📊 Summary
     - name: Create Summary 📊
-      if: contains(fromJSON('["Linux", "macOS"]'),runner.os)
+      if: contains(fromJSON('["Linux", "macOS"]'), runner.os)
       shell: zsh --no-rcs --errexit --pipefail {0}
       env:
         CCACHE_DIR: ${{ inputs.workingDirectory }}/.ccache
@@ -117,7 +139,9 @@ runs:
 
         print '### ${{ runner.os }} Ccache Stats (${{ inputs.target }})' >> $GITHUB_STEP_SUMMARY
         print '```' >> $GITHUB_STEP_SUMMARY
+
         for line (${ccache_data}) {
           print ${line} >> $GITHUB_STEP_SUMMARY
         }
+
         print '```' >> $GITHUB_STEP_SUMMARY

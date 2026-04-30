@@ -62,10 +62,10 @@ jobs:
           done
           echo "commitHash=${GITHUB_SHA:0:9}" >> $GITHUB_OUTPUT
 
-          plugin_name="$(grep 'name' buildspec.json | sed -E -e 's/^.+"name":[^"]+"(.+)",?$/\1/g')"
-          plugin_display_name="$(grep 'displayName' buildspec.json | sed -E -e 's/^.+"displayName":[^"]+"(.+)",?$/\1/g' || echo "")"
+          plugin_name="$(jq -r '.name' buildspec.json)"
+          plugin_display_name="$(jq -r '.displayName // empty' buildspec.json)"
 
-          if [[ "${plugin_display_name}" ]]; then
+          if [[ -n "${plugin_display_name}" ]]; then
             echo "pluginName=${plugin_display_name}" >> $GITHUB_OUTPUT
           else
             echo "pluginName=${plugin_name}" >> $GITHUB_OUTPUT
@@ -89,10 +89,6 @@ jobs:
         run: |
           : Set Up Environment 🔧
           if (( ${+RUNNER_DEBUG} )) setopt XTRACE
-
-          print '::group::Enable Xcode 16.1'
-          sudo xcode-select --switch /Applications/Xcode_16.1.0.app/Contents/Developer
-          print '::endgroup::'
 
           print '::group::Clean Homebrew Environment'
           local -a unwanted_formulas=()
