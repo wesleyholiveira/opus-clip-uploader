@@ -16,6 +16,8 @@ bool OAuthCallbackServer::start(quint16 port)
 		return true;
 	}
 
+	authorizationCodeAlreadyReceived = false;
+
 	if (!server.listen(QHostAddress::LocalHost, port)) {
 		emit serverError(server.errorString());
 		return false;
@@ -68,47 +70,72 @@ void OAuthCallbackServer::handleNewConnection()
 		QUrl url("http://127.0.0.1" + pathAndQuery);
 		QUrlQuery query(url);
 
+		const QString requestPath = url.path();
 		const QString code = query.queryItemValue("code");
 		const QString error = query.queryItemValue("error");
 
-		QByteArray body;
+		auto sendResponse = [socket](int statusCode, const QByteArray &statusText, const QByteArray &body) {
+			QByteArray response;
+			response += "HTTP/1.1 " + QByteArray::number(statusCode) + " " + statusText + "\r\n";
+			response += "Content-Type: text/html; charset=utf-8\r\n";
+			response += "Content-Length: " + QByteArray::number(body.size()) + "\r\n";
+			response += "Connection: close\r\n";
+			response += "\r\n";
+			response += body;
 
-		if (!error.isEmpty()) {
-			body = "<html><body>"
-			       "<h2>Authorization failed</h2>"
-			       "<p>You can close this window and return to OBS.</p>"
-			       "</body></html>";
+			socket->write(response);
+			socket->flush();
+			socket->disconnectFromHost();
+			socket->deleteLater();
+		};
 
-			emit errorReceived(error);
-		} else if (!code.isEmpty()) {
-			body = "<html><body>"
-			       "<h2>Authorization completed</h2>"
-			       "<p>You can close this window and return to OBS.</p>"
-			       "</body></html>";
-
-			emit codeReceived(code);
-		} else {
-			body = "<html><body>"
-			       "<h2>Invalid OAuth callback</h2>"
-			       "<p>Missing authorization code.</p>"
-			       "</body></html>";
-
-			emit serverError("Missing authorization code in callback");
+		if (requestPath == "/favicon.ico") {
+			sendResponse(204, "No Content", QByteArray());
+			return;
 		}
 
-		QByteArray response;
-		response += "HTTP/1.1 200 OK\r\n";
-		response += "Content-Type: text/html; charset=utf-8\r\n";
-		response += "Content-Length: " + QByteArray::number(body.size()) + "\r\n";
-		response += "Connection: close\r\n";
-		response += "\r\n";
-		response += body;
+		if (!error.isEmpty()) {
+			const QByteArray body = "<html><body>"
+						"<h2>Authorization failed</h2>"
+						"<p>You can close this window and return to OBS.</p>"
+						"</body></html>";
 
-		socket->write(response);
-		socket->flush();
-		socket->disconnectFromHost();
-		socket->deleteLater();
+			sendResponse(200, "OK", body);
 
-		stop();
+			if (!authorizationCodeAlreadyReceived) {
+				emit errorReceived(error);
+			}
+
+			stop();
+			return;
+		}
+
+		if (!code.isEmpty()) {
+			authorizationCodeAlreadyReceived = true;
+
+			const QByteArray body = "<html><body>"
+						"<h2>Authorization completed</h2>"
+						"<p>You can close this window and return to OBS.</p>"
+						"</body></html>";
+
+			sendResponse(200, "OK", body);
+
+			emit codeReceived(code);
+
+			stop();
+			return;
+		}
+
+		const QByteArray body = "<html><body>"
+					"<h2>Invalid OAuth callback</h2>"
+					"<p>Missing authorization code.</p>"
+					"</body></html>";
+
+		sendResponse(400, "Bad Request", body);
+
+		if (!authorizationCodeAlreadyReceived) {
+			emit serverError("Missing authorization code in callback");
+			stop();
+		}
 	});
 }

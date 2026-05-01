@@ -26,4 +26,5 @@ private slots:
 private:
 	QTcpServer server;
 	quint16 selectedPort = 0;
+	bool authorizationCodeAlreadyReceived = false;
 };

@@ -18,18 +18,21 @@ UploadWorker::UploadWorker(QString accessToken, QString filePath, QString fileNa
 
 void UploadWorker::run()
 {
-	DriveRequest request(accessToken.toStdString());
+	auto *request = new DriveRequest(accessToken, this);
 
-	UploadResult result = request.uploadFileResumable(filePath.toStdString(), fileName.toStdString(),
-							  mimeType.toStdString(), folderId.toStdString(),
-							  [this](int progress) { emit progressChanged(progress); });
+	connect(request, &DriveRequest::progressChanged, this,
+		[this](int progress) { emit progressChanged(progress); });
 
-	if (!result.ok) {
-		obs_log(LOG_ERROR, "Upload failed. HTTP: %ld, Code: %d, Message: %s, Response: %s", result.httpStatus,
-			result.error.code, result.error.message.c_str(), result.response.c_str());
-	} else {
-		obs_log(LOG_INFO, "Upload succeeded: %s", result.response.c_str());
-	}
+	connect(request, &DriveRequest::uploadFinished, this, [this, request](const UploadResult &) {
+		emit finished();
+		request->deleteLater();
+	});
 
-	emit finished();
+	connect(request, &DriveRequest::uploadFailed, this, [this, request](const UploadResult &result) {
+		const QString message = QString::fromStdString(result.error.message);
+		emit failed(message);
+		request->deleteLater();
+	});
+
+	request->uploadFileResumableAsync(filePath, fileName, mimeType, folderId);
 }

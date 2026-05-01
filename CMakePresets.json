@@ -72,7 +72,7 @@
       "inherits": [
         "template"
       ],
-      "binaryDir": "${sourceDir}/build_linux",
+      "binaryDir": "${sourceDir}/build_x86_64",
       "generator": "Ninja",
       "condition": {
         "type": "equals",

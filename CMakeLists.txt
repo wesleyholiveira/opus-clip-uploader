@@ -14,60 +14,7 @@ include(helpers)
 
 add_library(${CMAKE_PROJECT_NAME} MODULE)
 
-if (WIN32)
-    set(OBS_BUILD_DIR "${CMAKE_SOURCE_DIR}/.deps/obs-studio/build_x64")
-elseif (APPLE)
-    set(OBS_BUILD_DIR "${CMAKE_SOURCE_DIR}/.deps/obs-studio/build_universal")
-endif ()
-
-list(APPEND CMAKE_PREFIX_PATH
-        "${OBS_BUILD_DIR}"
-        "${OBS_BUILD_DIR}/libobs"
-        "${OBS_BUILD_DIR}/cmake"
-        "${CMAKE_SOURCE_DIR}/.deps"
-)
-
-message(STATUS "CMAKE_PREFIX_PATH = ${CMAKE_PREFIX_PATH}")
-message(STATUS "OBS_BUILD_DIR = ${OBS_BUILD_DIR}")
-
-file(GLOB_RECURSE LIBOBS_CONFIG
-        "${CMAKE_SOURCE_DIR}/.deps/*libobsConfig.cmake"
-        "${CMAKE_SOURCE_DIR}/.deps/*libobs-config.cmake"
-)
-
-if (APPLE)
-    list(FILTER LIBOBS_CONFIG INCLUDE REGEX ".*/obs-studio-[^/]+/build_.*/libobs/libobsConfig\\.cmake$")
-endif ()
-
-message(STATUS "LIBOBS_CONFIG = ${LIBOBS_CONFIG}")
-
-if (LIBOBS_CONFIG)
-    list(GET LIBOBS_CONFIG 0 LIBOBS_CONFIG_FILE)
-    get_filename_component(LIBOBS_DIR "${LIBOBS_CONFIG_FILE}" DIRECTORY)
-    set(libobs_DIR "${LIBOBS_DIR}" CACHE PATH "Path to libobsConfig.cmake" FORCE)
-    message(STATUS "libobs_DIR = ${libobs_DIR}")
-endif ()
-
-file(GLOB_RECURSE W32_PTHREADS_CONFIG
-        "${CMAKE_SOURCE_DIR}/.deps/*w32-pthreadsConfig.cmake"
-        "${CMAKE_SOURCE_DIR}/.deps/*w32-pthreads-config.cmake"
-)
-
-message(STATUS "W32_PTHREADS_CONFIG = ${W32_PTHREADS_CONFIG}")
-
-if (W32_PTHREADS_CONFIG)
-    list(GET W32_PTHREADS_CONFIG 0 W32_PTHREADS_CONFIG_FILE)
-    get_filename_component(W32_PTHREADS_DIR "${W32_PTHREADS_CONFIG_FILE}" DIRECTORY)
-
-    set("w32-pthreads_DIR" "${W32_PTHREADS_DIR}" CACHE PATH "Path to w32-pthreadsConfig.cmake" FORCE)
-
-    list(APPEND CMAKE_PREFIX_PATH "${W32_PTHREADS_DIR}")
-
-    message(STATUS "w32-pthreads_DIR = ${w32-pthreads_DIR}")
-endif ()
-
 find_package(libobs REQUIRED)
-find_package(CURL REQUIRED)
 
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         src/plugin-main.cpp
@@ -89,28 +36,9 @@ target_include_directories(${CMAKE_PROJECT_NAME}
 target_link_libraries(${CMAKE_PROJECT_NAME}
         PRIVATE
         OBS::libobs
-        CURL::libcurl
 )
 
 if (ENABLE_FRONTEND_API)
-    file(GLOB_RECURSE OBS_FRONTEND_API_CONFIG
-            "${CMAKE_SOURCE_DIR}/.deps/*obs-frontend-apiConfig.cmake"
-            "${CMAKE_SOURCE_DIR}/.deps/*obs-frontend-api-config.cmake"
-    )
-
-    if (APPLE)
-        list(FILTER OBS_FRONTEND_API_CONFIG INCLUDE REGEX ".*/obs-studio-[^/]+/build_.*/UI/obs-frontend-api/obs-frontend-apiConfig\\.cmake$")
-    endif ()
-
-    message(STATUS "OBS_FRONTEND_API_CONFIG = ${OBS_FRONTEND_API_CONFIG}")
-
-    if (OBS_FRONTEND_API_CONFIG)
-        list(GET OBS_FRONTEND_API_CONFIG 0 OBS_FRONTEND_API_CONFIG_FILE)
-        get_filename_component(OBS_FRONTEND_API_DIR "${OBS_FRONTEND_API_CONFIG_FILE}" DIRECTORY)
-        set(obs-frontend-api_DIR "${OBS_FRONTEND_API_DIR}" CACHE PATH "Path to obs-frontend-apiConfig.cmake" FORCE)
-        message(STATUS "obs-frontend-api_DIR = ${obs-frontend-api_DIR}")
-    endif ()
-
     find_package(obs-frontend-api REQUIRED)
 
     target_link_libraries(${CMAKE_PROJECT_NAME}
@@ -129,7 +57,8 @@ if (ENABLE_QT)
             Qt6::Network
     )
 
-    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE NOMINMAX)
+    target_compile_definitions(clip-cropper PRIVATE NOMINMAX)
+
     target_compile_options(${CMAKE_PROJECT_NAME}
             PRIVATE
             $<$<C_COMPILER_ID:Clang,AppleClang>:-Wno-quoted-include-in-framework-header -Wno-comma>
@@ -157,7 +86,7 @@ elseif (WIN32)
 elseif (UNIX AND USE_FLATPAK_PATH)
     set(OBS_PLUGIN_DIR "$ENV{HOME}/.var/app/com.obsproject.Studio/config/obs-studio/plugins/${OBS_PLUGIN_NAME}")
 elseif (UNIX)
-    set(OBS_PLUGIN_DIR "$ENV{HOME}/.config/obs-studio/plugins/${OBS_PLUGIN_NAME}")
+    set(OBS_PLUGIN_DIR "$ENV{HOME}/.config/obs-stqudio/plugins/${OBS_PLUGIN_NAME}")
 endif ()
 
 message(STATUS "OBS_PLUGIN_NAME = ${OBS_PLUGIN_NAME}")
@@ -174,7 +103,5 @@ add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
 )
 
 install(TARGETS ${CMAKE_PROJECT_NAME}
-        RUNTIME DESTINATION "plugins/${OBS_PLUGIN_NAME}/bin/64bit"
         LIBRARY DESTINATION "plugins/${OBS_PLUGIN_NAME}/bin/64bit"
-        ARCHIVE DESTINATION "plugins/${OBS_PLUGIN_NAME}/bin/64bit"
 )

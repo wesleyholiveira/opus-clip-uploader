@@ -1,41 +1,112 @@
 #include "auth/google-oauth.hpp"
 
-#include <curl/curl.h>
-
 #include <QByteArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QUrl>
 #include <QUrlQuery>
 
-#include <string>
+GoogleOAuth::GoogleOAuth(QObject *parent) : QObject(parent) {}
 
-namespace {
-
-size_t writeCallback(char *ptr, size_t size, size_t nmemb, void *userdata)
+QString GoogleOAuth::buildAuthUrl(const QString &clientId, const QString &redirectUri)
 {
-	auto *response = static_cast<std::string *>(userdata);
+	QUrl url("https://accounts.google.com/o/oauth2/v2/auth");
 
-	const size_t totalSize = size * nmemb;
-	response->append(ptr, totalSize);
+	QUrlQuery query;
+	query.addQueryItem("client_id", clientId);
+	query.addQueryItem("redirect_uri", redirectUri);
+	query.addQueryItem("response_type", "code");
+	query.addQueryItem("scope", "https://www.googleapis.com/auth/drive");
+	query.addQueryItem("access_type", "offline");
+	query.addQueryItem("prompt", "consent");
 
-	return totalSize;
+	url.setQuery(query);
+
+	return url.toString();
 }
 
-QString urlEncode(const QString &value)
+void GoogleOAuth::exchangeCodeForTokenAsync(const QString &clientId, const QString &clientSecret,
+					    const QString &redirectUri, const QString &code)
 {
-	return QString::fromUtf8(QUrl::toPercentEncoding(value));
+	QUrlQuery form;
+	form.addQueryItem("code", code);
+	form.addQueryItem("client_id", clientId);
+
+	if (!clientSecret.isEmpty()) {
+		form.addQueryItem("client_secret", clientSecret);
+	}
+
+	form.addQueryItem("redirect_uri", redirectUri);
+	form.addQueryItem("grant_type", "authorization_code");
+
+	postFormToTokenEndpoint(form.query(QUrl::FullyEncoded).toUtf8());
 }
 
-TokenResult parseTokenResponse(const std::string &response, long httpStatus)
+void GoogleOAuth::refreshAccessTokenAsync(const QString &clientId, const QString &clientSecret,
+					  const QString &refreshToken)
+{
+	QUrlQuery form;
+	form.addQueryItem("client_id", clientId);
+
+	if (!clientSecret.isEmpty()) {
+		form.addQueryItem("client_secret", clientSecret);
+	}
+
+	form.addQueryItem("refresh_token", refreshToken);
+	form.addQueryItem("grant_type", "refresh_token");
+
+	postFormToTokenEndpoint(form.query(QUrl::FullyEncoded).toUtf8());
+}
+
+void GoogleOAuth::postFormToTokenEndpoint(const QByteArray &body)
+{
+	QNetworkRequest request{QUrl("https://oauth2.googleapis.com/token")};
+
+	request.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
+
+	request.setHeader(QNetworkRequest::ContentLengthHeader, body.size());
+
+	QNetworkReply *reply = network.post(request, body);
+
+	connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+		reply->deleteLater();
+
+		const long httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toLongLong();
+
+		const QByteArray response = reply->readAll();
+
+		if (reply->error() != QNetworkReply::NoError) {
+			TokenResult result;
+			result.ok = false;
+			result.rawResponse = QString::fromUtf8(response);
+			result.error = QString("OAuth token request failed. Network error: %1. HTTP: %2. Raw: %3")
+					       .arg(reply->errorString())
+					       .arg(httpStatus)
+					       .arg(result.rawResponse);
+
+			emit tokenFailed(result);
+			return;
+		}
+
+		TokenResult result = parseTokenResponse(response, httpStatus);
+
+		if (result.ok) {
+			emit tokenReceived(result);
+		} else {
+			emit tokenFailed(result);
+		}
+	});
+}
+
+TokenResult GoogleOAuth::parseTokenResponse(const QByteArray &response, long httpStatus)
 {
 	TokenResult result;
-	result.rawResponse = QString::fromStdString(response);
-
-	const QByteArray jsonBytes = QByteArray::fromStdString(response);
+	result.rawResponse = QString::fromUtf8(response);
 
 	QJsonParseError parseError{};
-	const QJsonDocument document = QJsonDocument::fromJson(jsonBytes, &parseError);
+	const QJsonDocument document = QJsonDocument::fromJson(response, &parseError);
 
 	if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
 		result.ok = false;
@@ -75,111 +146,4 @@ TokenResult parseTokenResponse(const std::string &response, long httpStatus)
 
 	result.ok = true;
 	return result;
-}
-
-TokenResult postFormToTokenEndpoint(const std::string &body)
-{
-	TokenResult tokenResult;
-
-	CURL *rawCurl = curl_easy_init();
-
-	if (!rawCurl) {
-		tokenResult.ok = false;
-		tokenResult.error = "Failed to initialize CURL for OAuth token request";
-		return tokenResult;
-	}
-
-	std::string response;
-	char errorBuffer[CURL_ERROR_SIZE] = {};
-
-	struct curl_slist *headers = nullptr;
-	headers = curl_slist_append(headers, "Content-Type: application/x-www-form-urlencoded");
-
-	curl_easy_setopt(rawCurl, CURLOPT_ERRORBUFFER, errorBuffer);
-	curl_easy_setopt(rawCurl, CURLOPT_URL, "https://oauth2.googleapis.com/token");
-	curl_easy_setopt(rawCurl, CURLOPT_HTTPHEADER, headers);
-	curl_easy_setopt(rawCurl, CURLOPT_POST, 1L);
-	curl_easy_setopt(rawCurl, CURLOPT_POSTFIELDS, body.c_str());
-	curl_easy_setopt(rawCurl, CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(body.size()));
-	curl_easy_setopt(rawCurl, CURLOPT_WRITEFUNCTION, writeCallback);
-	curl_easy_setopt(rawCurl, CURLOPT_WRITEDATA, &response);
-
-	const CURLcode curlCode = curl_easy_perform(rawCurl);
-
-	long httpStatus = 0;
-	curl_easy_getinfo(rawCurl, CURLINFO_RESPONSE_CODE, &httpStatus);
-
-	if (headers) {
-		curl_slist_free_all(headers);
-	}
-
-	curl_easy_cleanup(rawCurl);
-
-	if (curlCode != CURLE_OK) {
-		tokenResult.ok = false;
-
-		if (errorBuffer[0] != '\0') {
-			tokenResult.error = QString::fromUtf8(errorBuffer);
-		} else {
-			tokenResult.error = QString::fromUtf8(curl_easy_strerror(curlCode));
-		}
-
-		return tokenResult;
-	}
-
-	return parseTokenResponse(response, httpStatus);
-}
-
-} // namespace
-
-QString GoogleOAuth::buildAuthUrl(const QString &clientId, const QString &redirectUri)
-{
-	QUrl url("https://accounts.google.com/o/oauth2/v2/auth");
-
-	QUrlQuery query;
-	query.addQueryItem("client_id", clientId);
-	query.addQueryItem("redirect_uri", redirectUri);
-	query.addQueryItem("response_type", "code");
-	query.addQueryItem("scope", "https://www.googleapis.com/auth/drive");
-	query.addQueryItem("access_type", "offline");
-	query.addQueryItem("prompt", "consent");
-
-	url.setQuery(query);
-
-	return url.toString();
-}
-
-TokenResult GoogleOAuth::exchangeCodeForToken(const QString &clientId, const QString &clientSecret,
-					      const QString &redirectUri, const QString &code)
-{
-	std::string body;
-
-	body += "code=" + urlEncode(code).toStdString();
-	body += "&client_id=" + urlEncode(clientId).toStdString();
-
-	if (!clientSecret.isEmpty()) {
-		body += "&client_secret=" + urlEncode(clientSecret).toStdString();
-	}
-
-	body += "&redirect_uri=" + urlEncode(redirectUri).toStdString();
-	body += "&grant_type=authorization_code";
-
-	return postFormToTokenEndpoint(body);
-}
-
-TokenResult GoogleOAuth::refreshAccessToken(const QString &clientId, const QString &clientSecret,
-					    const QString &refreshToken)
-{
-	std::string body;
-
-	body += "client_id=" + urlEncode(clientId).toStdString();
-
-	if (!clientSecret.isEmpty()) {
-		body += "&client_secret=" + urlEncode(clientSecret).toStdString();
-	}
-
-	body += "&refresh_token=" + urlEncode(refreshToken).toStdString();
-	body += "&grant_type=refresh_token";
-
-	return postFormToTokenEndpoint(body);
 }

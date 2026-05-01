@@ -2,7 +2,6 @@
 extern "C" {
 #endif
 
-#include <curl/curl.h>
 #include <obs-module.h>
 #include <obs-frontend-api.h>
 #include <plugin-support.h>
@@ -26,7 +25,6 @@ extern "C" {
 
 OBS_DECLARE_MODULE()
 
-static bool curlInitialized = false;
 static bool uploadDialogOpen = false;
 
 static QDateTime recordingStartedAt;
@@ -276,15 +274,6 @@ static void clip_cropper_vertical_recording_stopped(void *data, calldata_t *cd)
 
 bool obs_module_load(void)
 {
-	const CURLcode result = curl_global_init(CURL_GLOBAL_DEFAULT);
-
-	if (result != CURLE_OK) {
-		obs_log(LOG_ERROR, "curl init failed: %s", curl_easy_strerror(result));
-		return false;
-	}
-
-	curlInitialized = true;
-
 	proc_handler_t *ph = obs_get_proc_handler();
 
 	proc_handler_add(ph, "void clip_cropper_vertical_recording_started()", clip_cropper_vertical_recording_started,
@@ -304,11 +293,5 @@ bool obs_module_load(void)
 void obs_module_unload(void)
 {
 	obs_frontend_remove_event_callback(on_frontend_event, nullptr);
-
-	if (curlInitialized) {
-		curl_global_cleanup();
-		curlInitialized = false;
-	}
-
 	obs_log(LOG_INFO, "plugin unloaded");
 }
