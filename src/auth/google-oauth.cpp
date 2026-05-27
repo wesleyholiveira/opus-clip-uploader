@@ -1,5 +1,7 @@
 #include "auth/google-oauth.hpp"
 
+#include <QSslSocket>
+#include <QSslError>
 #include <QByteArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -62,6 +64,10 @@ void GoogleOAuth::refreshAccessTokenAsync(const QString &clientId, const QString
 
 void GoogleOAuth::postFormToTokenEndpoint(const QByteArray &body)
 {
+	qInfo() << "[OAuth TLS] supportsSsl:" << QSslSocket::supportsSsl();
+	qInfo() << "[OAuth TLS] buildVersion:" << QSslSocket::sslLibraryBuildVersionString();
+	qInfo() << "[OAuth TLS] runtimeVersion:" << QSslSocket::sslLibraryVersionString();
+
 	QNetworkRequest request{QUrl("https://oauth2.googleapis.com/token")};
 
 	request.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
@@ -70,7 +76,19 @@ void GoogleOAuth::postFormToTokenEndpoint(const QByteArray &body)
 
 	QNetworkReply *reply = network.post(request, body);
 
+	connect(reply, &QNetworkReply::sslErrors, this, [](const QList<QSslError> &errors) {
+		for (const QSslError &error : errors) {
+			qWarning() << "[OAuth TLS] SSL error:" << error.errorString();
+		}
+	});
+
 	connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+		qWarning() << "[OAuth] network error enum:" << reply->error();
+		qWarning() << "[OAuth] network error string:" << reply->errorString();
+		qWarning()
+			<< "[OAuth] HTTP status:" << reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+		qWarning() << "[OAuth] raw response:" << reply->readAll();
+
 		reply->deleteLater();
 
 		const long httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toLongLong();

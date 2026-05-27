@@ -67,12 +67,19 @@ void OAuthCallbackServer::handleNewConnection()
 		}
 
 		const QString pathAndQuery = QString::fromUtf8(parts[1]);
-		QUrl url("http://127.0.0.1" + pathAndQuery);
+
+		QUrl url;
+		if (pathAndQuery.startsWith("http://") || pathAndQuery.startsWith("https://")) {
+			url = QUrl(pathAndQuery);
+		} else {
+			url = QUrl(QString("http://127.0.0.1") + pathAndQuery);
+		}
+
 		QUrlQuery query(url);
 
 		const QString requestPath = url.path();
-		const QString code = query.queryItemValue("code");
-		const QString error = query.queryItemValue("error");
+		const QString code = query.queryItemValue("code", QUrl::FullyDecoded);
+		const QString error = query.queryItemValue("error", QUrl::FullyDecoded);
 
 		auto sendResponse = [socket](int statusCode, const QByteArray &statusText, const QByteArray &body) {
 			QByteArray response;
