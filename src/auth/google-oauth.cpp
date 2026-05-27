@@ -83,17 +83,16 @@ void GoogleOAuth::postFormToTokenEndpoint(const QByteArray &body)
 	});
 
 	connect(reply, &QNetworkReply::finished, this, [this, reply]() {
-		qWarning() << "[OAuth] network error enum:" << reply->error();
-		qWarning() << "[OAuth] network error string:" << reply->errorString();
-		qWarning()
-			<< "[OAuth] HTTP status:" << reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-		qWarning() << "[OAuth] raw response:" << reply->readAll();
-
 		reply->deleteLater();
 
-		const long httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toLongLong();
+		const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 
 		const QByteArray response = reply->readAll();
+
+		qWarning() << "[OAuth] network error enum:" << reply->error();
+		qWarning() << "[OAuth] network error string:" << reply->errorString();
+		qWarning() << "[OAuth] HTTP status:" << httpStatus;
+		qWarning() << "[OAuth] raw response:" << QString::fromUtf8(response);
 
 		if (reply->error() != QNetworkReply::NoError) {
 			TokenResult result;
@@ -118,15 +117,16 @@ void GoogleOAuth::postFormToTokenEndpoint(const QByteArray &body)
 	});
 }
 
-TokenResult GoogleOAuth::parseTokenResponse(const QByteArray &response, long httpStatus)
+TokenResult GoogleOAuth::parseTokenResponse(const QByteArray &response, int httpStatus)
 {
 	TokenResult result;
+	result.httpStatus = httpStatus;
 	result.rawResponse = QString::fromUtf8(response);
 
-	QJsonParseError parseError{};
-	const QJsonDocument document = QJsonDocument::fromJson(response, &parseError);
+	QJsonParseError parseError;
+	const QJsonDocument doc = QJsonDocument::fromJson(response, &parseError);
 
-	if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+	if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
 		result.ok = false;
 		result.error = QString("Invalid token JSON response. HTTP: %1. Parse error: %2. Raw: %3")
 				       .arg(httpStatus)
@@ -135,30 +135,19 @@ TokenResult GoogleOAuth::parseTokenResponse(const QByteArray &response, long htt
 		return result;
 	}
 
-	const QJsonObject object = document.object();
+	const QJsonObject obj = doc.object();
 
-	if (httpStatus < 200 || httpStatus >= 300) {
-		const QString error = object.value("error").toString();
-		const QString description = object.value("error_description").toString();
-
-		result.ok = false;
-		result.error = QString("OAuth token request failed. HTTP: %1. Error: %2. Description: %3")
-				       .arg(httpStatus)
-				       .arg(error)
-				       .arg(description);
-
-		return result;
-	}
-
-	result.accessToken = object.value("access_token").toString();
-	result.refreshToken = object.value("refresh_token").toString();
-	result.tokenType = object.value("token_type").toString();
-	result.scope = object.value("scope").toString();
-	result.expiresIn = object.value("expires_in").toInt();
+	result.accessToken = obj.value("access_token").toString();
+	result.refreshToken = obj.value("refresh_token").toString();
+	result.tokenType = obj.value("token_type").toString();
+	result.scope = obj.value("scope").toString();
+	result.expiresIn = obj.value("expires_in").toInt();
 
 	if (result.accessToken.isEmpty()) {
 		result.ok = false;
-		result.error = "OAuth response did not contain access_token";
+		result.error = QString("Token response does not contain access_token. HTTP: %1. Raw: %2")
+				       .arg(httpStatus)
+				       .arg(result.rawResponse);
 		return result;
 	}
 

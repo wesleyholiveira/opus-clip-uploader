@@ -15,6 +15,8 @@ extern "C" {
 
 #include <memory>
 
+#include <QCoreApplication>
+#include <QDir>
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
@@ -30,6 +32,21 @@ static bool uploadDialogOpen = false;
 static QDateTime recordingStartedAt;
 static QDateTime recordingStoppedAt;
 static QString recordingDirectory;
+
+static void add_clip_cropper_qt_plugin_path()
+{
+	const QString obsPluginDir =
+		QDir::fromNativeSeparators(QCoreApplication::applicationDirPath() + "/../../obs-plugins/64bit");
+
+	QCoreApplication::addLibraryPath(obsPluginDir);
+
+	blog(LOG_INFO, "[clip-cropper] Added Qt plugin path: %s", obsPluginDir.toUtf8().constData());
+
+	blog(LOG_INFO, "[clip-cropper] Qt library paths:");
+	for (const QString &path : QCoreApplication::libraryPaths()) {
+		blog(LOG_INFO, "[clip-cropper]   %s", path.toUtf8().constData());
+	}
+}
 
 static QString obs_current_recording_output_path()
 {
@@ -274,6 +291,8 @@ static void clip_cropper_vertical_recording_stopped(void *data, calldata_t *cd)
 
 bool obs_module_load(void)
 {
+	add_clip_cropper_qt_plugin_path();
+
 	proc_handler_t *ph = obs_get_proc_handler();
 
 	proc_handler_add(ph, "void clip_cropper_vertical_recording_started()", clip_cropper_vertical_recording_started,

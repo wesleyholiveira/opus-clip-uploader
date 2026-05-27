@@ -1,8 +1,9 @@
 #pragma once
 
+#include <QByteArray>
+#include <QNetworkAccessManager>
 #include <QObject>
 #include <QString>
-#include <QNetworkAccessManager>
 
 struct TokenResult {
 	bool ok = false;
@@ -13,6 +14,7 @@ struct TokenResult {
 	QString scope;
 
 	int expiresIn = 0;
+	int httpStatus = 0;
 
 	QString error;
 	QString rawResponse;
@@ -39,5 +41,5 @@ private:
 	QNetworkAccessManager network;
 
 	void postFormToTokenEndpoint(const QByteArray &body);
-	static TokenResult parseTokenResponse(const QByteArray &response, long httpStatus);
+	static TokenResult parseTokenResponse(const QByteArray &response, int httpStatus);
 };
