@@ -11,12 +11,10 @@ extern "C" {
 #endif
 
 #include <ui/ui.hpp>
-#include <utils/config.hpp>
 
 #include <memory>
 
 #include <QCoreApplication>
-#include <QDir>
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
@@ -24,6 +22,11 @@ extern "C" {
 #include <QString>
 #include <QStringList>
 #include <QWidget>
+
+void open_settings(void *private_data);
+void open_confirm_dialog(void *private_data);
+void ensure_opus_api_key(QWidget *parent);
+void set_pending_recording_paths(const QStringList &paths);
 
 OBS_DECLARE_MODULE()
 
@@ -42,9 +45,8 @@ static void add_clip_cropper_qt_plugin_path()
 
 	blog(LOG_INFO, "[clip-cropper] Added Qt plugin path: %s", obsPluginDir.toUtf8().constData());
 
-	blog(LOG_INFO, "[clip-cropper] Qt library paths:");
 	for (const QString &path : QCoreApplication::libraryPaths()) {
-		blog(LOG_INFO, "[clip-cropper]   %s", path.toUtf8().constData());
+		blog(LOG_INFO, "[clip-cropper] Qt library path: %s", path.toUtf8().constData());
 	}
 }
 
@@ -78,6 +80,34 @@ static QString obs_last_recording_file()
 	return {};
 }
 
+static QStringList video_files_modified_between(const QString &directoryPath, const QDateTime &start,
+						const QDateTime &end)
+{
+	QStringList result;
+	QDir dir(directoryPath);
+
+	if (!dir.exists())
+		return result;
+
+	const QStringList filters = {"*.mp4", "*.mkv", "*.mov", "*.flv"};
+	const QFileInfoList files = dir.entryInfoList(filters, QDir::Files, QDir::Name);
+
+	for (const QFileInfo &file : files) {
+		const QDateTime modified = file.lastModified();
+
+		if (modified >= start && modified <= end)
+			result.append(file.absoluteFilePath());
+	}
+
+	result.removeDuplicates();
+	result.sort();
+
+	obs_log(LOG_INFO, "[clip-cropper] Recording scan in %s found %d new file(s).",
+		directoryPath.toUtf8().constData(), result.size());
+
+	return result;
+}
+
 static QString resolve_recording_directory()
 {
 	const QString raw = obs_current_recording_output_path();
@@ -97,103 +127,65 @@ static QString resolve_recording_directory()
 	return {};
 }
 
-static QStringList video_files_modified_between(const QString &directoryPath, const QDateTime &start,
-						const QDateTime &end)
-{
-	QStringList result;
-
-	QDir dir(directoryPath);
-
-	if (!dir.exists())
-		return result;
-
-	const QStringList filters = {"*.mp4", "*.mkv", "*.mov", "*.flv"};
-
-	const QFileInfoList files = dir.entryInfoList(filters, QDir::Files, QDir::Name);
-
-	for (const QFileInfo &file : files) {
-		const QString absolutePath = file.absoluteFilePath();
-		const QDateTime modified = file.lastModified();
-
-		if (modified >= start && modified <= end) {
-			result.append(absolutePath);
-		}
-	}
-
-	result.removeDuplicates();
-	result.sort();
-
-	obs_log(LOG_INFO, "[clip-cropper] Recording scan in %s found %d new file(s).",
-		directoryPath.toUtf8().constData(), result.size());
-
-	return result;
-}
-
 static QStringList resolve_recording_files_for_upload()
 {
 	QString dir = recordingDirectory;
 
-	if (dir.isEmpty()) {
-		const QString lastRecording = obs_last_recording_file();
-
-		if (!lastRecording.isEmpty())
-			dir = QFileInfo(lastRecording).absolutePath();
-	}
+	if (dir.isEmpty())
+		dir = resolve_recording_directory();
 
 	if (dir.isEmpty())
 		return {};
 
 	QStringList paths = video_files_modified_between(dir, recordingStartedAt, recordingStoppedAt);
 
-	if (!paths.isEmpty()) {
-		obs_log(LOG_INFO, "[clip-cropper] Using %d recording file(s) from filtered scan.", paths.size());
-
+	if (!paths.isEmpty())
 		return paths;
-	}
 
 	const QString lastRecording = obs_last_recording_file();
 
-	if (!lastRecording.isEmpty()) {
-		obs_log(LOG_INFO, "[clip-cropper] Fallback using last recording only: %s",
-			lastRecording.toUtf8().constData());
-
+	if (!lastRecording.isEmpty())
 		return {lastRecording};
-	}
 
 	return {};
 }
 
 static void reset_recording_state()
 {
-	recordingDirectory.clear();
+	recordingDirectory = resolve_recording_directory();
 	recordingStartedAt = {};
 	recordingStoppedAt = {};
 }
 
-static void ensure_google_oauth_on_ui_thread()
+static QWidget *main_window()
 {
-	QWidget *parent = reinterpret_cast<QWidget *>(obs_frontend_get_main_window());
+	return reinterpret_cast<QWidget *>(obs_frontend_get_main_window());
+}
+
+static void ensure_opus_api_key_on_ui_thread()
+{
+	QWidget *parent = main_window();
 
 	if (!parent) {
-		obs_log(LOG_ERROR, "[clip-cropper] Main window is null. Cannot start OAuth.");
+		obs_log(LOG_ERROR, "[clip-cropper] Main window is null. Cannot validate Opus Clip API key.");
 		return;
 	}
 
 	QMetaObject::invokeMethod(
 		parent,
 		[parent]() {
-			obs_log(LOG_INFO, "[clip-cropper] Running Google OAuth on UI thread.");
-			ensure_google_access_token(parent);
+			obs_log(LOG_INFO, "[clip-cropper] Checking Opus Clip API key on UI thread.");
+			ensure_opus_api_key(parent);
 		},
 		Qt::QueuedConnection);
 }
 
 static void open_confirm_dialog_on_ui_thread()
 {
-	QWidget *parent = reinterpret_cast<QWidget *>(obs_frontend_get_main_window());
+	QWidget *parent = main_window();
 
 	if (!parent) {
-		obs_log(LOG_ERROR, "[clip-cropper] Main window is null.");
+		obs_log(LOG_ERROR, "[clip-cropper] Main window is null. Cannot open upload dialog.");
 		return;
 	}
 
@@ -204,9 +196,7 @@ static void open_confirm_dialog_on_ui_thread()
 				return;
 
 			uploadDialogOpen = true;
-
 			open_confirm_dialog(nullptr);
-
 			uploadDialogOpen = false;
 		},
 		Qt::QueuedConnection);
@@ -221,10 +211,9 @@ static void on_frontend_event(enum obs_frontend_event event, void *private_data)
 		obs_log(LOG_INFO, "[clip-cropper] Recording started.");
 
 		reset_recording_state();
-
 		recordingStartedAt = QDateTime::currentDateTime().addSecs(-10);
 
-		ensure_google_oauth_on_ui_thread();
+		ensure_opus_api_key_on_ui_thread();
 		break;
 
 	case OBS_FRONTEND_EVENT_RECORDING_STOPPED: {
@@ -237,7 +226,7 @@ static void on_frontend_event(enum obs_frontend_event event, void *private_data)
 		if (!paths.isEmpty()) {
 			set_pending_recording_paths(paths);
 		} else {
-			obs_log(LOG_WARNING, "[clip-cropper] No valid files found.");
+			obs_log(LOG_WARNING, "[clip-cropper] No valid recording files found.");
 		}
 
 		open_confirm_dialog_on_ui_thread();
@@ -257,14 +246,16 @@ static void clip_cropper_vertical_recording_started(void *data, calldata_t *cd)
 	obs_log(LOG_INFO, "[clip-cropper] Vertical recording started.");
 
 	reset_recording_state();
-
 	recordingStartedAt = QDateTime::currentDateTime().addSecs(-10);
-	ensure_google_oauth_on_ui_thread();
+
+	ensure_opus_api_key_on_ui_thread();
 }
 
 static void clip_cropper_vertical_recording_stopped(void *data, calldata_t *cd)
 {
 	UNUSED_PARAMETER(data);
+
+	obs_log(LOG_INFO, "[clip-cropper] Vertical recording stopped.");
 
 	recordingStoppedAt = QDateTime::currentDateTime().addSecs(10);
 
@@ -277,13 +268,17 @@ static void clip_cropper_vertical_recording_stopped(void *data, calldata_t *cd)
 		if (info.isFile()) {
 			set_pending_recording_paths({info.absoluteFilePath()});
 		} else if (info.isDir()) {
-			QStringList files = video_files_modified_between(info.absoluteFilePath(), recordingStartedAt,
-									 recordingStoppedAt);
+			const QStringList files = video_files_modified_between(info.absoluteFilePath(),
+									       recordingStartedAt, recordingStoppedAt);
 
-			if (!files.isEmpty()) {
+			if (!files.isEmpty())
 				set_pending_recording_paths(files);
-			}
 		}
+	} else {
+		const QStringList paths = resolve_recording_files_for_upload();
+
+		if (!paths.isEmpty())
+			set_pending_recording_paths(paths);
 	}
 
 	open_confirm_dialog_on_ui_thread();

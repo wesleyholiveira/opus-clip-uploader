@@ -13,43 +13,29 @@ extern "C" {
 #include <utils/config.hpp>
 #include <utils/file.hpp>
 #include <worker/upload-worker.hpp>
-#include <auth/oauth-callback-server.hpp>
-#include <auth/google-oauth.hpp>
 
-#include <QVector>
-#include <QStringList>
 #include <QDialog>
-#include <QProgressBar>
-#include <QVBoxLayout>
-#include <QHBoxLayout>
+#include <QFileInfo>
 #include <QFormLayout>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
-#include <QPushButton>
-#include <QWidget>
-#include <QThread>
-#include <QDesktopServices>
-#include <QUrl>
 #include <QMessageBox>
-#include <QFileInfo>
 #include <QObject>
+#include <QProgressBar>
+#include <QPushButton>
+#include <QThread>
+#include <QString>
+#include <QStringList>
+#include <QVector>
+#include <QVBoxLayout>
+#include <QWidget>
 
 #include <functional>
 
 static const QString title("Clip Cropper");
 
-static bool oauthFlowInProgress = false;
 static QStringList pendingRecordingPaths;
-
-static QString get_google_client_id()
-{
-	return PluginConfig::getValue("google_client_id");
-}
-
-static QString get_google_client_secret()
-{
-	return PluginConfig::getValue("google_client_secret");
-}
 
 void set_pending_recording_paths(const QStringList &paths)
 {
@@ -71,18 +57,9 @@ static QStringList get_recording_paths_for_upload()
 	return pendingRecordingPaths;
 }
 
-void ensure_google_access_token(QWidget *parent)
+static QString get_opus_api_key()
 {
-	UNUSED_PARAMETER(parent);
-
-	const QString accessToken = PluginConfig::getValue("google_access_token");
-
-	if (!accessToken.trimmed().isEmpty()) {
-		obs_log(LOG_INFO, "Google OAuth access token already exists");
-		return;
-	}
-
-	obs_log(LOG_INFO, "Google OAuth access token does not exist yet");
+	return PluginConfig::getValue("opus_api_key").trimmed();
 }
 
 static void resize_upload_dialog(QDialog *dialog, bool expanded)
@@ -101,9 +78,24 @@ static void resize_upload_dialog(QDialog *dialog, bool expanded)
 }
 
 static void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCancel, QProgressBar *progressBar,
-			 QLabel *uploadStatusLabel, const QString &accessToken)
+			 QLabel *uploadStatusLabel, const QString &apiKey)
 {
 	const QStringList recordingPaths = get_recording_paths_for_upload();
+
+	if (apiKey.trimmed().isEmpty()) {
+		QMessageBox::warning(dialog, title, "Configure a Opus Clip API Key antes de enviar o vídeo.");
+
+		btnUpload->setEnabled(true);
+		btnCancel->setEnabled(true);
+		progressBar->hide();
+
+		if (uploadStatusLabel) {
+			uploadStatusLabel->hide();
+			uploadStatusLabel->clear();
+		}
+
+		return;
+	}
 
 	if (recordingPaths.isEmpty()) {
 		obs_log(LOG_ERROR, "No recording path found for upload.");
@@ -131,6 +123,7 @@ static void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *b
 		int running = 0;
 		int completed = 0;
 		int failed = 0;
+		bool finished = false;
 	};
 
 	auto *state = new UploadBatchState();
@@ -163,10 +156,34 @@ static void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *b
 
 		if (uploadStatusLabel) {
 			uploadStatusLabel->setText(
-				QString("Enviando vídeos: %1/%2")
+				QString("Enviando vídeos para Opus Clip: %1/%2")
 					.arg(qMin(state->completed + state->running, state->paths.size()))
 					.arg(state->paths.size()));
 		}
+	};
+
+	auto finishBatchIfNeeded = [=]() {
+		if (state->finished)
+			return true;
+
+		if (state->completed < state->paths.size())
+			return false;
+
+		state->finished = true;
+
+		clear_pending_recording_paths();
+
+		if (state->failed > 0) {
+			QMessageBox::warning(dialog, title,
+					     QString("Upload finalizado com %1 falha(s).").arg(state->failed));
+		} else {
+			QMessageBox::information(dialog, title, "Upload enviado para a Opus Clip com sucesso.");
+		}
+
+		delete state;
+
+		dialog->accept();
+		return true;
 	};
 
 	auto *startNext = new std::function<void()>();
@@ -186,21 +203,26 @@ static void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *b
 				state->failed++;
 
 				updateProgress();
+
+				if (finishBatchIfNeeded()) {
+					delete startNext;
+					return;
+				}
+
 				continue;
 			}
 
 			FileInfo fInfo(recordingPath.toStdString());
 			fInfo.parseFile();
 
-			obs_log(LOG_INFO, "Uploading part %d/%d - Path: %s, Name: %s, Mime: %s", index + 1,
+			obs_log(LOG_INFO, "Uploading part %d/%d to Opus Clip - Path: %s, Name: %s, Mime: %s", index + 1,
 				state->paths.size(), fInfo.filePath.c_str(), fInfo.fileName.c_str(),
 				fInfo.mimeType.c_str());
 
-			auto *thread = new QThread;
-			auto *worker = new UploadWorker(accessToken, QString::fromStdString(fInfo.filePath),
+			auto *thread = new QThread(dialog);
+			auto *worker = new UploadWorker(apiKey, QString::fromStdString(fInfo.filePath),
 							QString::fromStdString(fInfo.fileName),
-							QString::fromStdString(fInfo.mimeType),
-							PluginConfig::getValue("drive_folder_name"));
+							QString::fromStdString(fInfo.mimeType));
 
 			state->running++;
 
@@ -217,40 +239,47 @@ static void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *b
 				Qt::QueuedConnection);
 
 			QObject::connect(worker, &UploadWorker::finished, thread, &QThread::quit);
+			QObject::connect(worker, &UploadWorker::failed, thread, &QThread::quit);
+
 			QObject::connect(worker, &UploadWorker::finished, worker, &QObject::deleteLater);
+			QObject::connect(worker, &UploadWorker::failed, worker, &QObject::deleteLater);
 			QObject::connect(thread, &QThread::finished, thread, &QObject::deleteLater);
 
 			QObject::connect(
 				worker, &UploadWorker::failed, dialog,
-				[=](const QString &message) {
+				[=](const QString &message) mutable {
 					obs_log(LOG_ERROR, "Upload failed: %s", message.toUtf8().constData());
+
+					state->running--;
+					state->completed++;
 					state->failed++;
+					state->progress[index] = 100;
+
+					updateProgress();
+
+					if (finishBatchIfNeeded()) {
+						delete startNext;
+						return;
+					}
+
+					(*startNext)();
 				},
 				Qt::QueuedConnection);
 
 			QObject::connect(
 				worker, &UploadWorker::finished, dialog,
-				[=]() mutable {
+				[=](const QString &projectId) mutable {
+					obs_log(LOG_INFO, "Opus Clip project created: %s",
+						projectId.toUtf8().constData());
+
 					state->running--;
 					state->completed++;
 					state->progress[index] = 100;
 
 					updateProgress();
 
-					if (state->completed >= state->paths.size()) {
-						clear_pending_recording_paths();
-
-						if (state->failed > 0) {
-							QMessageBox::warning(
-								dialog, title,
-								QString("Upload finalizado com %1 falha(s).")
-									.arg(state->failed));
-						}
-
-						delete state;
+					if (finishBatchIfNeeded()) {
 						delete startNext;
-
-						dialog->accept();
 						return;
 					}
 
@@ -265,216 +294,15 @@ static void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *b
 	(*startNext)();
 }
 
-static void start_google_oauth_flow(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCancel,
-				    QProgressBar *progressBar, QLabel *uploadStatusLabel)
-{
-	if (oauthFlowInProgress) {
-		obs_log(LOG_INFO, "OAuth flow already in progress, ignoring duplicate request");
-
-		QMessageBox::information(
-			dialog, title,
-			"Já existe um fluxo OAuth em andamento. Conclua ou cancele a autenticação aberta no navegador.");
-
-		btnUpload->setEnabled(true);
-		btnCancel->setEnabled(true);
-
-		return;
-	}
-
-	oauthFlowInProgress = true;
-
-	auto *oauthServer = new OAuthCallbackServer(dialog);
-	const int port = PluginConfig::getValue("webserver_port", "53682").toInt();
-
-	if (!oauthServer->start(port)) {
-		oauthFlowInProgress = false;
-
-		obs_log(LOG_ERROR, "Failed to start OAuth callback server");
-
-		QMessageBox::critical(dialog, title,
-				      "Não foi possível iniciar o servidor local para autenticação OAuth.");
-
-		oauthServer->deleteLater();
-
-		btnUpload->setEnabled(true);
-		btnCancel->setEnabled(true);
-
-		return;
-	}
-
-	const QString redirectUri = oauthServer->redirectUri();
-	const QString clientId = get_google_client_id();
-	const QString clientSecret = get_google_client_secret();
-
-	if (clientId.trimmed().isEmpty() || clientSecret.trimmed().isEmpty()) {
-		oauthFlowInProgress = false;
-
-		QMessageBox::warning(dialog, title, "Configure o Client ID e o Client Secret antes de autenticar.");
-
-		oauthServer->stop();
-		oauthServer->deleteLater();
-
-		btnUpload->setEnabled(true);
-		btnCancel->setEnabled(true);
-
-		return;
-	}
-
-	const QString authUrl = GoogleOAuth::buildAuthUrl(clientId, redirectUri);
-
-	QObject::connect(
-		oauthServer, &OAuthCallbackServer::codeReceived, dialog,
-		[dialog, btnUpload, btnCancel, progressBar, uploadStatusLabel, oauthServer, redirectUri, clientId,
-		 clientSecret](const QString &code) {
-			oauthFlowInProgress = false;
-
-			obs_log(LOG_INFO, "OAuth authorization code received");
-
-			oauthServer->stop();
-
-			auto *oauth = new GoogleOAuth(dialog);
-
-			QObject::connect(
-				oauth, &GoogleOAuth::tokenReceived, dialog,
-				[dialog, btnUpload, btnCancel, progressBar, uploadStatusLabel, oauth,
-				 oauthServer](const TokenResult &result) {
-					if (!result.ok) {
-						PluginConfig::removeValue("google_access_token");
-
-						obs_log(LOG_ERROR, "OAuth token response was not ok: %s",
-							result.error.toUtf8().constData());
-
-						QMessageBox::critical(
-							dialog, title,
-							"Falha ao trocar o código OAuth pelo access token:\n" +
-								result.error);
-
-						btnUpload->setEnabled(true);
-						btnCancel->setEnabled(true);
-
-						oauth->deleteLater();
-						oauthServer->deleteLater();
-						return;
-					}
-
-					if (result.accessToken.trimmed().isEmpty()) {
-						PluginConfig::removeValue("google_access_token");
-
-						obs_log(LOG_ERROR, "OAuth token exchange returned empty access token");
-
-						QMessageBox::critical(dialog, title,
-								      "O Google retornou um access token vazio.");
-
-						btnUpload->setEnabled(true);
-						btnCancel->setEnabled(true);
-
-						oauth->deleteLater();
-						oauthServer->deleteLater();
-						return;
-					}
-
-					PluginConfig::setValue("google_access_token", result.accessToken);
-
-					if (!result.refreshToken.trimmed().isEmpty()) {
-						PluginConfig::setValue("google_refresh_token", result.refreshToken);
-					}
-
-					obs_log(LOG_INFO, "OAuth access token obtained successfully");
-
-					oauth->deleteLater();
-					oauthServer->deleteLater();
-
-					start_upload(dialog, btnUpload, btnCancel, progressBar, uploadStatusLabel,
-						     result.accessToken);
-				},
-				Qt::QueuedConnection);
-
-			QObject::connect(
-				oauth, &GoogleOAuth::tokenFailed, dialog,
-				[dialog, btnUpload, btnCancel, oauth, oauthServer](const TokenResult &result) {
-					PluginConfig::removeValue("google_access_token");
-
-					obs_log(LOG_ERROR, "Failed to exchange OAuth code for token: %s",
-						result.error.toUtf8().constData());
-
-					QMessageBox::critical(dialog, title,
-							      "Falha ao trocar o código OAuth pelo access token:\n" +
-								      result.error);
-
-					btnUpload->setEnabled(true);
-					btnCancel->setEnabled(true);
-
-					oauth->deleteLater();
-					oauthServer->deleteLater();
-				},
-				Qt::QueuedConnection);
-
-			oauth->exchangeCodeForTokenAsync(clientId, clientSecret, redirectUri, code);
-		},
-		Qt::QueuedConnection);
-
-	QObject::connect(
-		oauthServer, &OAuthCallbackServer::errorReceived, dialog,
-		[dialog, btnUpload, btnCancel, oauthServer](const QString &error) {
-			oauthFlowInProgress = false;
-			PluginConfig::removeValue("google_access_token");
-
-			oauthServer->stop();
-			oauthServer->deleteLater();
-
-			obs_log(LOG_ERROR, "OAuth authorization failed: %s", error.toStdString().c_str());
-
-			QMessageBox::critical(dialog, title, "Autenticação OAuth falhou:\n" + error);
-
-			btnUpload->setEnabled(true);
-			btnCancel->setEnabled(true);
-		},
-		Qt::QueuedConnection);
-
-	QObject::connect(
-		oauthServer, &OAuthCallbackServer::serverError, dialog,
-		[dialog, btnUpload, btnCancel, oauthServer](const QString &error) {
-			oauthFlowInProgress = false;
-			PluginConfig::removeValue("google_access_token");
-
-			oauthServer->stop();
-			oauthServer->deleteLater();
-
-			obs_log(LOG_ERROR, "OAuth callback server error: %s", error.toStdString().c_str());
-
-			QMessageBox::critical(dialog, title, "Erro no servidor local OAuth:\n" + error);
-
-			btnUpload->setEnabled(true);
-			btnCancel->setEnabled(true);
-		},
-		Qt::QueuedConnection);
-
-	btnUpload->setEnabled(false);
-	btnCancel->setEnabled(true);
-
-	if (!QDesktopServices::openUrl(QUrl(authUrl))) {
-		oauthFlowInProgress = false;
-		PluginConfig::removeValue("google_access_token");
-
-		oauthServer->stop();
-		oauthServer->deleteLater();
-
-		QMessageBox::critical(dialog, title, "Não foi possível abrir o navegador para autenticação OAuth.");
-
-		btnUpload->setEnabled(true);
-		btnCancel->setEnabled(true);
-	}
-}
-
 void open_settings(void *private_data)
 {
 	UNUSED_PARAMETER(private_data);
 
-	QWidget *parent = (QWidget *)obs_frontend_get_main_window();
+	QWidget *parent = reinterpret_cast<QWidget *>(obs_frontend_get_main_window());
 
 	QDialog dialog(parent);
 	dialog.setWindowTitle(title);
-	dialog.resize(520, 220);
+	dialog.resize(520, 180);
 
 	QVBoxLayout *mainLayout = new QVBoxLayout(&dialog);
 	mainLayout->setContentsMargins(20, 20, 20, 0);
@@ -483,27 +311,12 @@ void open_settings(void *private_data)
 	QFormLayout *formLayout = new QFormLayout();
 	formLayout->setLabelAlignment(Qt::AlignLeft);
 
-	QLineEdit *folderNameInput = new QLineEdit(&dialog);
-	folderNameInput->setPlaceholderText("Ex: GRAVACIONES");
-	folderNameInput->setText(PluginConfig::getValue("drive_folder_name"));
+	QLineEdit *apiKeyInput = new QLineEdit(&dialog);
+	apiKeyInput->setEchoMode(QLineEdit::Password);
+	apiKeyInput->setPlaceholderText("Opus Clip API Key");
+	apiKeyInput->setText(PluginConfig::getValue("opus_api_key"));
 
-	QLineEdit *clientIdInput = new QLineEdit(&dialog);
-	clientIdInput->setPlaceholderText("Google OAuth Client ID");
-	clientIdInput->setText(PluginConfig::getValue("google_client_id"));
-
-	QLineEdit *webServerPortInput = new QLineEdit(&dialog);
-	webServerPortInput->setPlaceholderText("53682");
-	webServerPortInput->setText(PluginConfig::getValue("webserver_port", "53682"));
-
-	QLineEdit *clientSecretInput = new QLineEdit(&dialog);
-	clientSecretInput->setEchoMode(QLineEdit::Password);
-	clientSecretInput->setPlaceholderText("Google OAuth Client Secret");
-	clientSecretInput->setText(PluginConfig::getValue("google_client_secret"));
-
-	formLayout->addRow("Nome da pasta no Drive:", folderNameInput);
-	formLayout->addRow("Client ID:", clientIdInput);
-	formLayout->addRow("Client Secret:", clientSecretInput);
-	formLayout->addRow("Webserver Port:", webServerPortInput);
+	formLayout->addRow("Opus Clip API Key:", apiKeyInput);
 
 	QPushButton *btn = new QPushButton("Salvar", &dialog);
 
@@ -511,20 +324,13 @@ void open_settings(void *private_data)
 	mainLayout->addWidget(btn);
 	mainLayout->addStretch();
 
-	QObject::connect(btn, &QPushButton::clicked,
-			 [&dialog, folderNameInput, clientIdInput, clientSecretInput, webServerPortInput]() {
-				 PluginConfig::setValue("drive_folder_name", folderNameInput->text().trimmed());
-				 PluginConfig::setValue("google_client_id", clientIdInput->text().trimmed());
-				 PluginConfig::setValue("google_client_secret", clientSecretInput->text().trimmed());
-				 PluginConfig::setValue("webserver_port", webServerPortInput->text().trimmed());
+	QObject::connect(btn, &QPushButton::clicked, [&dialog, apiKeyInput]() {
+		PluginConfig::setValue("opus_api_key", apiKeyInput->text().trimmed());
 
-				 PluginConfig::removeValue("google_access_token");
-				 oauthFlowInProgress = false;
+		obs_log(LOG_INFO, "Clip Cropper settings saved. Opus Clip API key updated.");
 
-				 obs_log(LOG_INFO, "Clip Cropper settings saved. Access token invalidated.");
-
-				 dialog.accept();
-			 });
+		dialog.accept();
+	});
 
 	dialog.exec();
 }
@@ -533,7 +339,7 @@ void open_confirm_dialog(void *private_data)
 {
 	UNUSED_PARAMETER(private_data);
 
-	QWidget *parent = (QWidget *)obs_frontend_get_main_window();
+	QWidget *parent = reinterpret_cast<QWidget *>(obs_frontend_get_main_window());
 
 	QDialog dialog(parent);
 	dialog.setWindowTitle(title + " - Confirmar Upload");
@@ -542,7 +348,8 @@ void open_confirm_dialog(void *private_data)
 	mainLayout->setContentsMargins(22, 16, 22, 16);
 	mainLayout->setSpacing(8);
 
-	QLabel *label = new QLabel("Deseja fazer o upload do arquivo para o Drive?", &dialog);
+	QLabel *label = new QLabel("Deseja enviar o vídeo para a Opus Clip realizar os cortes?", &dialog);
+	label->setWordWrap(true);
 	mainLayout->addWidget(label);
 
 	QLabel *uploadStatusLabel = new QLabel("", &dialog);
@@ -579,19 +386,38 @@ void open_confirm_dialog(void *private_data)
 		dialog.reject();
 	});
 
-	QObject::connect(
-		btnUpload, &QPushButton::clicked, [&dialog, btnUpload, btnCancel, progressBar, uploadStatusLabel]() {
-			const QString accessToken = PluginConfig::getValue("google_access_token");
+	QObject::connect(btnUpload, &QPushButton::clicked,
+			 [&dialog, btnUpload, btnCancel, progressBar, uploadStatusLabel]() {
+				 const QString apiKey = get_opus_api_key();
 
-			if (accessToken.trimmed().isEmpty()) {
-				obs_log(LOG_INFO, "No access token found. Starting Google OAuth flow.");
-				start_google_oauth_flow(&dialog, btnUpload, btnCancel, progressBar, uploadStatusLabel);
-				return;
-			}
+				 if (apiKey.trimmed().isEmpty()) {
+					 obs_log(LOG_WARNING, "No Opus Clip API key found.");
 
-			obs_log(LOG_INFO, "Access token found. Starting upload.");
-			start_upload(&dialog, btnUpload, btnCancel, progressBar, uploadStatusLabel, accessToken);
-		});
+					 QMessageBox::warning(
+						 &dialog, title,
+						 "Configure a Opus Clip API Key nas configurações antes de enviar.");
+
+					 open_settings(nullptr);
+					 return;
+				 }
+
+				 obs_log(LOG_INFO, "Opus Clip API key found. Starting upload.");
+				 start_upload(&dialog, btnUpload, btnCancel, progressBar, uploadStatusLabel, apiKey);
+			 });
 
 	dialog.exec();
+}
+
+void ensure_opus_api_key(QWidget *parent)
+{
+	const QString apiKey = get_opus_api_key();
+
+	if (!apiKey.isEmpty()) {
+		obs_log(LOG_INFO, "Opus Clip API key already configured");
+		return;
+	}
+
+	QMessageBox::information(parent, title, "Configure sua Opus Clip API Key antes de enviar vídeos para corte.");
+
+	open_settings(nullptr);
 }

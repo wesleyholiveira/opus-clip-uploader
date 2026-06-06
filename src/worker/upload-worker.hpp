@@ -7,21 +7,20 @@ class UploadWorker : public QObject {
 	Q_OBJECT
 
 public:
-	explicit UploadWorker(QString accessToken, QString filePath, QString fileName, QString mimeType,
-			      QString folderId = {}, QObject *parent = nullptr);
+	explicit UploadWorker(QString apiKey, QString filePath, QString fileName, QString mimeType,
+			      QObject *parent = nullptr);
 
 public slots:
 	void run();
 
 signals:
 	void progressChanged(int value);
-	void finished();
+	void finished(QString projectId);
 	void failed(QString message);
 
 private:
-	QString accessToken;
+	QString apiKey;
 	QString filePath;
 	QString fileName;
 	QString mimeType;
-	QString folderId;
 };
