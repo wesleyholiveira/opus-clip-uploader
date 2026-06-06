@@ -170,20 +170,20 @@ static void reset_recording_state()
 	recordingStoppedAt = {};
 }
 
-static void ensure_opus_api_key_on_ui_thread()
+static void ensure_google_oauth_on_ui_thread()
 {
 	QWidget *parent = reinterpret_cast<QWidget *>(obs_frontend_get_main_window());
 
 	if (!parent) {
-		obs_log(LOG_ERROR, "[clip-cropper] Main window is null. Cannot validate Opus Clip settings.");
+		obs_log(LOG_ERROR, "[clip-cropper] Main window is null. Cannot start OAuth.");
 		return;
 	}
 
 	QMetaObject::invokeMethod(
 		parent,
 		[parent]() {
-			obs_log(LOG_INFO, "[clip-cropper] Checking Opus Clip API key on UI thread.");
-			ensure_opus_api_key(parent);
+			obs_log(LOG_INFO, "[clip-cropper] Running Google OAuth on UI thread.");
+			ensure_google_access_token(parent);
 		},
 		Qt::QueuedConnection);
 }
@@ -224,7 +224,7 @@ static void on_frontend_event(enum obs_frontend_event event, void *private_data)
 
 		recordingStartedAt = QDateTime::currentDateTime().addSecs(-10);
 
-		ensure_opus_api_key_on_ui_thread();
+		ensure_google_oauth_on_ui_thread();
 		break;
 
 	case OBS_FRONTEND_EVENT_RECORDING_STOPPED: {
@@ -259,7 +259,7 @@ static void clip_cropper_vertical_recording_started(void *data, calldata_t *cd)
 	reset_recording_state();
 
 	recordingStartedAt = QDateTime::currentDateTime().addSecs(-10);
-	ensure_opus_api_key_on_ui_thread();
+	ensure_google_oauth_on_ui_thread();
 }
 
 static void clip_cropper_vertical_recording_stopped(void *data, calldata_t *cd)
