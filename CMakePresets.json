@@ -1,0 +1,113 @@
+{
+  "version": 8,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 28,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "template",
+      "hidden": true,
+      "cacheVariables": {
+        "ENABLE_FRONTEND_API": true,
+        "ENABLE_QT": true
+      }
+    },
+    {
+      "name": "windows-x64",
+      "displayName": "Windows x64",
+      "inherits": [
+        "template"
+      ],
+      "binaryDir": "${sourceDir}/build_x64",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "cacheVariables": {
+        "CMAKE_SYSTEM_VERSION": "10.0.22621.0"
+      }
+    },
+    {
+      "name": "windows-ci-x64",
+      "inherits": [
+        "windows-x64"
+      ],
+      "cacheVariables": {
+        "CMAKE_COMPILE_WARNING_AS_ERROR": true
+      }
+    },
+    {
+      "name": "macos",
+      "inherits": [
+        "template"
+      ],
+      "binaryDir": "${sourceDir}/build_macos",
+      "generator": "Xcode",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
+      "cacheVariables": {
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "12.0",
+        "CMAKE_OSX_ARCHITECTURES": "arm64;x86_64"
+      }
+    },
+    {
+      "name": "macos-ci",
+      "inherits": [
+        "macos"
+      ],
+      "cacheVariables": {
+        "CMAKE_COMPILE_WARNING_AS_ERROR": true
+      }
+    },
+    {
+      "name": "ubuntu-x86_64",
+      "inherits": [
+        "template"
+      ],
+      "binaryDir": "${sourceDir}/build_x86_64",
+      "generator": "Ninja",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
+      "name": "ubuntu-ci-x86_64",
+      "inherits": [
+        "ubuntu-x86_64"
+      ],
+      "cacheVariables": {
+        "CMAKE_COMPILE_WARNING_AS_ERROR": true
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-ci-x64",
+      "configurePreset": "windows-ci-x64",
+      "configuration": "RelWithDebInfo"
+    },
+    {
+      "name": "macos-ci",
+      "configurePreset": "macos-ci",
+      "configuration": "RelWithDebInfo"
+    },
+    {
+      "name": "ubuntu-ci-x86_64",
+      "configurePreset": "ubuntu-ci-x86_64",
+      "configuration": "RelWithDebInfo"
+    }
+  ]
+}
