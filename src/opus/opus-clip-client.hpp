@@ -7,6 +7,7 @@
 #include <QByteArray>
 #include <QNetworkAccessManager>
 #include <QString>
+#include <QStringList>
 
 class OpusClipClient : public QObject {
 	Q_OBJECT
@@ -18,7 +19,7 @@ public:
 						      const QString &mimeType);
 
 signals:
-	void progressChanged(int progress);
+	void progressChanged(int progress, const QString &message);
 	void uploadFinished(const OpusUploadResult &result);
 	void uploadFailed(const OpusUploadResult &result);
 
@@ -28,11 +29,14 @@ private:
 	QString brandTemplateId;
 	QString sourceLang;
 	CurationSettings curationSettings;
+	QStringList createdProjectIds;
 
 	void createUploadLink(const QString &filePath);
 	void startResumableSession(const QString &filePath, const QString &uploadUrl, const QString &uploadId);
 	void uploadFileToResumableLocation(const QString &filePath, const QString &location, const QString &uploadId);
-	void createClipProject(const QString &uploadId);
+	void createNextClipProject(const QString &uploadId, int projectIndex);
+	void createClipProject(const QString &uploadId, const ClipDuration &range, int projectIndex, int totalProjects);
+	QVector<ClipDuration> projectRanges() const;
 
 	void fail(const QString &message, int code = -1, long httpStatus = 0, const QByteArray &body = {});
 

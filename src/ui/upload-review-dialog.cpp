@@ -1,4 +1,12 @@
 #include "ui/upload-review-dialog.hpp"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+#include <obs-module.h>
+#ifdef __cplusplus
+}
+#endif
 #include "ui/advanced-settings-tree.hpp"
 #include "utils/config.hpp"
 
@@ -24,12 +32,18 @@
 #include <QVideoWidget>
 
 #include <algorithm>
+#include <cmath>
 #include <functional>
 
 static constexpr const char *CONFIG_REVIEW_TOPIC_KEYWORDS = "review.topic_keywords";
 static constexpr const char *CONFIG_REVIEW_GENRE = "review.genre";
 static constexpr const char *CONFIG_REVIEW_MODEL = "review.model";
 static constexpr const char *CONFIG_REVIEW_SKIP_CURATE = "review.skip_curate";
+
+static QString obsText(const char *key)
+{
+	return QString::fromUtf8(obs_module_text(key));
+}
 
 static void setComboCurrentTextIfExists(QComboBox *combo, const QString &value)
 {
@@ -75,6 +89,12 @@ public:
 		update();
 	}
 
+	void setClipRanges(const QVector<ClipDuration> &newRanges)
+	{
+		clipRanges = newRanges;
+		update();
+	}
+
 	std::function<void(qint64)> previewSeekRequested;
 	std::function<void(qint64)> commitSeekRequested;
 
@@ -96,6 +116,24 @@ protected:
 		progress.setRight(progressX);
 		painter.setBrush(QColor(220, 53, 69));
 		painter.drawRoundedRect(progress, radius, radius);
+
+		// Draw selected ranges after the progress bar so they are never hidden
+		// by the current playback position. Each pair of markers becomes one range;
+		// an unmatched marker receives the default +90s range.
+		for (const auto &range : clipRanges) {
+			const qint64 startMs = static_cast<qint64>(range.startSec * 1000.0);
+			const qint64 endMs = static_cast<qint64>(range.endSec * 1000.0);
+			if (durationMs <= 0 || endMs <= startMs)
+				continue;
+
+			QRectF rangeRect = track.adjusted(0.0, -3.0, 0.0, 3.0);
+			rangeRect.setLeft(xForPosition(startMs));
+			rangeRect.setRight(xForPosition(endMs));
+			painter.setPen(QPen(QColor(255, 193, 7), 2));
+			painter.setBrush(QColor(255, 193, 7, 155));
+			painter.drawRoundedRect(rangeRect, rangeRect.height() / 2.0, rangeRect.height() / 2.0);
+			painter.setPen(Qt::NoPen);
+		}
 
 		painter.setPen(QPen(QColor(20, 20, 20), 1));
 		painter.setBrush(QColor(255, 193, 7));
@@ -158,6 +196,7 @@ private:
 	qint64 durationMs = 0;
 	qint64 positionMs = 0;
 	QList<qint64> markers;
+	QVector<ClipDuration> clipRanges;
 	bool dragging = false;
 	QElapsedTimer seekThrottle;
 
@@ -256,7 +295,7 @@ UploadReviewDialog::UploadReviewDialog(const QString &videoPath, QWidget *parent
 	: QDialog(parent),
 	  videoPath(videoPath)
 {
-	setWindowTitle("Clip Cropper - Revisar vídeo");
+	setWindowTitle(QString("Clip Cropper - %1").arg(obsText("Dialog.ReviewVideoTitle")));
 	resize(920, 720);
 
 	auto *mainLayout = new QVBoxLayout(this);
@@ -278,9 +317,9 @@ UploadReviewDialog::UploadReviewDialog(const QString &videoPath, QWidget *parent
 			player->play();
 	};
 
-	auto *btnAddMarker = new QPushButton("Adicionar marcação", this);
-	auto *btnJumpToMarker = new QPushButton("Ir para marcação", this);
-	auto *btnRemoveMarker = new QPushButton("Remover marcação", this);
+	auto *btnAddMarker = new QPushButton(obsText("Button.AddMarker"), this);
+	auto *btnJumpToMarker = new QPushButton(obsText("Button.GoToMarker"), this);
+	auto *btnRemoveMarker = new QPushButton(obsText("Button.RemoveMarker"), this);
 
 	timeline = new TimelineWidget(this);
 	timeline->previewSeekRequested = [this](qint64 positionMs) {
@@ -292,7 +331,7 @@ UploadReviewDialog::UploadReviewDialog(const QString &videoPath, QWidget *parent
 
 	currentTimeLabel = new QLabel("00:00:00", this);
 	durationTimeLabel = new QLabel("00:00:00", this);
-	selectedClipLabel = new QLabel("Clip: 00:00:00 → 00:01:30 (90s)", this);
+	selectedClipLabel = new QLabel(obsText("Label.SelectedClipInitial"), this);
 
 	connect(player, &QMediaPlayer::playbackStateChanged, this, [this](QMediaPlayer::PlaybackState state) {
 		playPauseControl->setPlaying(state == QMediaPlayer::PlayingState);
@@ -308,13 +347,8 @@ UploadReviewDialog::UploadReviewDialog(const QString &videoPath, QWidget *parent
 		seekToSeconds(clipTable->item(row, 1)->text().toDouble());
 	});
 
-	connect(btnRemoveMarker, &QPushButton::clicked, this, [this]() {
-		const int row = clipTable->currentRow();
-		if (row >= 0) {
-			clipTable->removeRow(row);
-			refreshTimelineMarkers();
-		}
-	});
+	connect(btnRemoveMarker, &QPushButton::clicked, this,
+		[this]() { removeClipRangeAtRow(clipTable->currentRow()); });
 
 	connect(player, &QMediaPlayer::durationChanged, this, &UploadReviewDialog::updateTimelineDuration);
 	connect(player, &QMediaPlayer::positionChanged, this, &UploadReviewDialog::updateTimelinePosition);
@@ -335,7 +369,8 @@ UploadReviewDialog::UploadReviewDialog(const QString &videoPath, QWidget *parent
 
 	clipTable = new QTableWidget(this);
 	clipTable->setColumnCount(3);
-	clipTable->setHorizontalHeaderLabels({"Marcação", "Start Sec", "End Sec"});
+	clipTable->setHorizontalHeaderLabels(
+		{obsText("Table.Marker"), obsText("Table.StartSec"), obsText("Table.EndSec")});
 	clipTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
 	clipTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
 	clipTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
@@ -354,7 +389,7 @@ UploadReviewDialog::UploadReviewDialog(const QString &videoPath, QWidget *parent
 	});
 
 	topicKeywordsInput = new QLineEdit(this);
-	topicKeywordsInput->setPlaceholderText("Ex: OpusClip, gameplay, tutorial");
+	topicKeywordsInput->setPlaceholderText(obsText("Placeholder.TopicKeywords"));
 
 	modelInput = new QComboBox(this);
 	modelInput->addItems(QStringList{"ClipBasic", "ClipAnything"});
@@ -364,13 +399,13 @@ UploadReviewDialog::UploadReviewDialog(const QString &videoPath, QWidget *parent
 					 "Podcast", "Academic", "Listicle", "Product reviews", "How-to", "Comedy",
 					 "Sports commentary", "Church", "News", "Vlog", "Gaming", "Others"});
 
-	skipCurateInput = new QCheckBox("Skip curate", this);
+	skipCurateInput = new QCheckBox(obsText("Label.SkipCurate"), this);
 
 	auto *advancedTree = new AdvancedSettingsTree(this);
-	advancedTree->addField("Model:", modelInput);
-	advancedTree->addField("Topic keywords:", topicKeywordsInput);
-	advancedTree->addField("Genre:", genreInput);
-	advancedTree->addField("Skip curate:", skipCurateInput);
+	advancedTree->addField(obsText("Settings.Model"), modelInput);
+	advancedTree->addField(obsText("Settings.TopicKeywords"), topicKeywordsInput);
+	advancedTree->addField(obsText("Settings.Genre"), genreInput);
+	advancedTree->addField(obsText("Settings.SkipCurate"), skipCurateInput);
 
 	loadSavedCurationOptions();
 
@@ -386,7 +421,7 @@ UploadReviewDialog::UploadReviewDialog(const QString &videoPath, QWidget *parent
 	mainLayout->addLayout(timelineLayout);
 	mainLayout->addWidget(selectedClipLabel);
 	mainLayout->addLayout(controlsLayout);
-	mainLayout->addWidget(new QLabel("Marcações", this));
+	mainLayout->addWidget(new QLabel(obsText("Label.Markers"), this));
 	mainLayout->addWidget(clipTable);
 	mainLayout->addWidget(advancedTree);
 	mainLayout->addWidget(buttons);
@@ -400,17 +435,11 @@ void UploadReviewDialog::addClipDuration(double startSec, double endSec)
 		endSec = std::clamp(endSec, startSec, durationSec);
 	}
 
-	if (endSec <= startSec)
-		endSec = startSec + DefaultClipDurationSec;
+	clipMarkersSec.append(startSec);
+	if (endSec > startSec && endSec < startSec + DefaultClipDurationSec)
+		clipMarkersSec.append(endSec);
 
-	const int row = clipTable->rowCount();
-	clipTable->insertRow(row);
-	clipTable->setItem(
-		row, 0, new QTableWidgetItem(QString("%1 → %2").arg(formatTimecode(startSec), formatTimecode(endSec))));
-	clipTable->setItem(row, 1, new QTableWidgetItem(QString::number(startSec, 'f', 2)));
-	clipTable->setItem(row, 2, new QTableWidgetItem(QString::number(endSec, 'f', 2)));
-	clipTable->selectRow(row);
-	refreshTimelineMarkers();
+	rebuildClipRanges();
 }
 
 void UploadReviewDialog::addMarkerAtCurrentPosition()
@@ -434,17 +463,36 @@ void UploadReviewDialog::updateTimelineDuration(qint64 newDurationMs)
 	durationMs = newDurationMs;
 	timeline->setDuration(durationMs);
 	durationTimeLabel->setText(formatTimecode(durationMs / 1000.0));
-	refreshTimelineMarkers();
+	rebuildClipRanges();
 }
 
 void UploadReviewDialog::updateSelectedClipPreview(double startSec)
 {
+	if (!selectedClipLabel)
+		return;
+
+	const QVector<ClipDuration> ranges = calculatedClipRanges();
+
+	for (int i = 0; i < ranges.size(); ++i) {
+		const auto &range = ranges[i];
+		if (startSec >= range.startSec && startSec <= range.endSec) {
+			const double selectedSec = std::max(0.0, range.endSec - range.startSec);
+			selectedClipLabel->setText(
+				obsText("Label.SelectedClipRange")
+					.arg(i + 1)
+					.arg(formatTimecode(range.startSec), formatTimecode(range.endSec))
+					.arg(selectedSec, 0, 'f', 0));
+			return;
+		}
+	}
+
 	double endSec = startSec + DefaultClipDurationSec;
 	if (durationMs > 0)
 		endSec = std::min(endSec, durationMs / 1000.0);
 
-	selectedClipLabel->setText(
-		QString("Clip: %1 → %2 (90s)").arg(formatTimecode(startSec), formatTimecode(endSec)));
+	selectedClipLabel->setText(obsText("Label.NextMarkerRange")
+					   .arg(formatTimecode(startSec), formatTimecode(endSec))
+					   .arg(std::max(0.0, endSec - startSec), 0, 'f', 0));
 }
 
 void UploadReviewDialog::seekToSeconds(double seconds)
@@ -476,18 +524,112 @@ void UploadReviewDialog::seekToMilliseconds(qint64 positionMs)
 
 void UploadReviewDialog::refreshTimelineMarkers()
 {
+	if (!timeline)
+		return;
+
 	QList<qint64> markers;
-	markers.reserve(clipTable->rowCount());
+	markers.reserve(clipMarkersSec.size());
 
-	for (int row = 0; row < clipTable->rowCount(); ++row) {
-		const auto *item = clipTable->item(row, 1);
-		if (!item)
-			continue;
-
-		markers.append(static_cast<qint64>(item->text().toDouble() * 1000.0));
-	}
+	for (double markerSec : clipMarkersSec)
+		markers.append(static_cast<qint64>(markerSec * 1000.0));
 
 	timeline->setMarkers(markers);
+	timeline->setClipRanges(calculatedClipRanges());
+}
+
+QVector<ClipDuration> UploadReviewDialog::calculatedClipRanges() const
+{
+	QVector<double> markers = clipMarkersSec;
+	std::sort(markers.begin(), markers.end());
+
+	QVector<ClipDuration> ranges;
+	const double durationSec = durationMs > 0 ? durationMs / 1000.0 : 0.0;
+
+	for (int i = 0; i < markers.size(); i += 2) {
+		double startSec = markers[i];
+		double endSec = 0.0;
+
+		if (i + 1 < markers.size())
+			endSec = markers[i + 1];
+		else
+			endSec = startSec + DefaultClipDurationSec;
+
+		if (durationSec > 0.0) {
+			startSec = std::clamp(startSec, 0.0, durationSec);
+			endSec = std::clamp(endSec, startSec, durationSec);
+		}
+
+		if (endSec > startSec)
+			ranges.append({startSec, endSec});
+	}
+
+	return ranges;
+}
+
+void UploadReviewDialog::rebuildClipRanges()
+{
+	std::sort(clipMarkersSec.begin(), clipMarkersSec.end());
+
+	if (!clipTable) {
+		refreshTimelineMarkers();
+		return;
+	}
+
+	clipTable->setRowCount(0);
+	const QVector<ClipDuration> ranges = calculatedClipRanges();
+
+	for (int i = 0; i < ranges.size(); ++i) {
+		const auto &range = ranges[i];
+		const double selectedSec = std::max(0.0, range.endSec - range.startSec);
+		const int row = clipTable->rowCount();
+		clipTable->insertRow(row);
+		clipTable->setItem(
+			row, 0,
+			new QTableWidgetItem(QString("#%1  %2 → %3  (%4s)")
+						     .arg(i + 1)
+						     .arg(formatTimecode(range.startSec), formatTimecode(range.endSec))
+						     .arg(selectedSec, 0, 'f', 0)));
+		clipTable->setItem(row, 1, new QTableWidgetItem(QString::number(range.startSec, 'f', 2)));
+		clipTable->setItem(row, 2, new QTableWidgetItem(QString::number(range.endSec, 'f', 2)));
+	}
+
+	if (clipTable->rowCount() > 0 && clipTable->currentRow() < 0)
+		clipTable->selectRow(clipTable->rowCount() - 1);
+
+	refreshTimelineMarkers();
+	updateSelectedClipPreview(player ? player->position() / 1000.0 : 0.0);
+}
+
+void UploadReviewDialog::removeClipRangeAtRow(int row)
+{
+	if (row < 0)
+		return;
+
+	QVector<double> markers = clipMarkersSec;
+	std::sort(markers.begin(), markers.end());
+
+	const int markerIndex = row * 2;
+	if (markerIndex >= markers.size())
+		return;
+
+	const double startMarker = markers[markerIndex];
+	const bool hasExplicitEnd = markerIndex + 1 < markers.size();
+	const double endMarker = hasExplicitEnd ? markers[markerIndex + 1] : -1.0;
+
+	auto removeFirstNear = [this](double target) {
+		for (int i = 0; i < clipMarkersSec.size(); ++i) {
+			if (std::abs(clipMarkersSec[i] - target) < 0.01) {
+				clipMarkersSec.removeAt(i);
+				return;
+			}
+		}
+	};
+
+	removeFirstNear(startMarker);
+	if (hasExplicitEnd)
+		removeFirstNear(endMarker);
+
+	rebuildClipRanges();
 }
 
 void UploadReviewDialog::loadSavedCurationOptions()
@@ -541,13 +683,9 @@ CurationSettings UploadReviewDialog::curationSettings() const
 	for (QString keyword : keywords)
 		settings.topicKeywords.append(keyword.trimmed());
 
-	for (int row = 0; row < clipTable->rowCount(); ++row) {
-		const double start = clipTable->item(row, 1)->text().toDouble();
-		const double end = clipTable->item(row, 2)->text().toDouble();
-
-		if (end > start)
-			settings.clipDurations.append({start, end});
-	}
+	const QVector<ClipDuration> ranges = calculatedClipRanges();
+	for (const auto &range : ranges)
+		settings.clipDurations.append(range);
 
 	return settings;
 }

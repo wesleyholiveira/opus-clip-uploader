@@ -17,7 +17,7 @@ public slots:
 	void run();
 
 signals:
-	void progressChanged(int value);
+	void progressChanged(int value, QString message);
 	void finished(QString projectId);
 	void failed(QString message);
 

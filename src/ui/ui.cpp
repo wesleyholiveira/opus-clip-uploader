@@ -11,7 +11,6 @@ extern "C" {
 #endif
 
 #include "ui/upload-review-dialog.hpp"
-#include "ui/advanced-settings-tree.hpp"
 
 #include <utils/config.hpp>
 #include <utils/file.hpp>
@@ -38,6 +37,11 @@ extern "C" {
 #include <QWidget>
 
 #include <functional>
+
+static QString obsText(const char *key)
+{
+	return QString::fromUtf8(obs_module_text(key));
+}
 
 static const QString title("Clip Cropper");
 
@@ -89,7 +93,7 @@ static void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *b
 	const QStringList recordingPaths = get_recording_paths_for_upload();
 
 	if (apiKey.trimmed().isEmpty()) {
-		QMessageBox::warning(dialog, title, "Configure a Opus Clip API Key antes de enviar o vídeo.");
+		QMessageBox::warning(dialog, title, obsText("Message.ConfigureApiKeyBeforeUpload"));
 
 		btnUpload->setEnabled(true);
 		btnCancel->setEnabled(true);
@@ -106,7 +110,7 @@ static void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *b
 	if (recordingPaths.isEmpty()) {
 		obs_log(LOG_ERROR, "No recording path found for upload.");
 
-		QMessageBox::critical(dialog, title, "Nenhum arquivo de gravação válido foi encontrado.");
+		QMessageBox::critical(dialog, title, obsText("Message.NoValidRecordingFile"));
 
 		btnUpload->setEnabled(true);
 		btnCancel->setEnabled(true);
@@ -125,6 +129,7 @@ static void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *b
 	struct UploadBatchState {
 		QStringList paths;
 		QVector<int> progress;
+		QVector<QString> statusMessages;
 		int nextIndex = 0;
 		int running = 0;
 		int completed = 0;
@@ -135,16 +140,18 @@ static void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *b
 	auto *state = new UploadBatchState();
 	state->paths = recordingPaths;
 	state->progress = QVector<int>(recordingPaths.size(), 0);
+	state->statusMessages = QVector<QString>(recordingPaths.size());
 
 	btnUpload->setEnabled(false);
 	btnCancel->setEnabled(false);
 
 	progressBar->show();
 	progressBar->setValue(0);
+	progressBar->setFormat(obsText("Status.ProgressPreparing"));
 
 	if (uploadStatusLabel) {
 		uploadStatusLabel->show();
-		uploadStatusLabel->setText(QString("Preparando upload de %1 arquivo(s)...").arg(state->paths.size()));
+		uploadStatusLabel->setText(obsText("Status.PreparingUpload").arg(state->paths.size()));
 	}
 
 	resize_upload_dialog(dialog, true);
@@ -160,12 +167,22 @@ static void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *b
 
 		progressBar->setValue(globalProgress);
 
-		if (uploadStatusLabel) {
-			uploadStatusLabel->setText(
-				QString("Enviando vídeos para Opus Clip: %1/%2")
-					.arg(qMin(state->completed + state->running, state->paths.size()))
-					.arg(state->paths.size()));
+		QString currentStatus;
+		for (const QString &message : state->statusMessages) {
+			if (!message.trimmed().isEmpty())
+				currentStatus = message;
 		}
+
+		if (currentStatus.trimmed().isEmpty()) {
+			currentStatus = obsText("Status.UploadingVideos")
+						.arg(qMin(state->completed + state->running, state->paths.size()))
+						.arg(state->paths.size());
+		}
+
+		progressBar->setFormat(QString("%1 - %p%").arg(currentStatus));
+
+		if (uploadStatusLabel)
+			uploadStatusLabel->setText(currentStatus);
 	};
 
 	auto finishBatchIfNeeded = [=]() {
@@ -181,9 +198,9 @@ static void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *b
 
 		if (state->failed > 0) {
 			QMessageBox::warning(dialog, title,
-					     QString("Upload finalizado com %1 falha(s).").arg(state->failed));
+					     obsText("Message.UploadFinishedWithFailures").arg(state->failed));
 		} else {
-			QMessageBox::information(dialog, title, "Upload enviado para a Opus Clip com sucesso.");
+			QMessageBox::information(dialog, title, obsText("Message.UploadSuccess"));
 		}
 
 		delete state;
@@ -242,8 +259,10 @@ static void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *b
 
 			QObject::connect(
 				worker, &UploadWorker::progressChanged, progressBar,
-				[=](int value) {
+				[=](int value, const QString &message) {
 					state->progress[index] = value;
+					if (!message.trimmed().isEmpty())
+						state->statusMessages[index] = message;
 					updateProgress();
 				},
 				Qt::QueuedConnection);
@@ -264,6 +283,7 @@ static void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *b
 					state->completed++;
 					state->failed++;
 					state->progress[index] = 100;
+					state->statusMessages[index] = message;
 
 					updateProgress();
 
@@ -285,6 +305,7 @@ static void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *b
 					state->running--;
 					state->completed++;
 					state->progress[index] = 100;
+					state->statusMessages[index] = obsText("Status.ProjectCreated").arg(projectId);
 
 					updateProgress();
 
@@ -326,7 +347,7 @@ void open_settings(void *private_data)
 	apiKeyInput->setPlaceholderText("Opus Clip API Key");
 	apiKeyInput->setText(PluginConfig::getValue("opus_api_key"));
 
-	formLayout->addRow("Opus Clip API Key:", apiKeyInput);
+	formLayout->addRow(obsText("Settings.OpusApiKey"), apiKeyInput);
 
 	QTreeWidget *treeWidget = new QTreeWidget(&dialog);
 	treeWidget->setColumnCount(2);
@@ -355,12 +376,12 @@ void open_settings(void *private_data)
 )");
 
 	auto *advancedItem = new QTreeWidgetItem();
-	advancedItem->setText(0, "Advanced Settings");
+	advancedItem->setText(0, obsText("AdvancedSettings"));
 	advancedItem->setExpanded(false);
 	treeWidget->addTopLevelItem(advancedItem);
 
 	auto *brandItem = new QTreeWidgetItem(advancedItem);
-	brandItem->setText(0, "Brand Template ID:");
+	brandItem->setText(0, obsText("Settings.BrandTemplateId"));
 
 	QLineEdit *brandTemplateIdInput = new QLineEdit(treeWidget);
 	brandTemplateIdInput->setPlaceholderText("Brand Template ID");
@@ -368,7 +389,7 @@ void open_settings(void *private_data)
 	treeWidget->setItemWidget(brandItem, 1, brandTemplateIdInput);
 
 	auto *sourceLangItem = new QTreeWidgetItem(advancedItem);
-	sourceLangItem->setText(0, "Source language:");
+	sourceLangItem->setText(0, obsText("Settings.SourceLanguage"));
 
 	QComboBox *sourceLangInput = new QComboBox(treeWidget);
 	sourceLangInput->addItems(QStringList{"auto", "pt", "en"});
@@ -381,7 +402,7 @@ void open_settings(void *private_data)
 
 	treeWidget->resizeColumnToContents(0);
 
-	QPushButton *btn = new QPushButton("Salvar", &dialog);
+	QPushButton *btn = new QPushButton(obsText("Button.Save"), &dialog);
 
 	mainLayout->addLayout(formLayout);
 	mainLayout->addWidget(treeWidget);
@@ -417,13 +438,13 @@ void open_confirm_dialog(void *private_data)
 	QWidget *parent = reinterpret_cast<QWidget *>(obs_frontend_get_main_window());
 
 	QDialog dialog(parent);
-	dialog.setWindowTitle(title + " - Confirmar Upload");
+	dialog.setWindowTitle(title + " - " + obsText("Dialog.ConfirmUploadTitle"));
 
 	QVBoxLayout *mainLayout = new QVBoxLayout(&dialog);
 	mainLayout->setContentsMargins(22, 16, 22, 16);
 	mainLayout->setSpacing(8);
 
-	QLabel *label = new QLabel("Deseja enviar o vídeo para a Opus Clip realizar os cortes?", &dialog);
+	QLabel *label = new QLabel(obsText("Dialog.ConfirmUploadQuestion"), &dialog);
 	label->setWordWrap(true);
 	mainLayout->addWidget(label);
 
@@ -439,8 +460,8 @@ void open_confirm_dialog(void *private_data)
 	progressBar->hide();
 	mainLayout->addWidget(progressBar);
 
-	QPushButton *btnUpload = new QPushButton("Sim", &dialog);
-	QPushButton *btnCancel = new QPushButton("Não", &dialog);
+	QPushButton *btnUpload = new QPushButton(obsText("Button.Yes"), &dialog);
+	QPushButton *btnCancel = new QPushButton(obsText("Button.No"), &dialog);
 
 	btnUpload->setMinimumHeight(32);
 	btnCancel->setMinimumHeight(32);
@@ -461,36 +482,33 @@ void open_confirm_dialog(void *private_data)
 		dialog.reject();
 	});
 
-	QObject::connect(btnUpload, &QPushButton::clicked,
-			 [&dialog, btnUpload, btnCancel, progressBar, uploadStatusLabel]() {
-				 const QString apiKey = get_opus_api_key();
+	QObject::connect(
+		btnUpload, &QPushButton::clicked, [&dialog, btnUpload, btnCancel, progressBar, uploadStatusLabel]() {
+			const QString apiKey = get_opus_api_key();
 
-				 if (apiKey.trimmed().isEmpty()) {
-					 QMessageBox::warning(
-						 &dialog, title,
-						 "Configure a Opus Clip API Key nas configurações antes de enviar.");
-					 open_settings(nullptr);
-					 return;
-				 }
+			if (apiKey.trimmed().isEmpty()) {
+				QMessageBox::warning(&dialog, title, obsText("Message.ConfigureApiKeyInSettings"));
+				open_settings(nullptr);
+				return;
+			}
 
-				 const QStringList paths = get_recording_paths_for_upload();
+			const QStringList paths = get_recording_paths_for_upload();
 
-				 if (paths.isEmpty()) {
-					 QMessageBox::critical(&dialog, title,
-							       "Nenhum arquivo de gravação válido foi encontrado.");
-					 return;
-				 }
+			if (paths.isEmpty()) {
+				QMessageBox::critical(&dialog, title, obsText("Message.NoValidRecordingFile"));
+				return;
+			}
 
-				 UploadReviewDialog reviewDialog(paths.first(), &dialog);
+			UploadReviewDialog reviewDialog(paths.first(), &dialog);
 
-				 if (reviewDialog.exec() != QDialog::Accepted)
-					 return;
+			if (reviewDialog.exec() != QDialog::Accepted)
+				return;
 
-				 const CurationSettings curationSettings = reviewDialog.curationSettings();
+			const CurationSettings curationSettings = reviewDialog.curationSettings();
 
-				 start_upload(&dialog, btnUpload, btnCancel, progressBar, uploadStatusLabel, apiKey,
-					      curationSettings);
-			 });
+			start_upload(&dialog, btnUpload, btnCancel, progressBar, uploadStatusLabel, apiKey,
+				     curationSettings);
+		});
 
 	dialog.exec();
 }
@@ -504,7 +522,7 @@ void ensure_opus_api_key(QWidget *parent)
 		return;
 	}
 
-	QMessageBox::information(parent, title, "Configure sua Opus Clip API Key antes de enviar vídeos para corte.");
+	QMessageBox::information(parent, title, obsText("Message.ConfigureApiKeyBeforeCuts"));
 
 	open_settings(nullptr);
 }

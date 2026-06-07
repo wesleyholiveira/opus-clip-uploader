@@ -29,6 +29,7 @@ void ensure_opus_api_key(QWidget *parent);
 void set_pending_recording_paths(const QStringList &paths);
 
 OBS_DECLARE_MODULE()
+OBS_MODULE_USE_DEFAULT_LOCALE("clip-cropper", "en-US")
 
 static bool uploadDialogOpen = false;
 

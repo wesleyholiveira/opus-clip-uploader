@@ -331,50 +331,61 @@ add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
 	"${OBS_PLUGIN_BIN_DIR}/"
 )
 
+add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
+	COMMAND ${CMAKE_COMMAND} -E copy_directory
+	"${CMAKE_CURRENT_SOURCE_DIR}/data"
+	"${OBS_PLUGIN_DIR}/data"
+)
+
 install(TARGETS ${CMAKE_PROJECT_NAME}
-	RUNTIME DESTINATION "plugins/${OBS_PLUGIN_NAME}/bin/64bit"
-	LIBRARY DESTINATION "plugins/${OBS_PLUGIN_NAME}/bin/64bit"
-	ARCHIVE DESTINATION "plugins/${OBS_PLUGIN_NAME}/bin/64bit"
+	RUNTIME DESTINATION "obs-plugins/64bit"
+	LIBRARY DESTINATION "obs-plugins/64bit"
+	ARCHIVE DESTINATION "obs-plugins/64bit"
 )
 
 if (WIN32 AND ENABLE_QT)
 	install(FILES ${QT_RUNTIME_DLLS}
-		DESTINATION "plugins/${OBS_PLUGIN_NAME}/bin/64bit"
+		DESTINATION "obs-plugins/64bit"
 	)
 
 	if (QT_TLS_BACKENDS)
 		install(FILES ${QT_TLS_BACKENDS}
-			DESTINATION "plugins/${OBS_PLUGIN_NAME}/bin/64bit/tls"
+			DESTINATION "obs-plugins/64bit/tls"
 		)
 	endif ()
 
 	if (QT_PLATFORM_PLUGINS)
 		install(FILES ${QT_PLATFORM_PLUGINS}
-			DESTINATION "plugins/${OBS_PLUGIN_NAME}/bin/64bit/platforms"
+			DESTINATION "obs-plugins/64bit/platforms"
 		)
 	endif ()
 
 	if (QT_MULTIMEDIA_PLUGINS)
 		install(FILES ${QT_MULTIMEDIA_PLUGINS}
-			DESTINATION "plugins/${OBS_PLUGIN_NAME}/bin/64bit/multimedia"
+			DESTINATION "obs-plugins/64bit/multimedia"
 		)
 	endif ()
 
 	if (QT_IMAGEFORMAT_PLUGINS)
 		install(FILES ${QT_IMAGEFORMAT_PLUGINS}
-			DESTINATION "plugins/${OBS_PLUGIN_NAME}/bin/64bit/imageformats"
+			DESTINATION "obs-plugins/64bit/imageformats"
 		)
 	endif ()
 
 	if (QT_ICONENGINE_PLUGINS)
 		install(FILES ${QT_ICONENGINE_PLUGINS}
-			DESTINATION "plugins/${OBS_PLUGIN_NAME}/bin/64bit/iconengines"
+			DESTINATION "obs-plugins/64bit/iconengines"
 		)
 	endif ()
 
 	if (QT_STYLE_PLUGINS)
 		install(FILES ${QT_STYLE_PLUGINS}
-			DESTINATION "plugins/${OBS_PLUGIN_NAME}/bin/64bit/styles"
+			DESTINATION "obs-plugins/64bit/styles"
 		)
 	endif ()
 endif ()
+
+install(DIRECTORY data/locale/
+	DESTINATION "data/obs-plugins/${OBS_PLUGIN_NAME}/locale"
+	FILES_MATCHING PATTERN "*.ini"
+)

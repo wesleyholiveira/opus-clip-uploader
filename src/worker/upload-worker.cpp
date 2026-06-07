@@ -24,7 +24,7 @@ void UploadWorker::run()
 	auto *request = new OpusClipClient(apiKey, brandTemplateId, sourceLang, curationSettings, this);
 
 	connect(request, &OpusClipClient::progressChanged, this,
-		[this](int progress) { emit progressChanged(progress); });
+		[this](int progress, const QString &message) { emit progressChanged(progress, message); });
 
 	connect(request, &OpusClipClient::uploadFinished, this, [this, request](const OpusUploadResult &result) {
 		emit finished(QString::fromStdString(result.projectId));

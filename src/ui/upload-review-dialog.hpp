@@ -11,6 +11,7 @@
 #include <QTableWidget>
 #include <QVideoWidget>
 #include <QString>
+#include <QVector>
 
 class QAudioOutput;
 class TimelineWidget;
@@ -46,6 +47,8 @@ private:
 	QComboBox *modelInput = nullptr;
 	QCheckBox *skipCurateInput = nullptr;
 
+	QVector<double> clipMarkersSec;
+
 	void addClipDuration(double startSec, double endSec);
 	void addMarkerAtCurrentPosition();
 	void updateTimelinePosition(qint64 positionMs);
@@ -54,6 +57,9 @@ private:
 	void seekToSeconds(double seconds);
 	void seekToMilliseconds(qint64 positionMs);
 	void refreshTimelineMarkers();
+	void rebuildClipRanges();
+	QVector<ClipDuration> calculatedClipRanges() const;
+	void removeClipRangeAtRow(int row);
 	void loadSavedCurationOptions();
 	void saveCurationOptions() const;
 	QString formatTimecode(double seconds) const;

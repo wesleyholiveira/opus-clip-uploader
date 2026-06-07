@@ -8,7 +8,9 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QUrl>
+#include <QStringList>
 
+#include <algorithm>
 #include <utility>
 
 static constexpr const char *OPUS_API_BASE_URL = "https://api.opus.pro";
@@ -28,6 +30,8 @@ OpusClipClient::OpusClipClient(QString apiKey, QString brandTemplateId, QString 
 void OpusClipClient::uploadFileResumableAndCreateProjectAsync(const QString &filePath, const QString &fileName,
 							      const QString &mimeType)
 {
+	createdProjectIds.clear();
+
 	Q_UNUSED(fileName);
 	Q_UNUSED(mimeType);
 
@@ -172,8 +176,8 @@ void OpusClipClient::uploadFileToResumableLocation(const QString &filePath, cons
 		if (bytesTotal <= 0)
 			return;
 
-		const int progress = static_cast<int>((bytesSent * 100) / bytesTotal);
-		emit progressChanged(qBound(0, progress, 100));
+		const int uploadProgress = static_cast<int>((bytesSent * 50) / bytesTotal);
+		emit progressChanged(qBound(0, uploadProgress, 50), QStringLiteral("Uploading video"));
 	});
 
 	connect(reply, &QNetworkReply::finished, this, [this, reply, file, uploadId]() {
@@ -196,13 +200,59 @@ void OpusClipClient::uploadFileToResumableLocation(const QString &filePath, cons
 			return;
 		}
 
-		emit progressChanged(100);
-		createClipProject(uploadId);
+		emit progressChanged(50, QStringLiteral("Upload complete. Creating clip projects..."));
+		createNextClipProject(uploadId, 0);
 	});
 }
 
-void OpusClipClient::createClipProject(const QString &uploadId)
+QVector<ClipDuration> OpusClipClient::projectRanges() const
 {
+	QVector<ClipDuration> ranges = curationSettings.clipDurations;
+
+	if (ranges.isEmpty() && curationSettings.rangeEndSec > curationSettings.rangeStartSec)
+		ranges.append({curationSettings.rangeStartSec, curationSettings.rangeEndSec});
+
+	QVector<ClipDuration> validRanges;
+	validRanges.reserve(ranges.size());
+
+	for (const auto &range : ranges) {
+		if (range.endSec > range.startSec)
+			validRanges.append(range);
+	}
+
+	return validRanges;
+}
+
+void OpusClipClient::createNextClipProject(const QString &uploadId, int projectIndex)
+{
+	const QVector<ClipDuration> ranges = projectRanges();
+
+	if (ranges.isEmpty()) {
+		OpusUploadResult result;
+		result.error.message = "No valid clip ranges were selected";
+		emit uploadFailed(result);
+		return;
+	}
+
+	if (projectIndex >= ranges.size()) {
+		OpusUploadResult result;
+		result.ok = true;
+		result.httpStatus = 200;
+		result.projectId = QStringList(createdProjectIds).join(", ").toStdString();
+		emit progressChanged(100, QStringLiteral("All clip projects created"));
+		emit uploadFinished(result);
+		return;
+	}
+
+	createClipProject(uploadId, ranges[projectIndex], projectIndex, ranges.size());
+}
+
+void OpusClipClient::createClipProject(const QString &uploadId, const ClipDuration &rangeValue, int projectIndex,
+				       int totalProjects)
+{
+	emit progressChanged(50 + static_cast<int>((projectIndex * 50.0) / std::max(1, totalProjects)),
+			     QString("Creating clip project %1/%2").arg(projectIndex + 1).arg(totalProjects));
+
 	QNetworkRequest request{QUrl(QString("%1/api/clip-projects").arg(OPUS_API_BASE_URL))};
 	request.setRawHeader("Accept", "application/json");
 	request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
@@ -221,27 +271,32 @@ void OpusClipClient::createClipProject(const QString &uploadId)
 	QJsonObject curationPref;
 
 	QJsonObject range;
-	range.insert("startSec", curationSettings.rangeStartSec);
-	range.insert("endSec", curationSettings.rangeEndSec);
+	range.insert("startSec", rangeValue.startSec);
+	range.insert("endSec", rangeValue.endSec);
 	curationPref.insert("range", range);
 
 	QJsonArray clipDurations;
-	for (const auto &duration : curationSettings.clipDurations) {
-		QJsonArray item;
-		item.append(duration.startSec);
-		item.append(duration.endSec);
-		clipDurations.append(item);
-	}
+	QJsonArray item;
+	item.append(rangeValue.startSec);
+	item.append(rangeValue.endSec);
+	clipDurations.append(item);
 	curationPref.insert("clipDurations", clipDurations);
+
+	QJsonArray clipStarts;
+	clipStarts.append(rangeValue.startSec);
+	curationPref.insert("clip_start", clipStarts);
+
+	QJsonArray clipDurationSeconds;
+	clipDurationSeconds.append(std::max(0.0, rangeValue.endSec - rangeValue.startSec));
+	curationPref.insert("clip_duration", clipDurationSeconds);
 
 	QJsonArray topicKeywords;
 	for (const QString &keyword : curationSettings.topicKeywords)
 		topicKeywords.append(keyword);
 
-	curationPref.insert("model",
-			    curationSettings.model.trimmed().isEmpty() ? "ClipAnything" : curationSettings.model);
+	curationPref.insert("model", curationSettings.model.trimmed().isEmpty() ? "ClipAnything"
+										: curationSettings.model.trimmed());
 	curationPref.insert("topicKeywords", topicKeywords);
-
 	curationPref.insert("genre", curationSettings.genre.trimmed().isEmpty() ? "Auto" : curationSettings.genre);
 	curationPref.insert("skipCurate", curationSettings.skipCurate);
 
@@ -251,29 +306,34 @@ void OpusClipClient::createClipProject(const QString &uploadId)
 
 	QNetworkReply *reply = network.post(request, body);
 
-	connect(reply, &QNetworkReply::finished, this, [this, reply, uploadId]() {
+	connect(reply, &QNetworkReply::finished, this, [this, reply, uploadId, projectIndex, totalProjects]() {
 		const QByteArray response = reply->readAll();
 		const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 		const QNetworkReply::NetworkError error = reply->error();
+		const QString errorString = reply->errorString();
 
 		reply->deleteLater();
 
 		if (error != QNetworkReply::NoError || status < 200 || status >= 300) {
 			OpusUploadResult result;
 			result.httpStatus = status;
-			result.error.message = QString("Failed to create Opus Clip project: %1 - %2")
-						       .arg(reply->errorString(), QString::fromUtf8(response))
+			result.error.message = QString("Failed to create Opus Clip project %1/%2: %3 - %4")
+						       .arg(projectIndex + 1)
+						       .arg(totalProjects)
+						       .arg(errorString, QString::fromUtf8(response))
 						       .toStdString();
 
 			emit uploadFailed(result);
 			return;
 		}
 
-		OpusUploadResult result;
-		result.httpStatus = status;
-		result.projectId = extractProjectId(response, uploadId).toStdString();
+		const QString projectId = extractProjectId(response, uploadId);
+		createdProjectIds.append(projectId);
 
-		emit uploadFinished(result);
+		emit progressChanged(50 + static_cast<int>(((projectIndex + 1) * 50.0) / std::max(1, totalProjects)),
+				     QString("Created clip project %1/%2").arg(projectIndex + 1).arg(totalProjects));
+
+		createNextClipProject(uploadId, projectIndex + 1);
 	});
 }
 

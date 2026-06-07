@@ -1,6 +1,20 @@
 #include "ui/advanced-settings-tree.hpp"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+#include <obs-module.h>
+#ifdef __cplusplus
+}
+#endif
+
 #include <QFrame>
+#include <QString>
+
+static QString obsText(const char *key)
+{
+	return QString::fromUtf8(obs_module_text(key));
+}
 
 AdvancedSettingsTree::AdvancedSettingsTree(QWidget *parent) : QTreeWidget(parent)
 {
@@ -31,7 +45,7 @@ AdvancedSettingsTree::AdvancedSettingsTree(QWidget *parent) : QTreeWidget(parent
 	)");
 
 	advancedItem = new QTreeWidgetItem();
-	advancedItem->setText(0, "Advanced Settings");
+	advancedItem->setText(0, obsText("AdvancedSettings"));
 	advancedItem->setExpanded(false);
 	addTopLevelItem(advancedItem);
 
