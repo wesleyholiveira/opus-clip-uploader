@@ -11,7 +11,15 @@ if(CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION_MAXIMUM)
   message(DEBUG "Maximum Windows API version: ${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION_MAXIMUM}")
 endif()
 
-if(CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION VERSION_LESS 10.0.20348)
+set(_obs_windows_sdk_version "${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}")
+
+if(NOT _obs_windows_sdk_version)
+  set(_obs_windows_sdk_version "${CMAKE_SYSTEM_VERSION}")
+endif()
+
+message(DEBUG "Effective Windows API version: ${_obs_windows_sdk_version}")
+
+if(_obs_windows_sdk_version VERSION_LESS 10.0.20348)
   message(
     FATAL_ERROR
     "OBS requires Windows 10 SDK version 10.0.20348.0 or more recent.\n"

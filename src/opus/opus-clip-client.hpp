@@ -1,44 +1,33 @@
 #pragma once
 
+#include "models/curation-settings.hpp"
+#include "models/upload-result.hpp"
+
 #include <QObject>
 #include <QByteArray>
 #include <QNetworkAccessManager>
 #include <QString>
 
-#include <string>
-
-struct UploadError {
-	int code = 0;
-	std::string message;
-};
-
-struct UploadResult {
-	bool ok = false;
-	bool completed = false;
-	long httpStatus = 0;
-	std::string response;
-	std::string projectId;
-	std::string uploadId;
-	UploadError error;
-};
-
 class OpusClipClient : public QObject {
 	Q_OBJECT
 
 public:
-	explicit OpusClipClient(QString apiKey, QObject *parent = nullptr);
-
+	explicit OpusClipClient(QString apiKey, QString brandTemplateId = {}, QString sourceLang = "auto",
+				CurationSettings curationSettings = {}, QObject *parent = nullptr);
 	void uploadFileResumableAndCreateProjectAsync(const QString &filePath, const QString &fileName,
 						      const QString &mimeType);
 
 signals:
 	void progressChanged(int progress);
-	void uploadFinished(const UploadResult &result);
-	void uploadFailed(const UploadResult &result);
+	void uploadFinished(const OpusUploadResult &result);
+	void uploadFailed(const OpusUploadResult &result);
 
 private:
 	QNetworkAccessManager network;
 	QString apiKey;
+	QString brandTemplateId;
+	QString sourceLang;
+	CurationSettings curationSettings;
 
 	void createUploadLink(const QString &filePath);
 	void startResumableSession(const QString &filePath, const QString &uploadUrl, const QString &uploadId);

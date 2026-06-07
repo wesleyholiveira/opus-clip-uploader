@@ -183,7 +183,7 @@ void DriveRequest::createResumableSessionAsync()
 void DriveRequest::uploadNextChunkAsync()
 {
 	if (offset >= fileSize) {
-		UploadResult result;
+		UploadChunkResult result;
 		result.ok = true;
 		result.completed = true;
 		result.httpStatus = 200;
@@ -263,7 +263,7 @@ void DriveRequest::uploadNextChunkAsync()
 		if (httpStatus == 200 || httpStatus == 201) {
 			emit progressChanged(100);
 
-			UploadResult result;
+			UploadChunkResult result;
 			result.ok = true;
 			result.completed = true;
 			result.httpStatus = httpStatus;
@@ -320,7 +320,7 @@ void DriveRequest::queryUploadStatusAsync()
 		if (httpStatus == 200 || httpStatus == 201) {
 			emit progressChanged(100);
 
-			UploadResult result;
+			UploadChunkResult result;
 			result.ok = true;
 			result.completed = true;
 			result.httpStatus = httpStatus;
@@ -351,7 +351,7 @@ void DriveRequest::queryUploadStatusAsync()
 
 void DriveRequest::fail(const QString &message, int code, long httpStatus, const QByteArray &body)
 {
-	UploadResult result;
+	UploadChunkResult result;
 	result.ok = false;
 	result.completed = false;
 	result.httpStatus = httpStatus;
@@ -364,7 +364,7 @@ void DriveRequest::fail(const QString &message, int code, long httpStatus, const
 	emit uploadFailed(result);
 }
 
-void DriveRequest::finish(const UploadResult &result)
+void DriveRequest::finish(const UploadChunkResult &result)
 {
 	emit uploadFinished(result);
 }

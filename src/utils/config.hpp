@@ -1,5 +1,6 @@
 #pragma once
 
+#include <obs-data.h>
 #include <QString>
 
 class PluginConfig {

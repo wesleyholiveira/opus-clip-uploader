@@ -10,13 +10,19 @@ extern "C" {
 }
 #endif
 
+#include "ui/upload-review-dialog.hpp"
+#include "ui/advanced-settings-tree.hpp"
+
 #include <utils/config.hpp>
 #include <utils/file.hpp>
 #include <worker/upload-worker.hpp>
 
+#include <QCheckBox>
+#include <QComboBox>
 #include <QDialog>
 #include <QFileInfo>
 #include <QFormLayout>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -25,10 +31,10 @@ extern "C" {
 #include <QProgressBar>
 #include <QPushButton>
 #include <QThread>
-#include <QString>
-#include <QStringList>
-#include <QVector>
+#include <QTreeWidget>
+#include <QTreeWidgetItem>
 #include <QVBoxLayout>
+#include <QVector>
 #include <QWidget>
 
 #include <functional>
@@ -78,7 +84,7 @@ static void resize_upload_dialog(QDialog *dialog, bool expanded)
 }
 
 static void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCancel, QProgressBar *progressBar,
-			 QLabel *uploadStatusLabel, const QString &apiKey)
+			 QLabel *uploadStatusLabel, const QString &apiKey, const CurationSettings &curationSettings)
 {
 	const QStringList recordingPaths = get_recording_paths_for_upload();
 
@@ -220,9 +226,13 @@ static void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *b
 				fInfo.mimeType.c_str());
 
 			auto *thread = new QThread(dialog);
+			const QString brandTemplateId = PluginConfig::getValue("opus_brand_template_id").trimmed();
+			const QString sourceLang = PluginConfig::getValue("opus_source_lang", "auto").trimmed();
+
 			auto *worker = new UploadWorker(apiKey, QString::fromStdString(fInfo.filePath),
 							QString::fromStdString(fInfo.fileName),
-							QString::fromStdString(fInfo.mimeType));
+							QString::fromStdString(fInfo.mimeType), brandTemplateId,
+							sourceLang, curationSettings);
 
 			state->running++;
 
@@ -302,10 +312,10 @@ void open_settings(void *private_data)
 
 	QDialog dialog(parent);
 	dialog.setWindowTitle(title);
-	dialog.resize(520, 180);
+	dialog.resize(620, 300);
 
 	QVBoxLayout *mainLayout = new QVBoxLayout(&dialog);
-	mainLayout->setContentsMargins(20, 20, 20, 0);
+	mainLayout->setContentsMargins(20, 20, 20, 12);
 	mainLayout->setSpacing(12);
 
 	QFormLayout *formLayout = new QFormLayout();
@@ -318,16 +328,81 @@ void open_settings(void *private_data)
 
 	formLayout->addRow("Opus Clip API Key:", apiKeyInput);
 
+	QTreeWidget *treeWidget = new QTreeWidget(&dialog);
+	treeWidget->setColumnCount(2);
+	treeWidget->setHeaderHidden(true);
+	treeWidget->setRootIsDecorated(true);
+	treeWidget->setItemsExpandable(true);
+	treeWidget->setAnimated(true);
+	treeWidget->setMinimumHeight(110);
+	treeWidget->setFrameShape(QFrame::NoFrame);
+	treeWidget->setAutoFillBackground(false);
+	treeWidget->setAttribute(Qt::WA_TranslucentBackground);
+	treeWidget->viewport()->setAutoFillBackground(false);
+	treeWidget->viewport()->setAttribute(Qt::WA_TranslucentBackground);
+
+	treeWidget->setStyleSheet(R"(
+	QTreeWidget {
+		background: transparent;
+		border: none;
+	}
+	QTreeWidget::viewport {
+		background: transparent;
+	}
+	QTreeWidget::item {
+		background: transparent;
+	}
+)");
+
+	auto *advancedItem = new QTreeWidgetItem();
+	advancedItem->setText(0, "Advanced Settings");
+	advancedItem->setExpanded(false);
+	treeWidget->addTopLevelItem(advancedItem);
+
+	auto *brandItem = new QTreeWidgetItem(advancedItem);
+	brandItem->setText(0, "Brand Template ID:");
+
+	QLineEdit *brandTemplateIdInput = new QLineEdit(treeWidget);
+	brandTemplateIdInput->setPlaceholderText("Brand Template ID");
+	brandTemplateIdInput->setText(PluginConfig::getValue("opus_brand_template_id"));
+	treeWidget->setItemWidget(brandItem, 1, brandTemplateIdInput);
+
+	auto *sourceLangItem = new QTreeWidgetItem(advancedItem);
+	sourceLangItem->setText(0, "Source language:");
+
+	QComboBox *sourceLangInput = new QComboBox(treeWidget);
+	sourceLangInput->addItems(QStringList{"auto", "pt", "en"});
+
+	const QString savedSourceLang = PluginConfig::getValue("opus_source_lang", "auto");
+	const int savedSourceLangIndex = sourceLangInput->findText(savedSourceLang);
+	sourceLangInput->setCurrentIndex(savedSourceLangIndex >= 0 ? savedSourceLangIndex : 0);
+
+	treeWidget->setItemWidget(sourceLangItem, 1, sourceLangInput);
+
+	treeWidget->resizeColumnToContents(0);
+
 	QPushButton *btn = new QPushButton("Salvar", &dialog);
 
 	mainLayout->addLayout(formLayout);
+	mainLayout->addWidget(treeWidget);
 	mainLayout->addWidget(btn);
 	mainLayout->addStretch();
 
-	QObject::connect(btn, &QPushButton::clicked, [&dialog, apiKeyInput]() {
-		PluginConfig::setValue("opus_api_key", apiKeyInput->text().trimmed());
+	QObject::connect(treeWidget, &QTreeWidget::itemClicked, [advancedItem](QTreeWidgetItem *item, int column) {
+		Q_UNUSED(column);
 
-		obs_log(LOG_INFO, "Clip Cropper settings saved. Opus Clip API key updated.");
+		if (item == advancedItem)
+			advancedItem->setExpanded(!advancedItem->isExpanded());
+	});
+
+	QObject::connect(btn, &QPushButton::clicked, [&dialog, apiKeyInput, brandTemplateIdInput, sourceLangInput]() {
+		PluginConfig::setValue("opus_api_key", apiKeyInput->text().trimmed());
+		PluginConfig::setValue("opus_brand_template_id", brandTemplateIdInput->text().trimmed());
+
+		const QString sourceLang = sourceLangInput->currentText().trimmed();
+		PluginConfig::setValue("opus_source_lang", sourceLang.isEmpty() ? "auto" : sourceLang);
+
+		obs_log(LOG_INFO, "Clip Cropper settings saved. Opus Clip settings updated.");
 
 		dialog.accept();
 	});
@@ -391,18 +466,30 @@ void open_confirm_dialog(void *private_data)
 				 const QString apiKey = get_opus_api_key();
 
 				 if (apiKey.trimmed().isEmpty()) {
-					 obs_log(LOG_WARNING, "No Opus Clip API key found.");
-
 					 QMessageBox::warning(
 						 &dialog, title,
 						 "Configure a Opus Clip API Key nas configurações antes de enviar.");
-
 					 open_settings(nullptr);
 					 return;
 				 }
 
-				 obs_log(LOG_INFO, "Opus Clip API key found. Starting upload.");
-				 start_upload(&dialog, btnUpload, btnCancel, progressBar, uploadStatusLabel, apiKey);
+				 const QStringList paths = get_recording_paths_for_upload();
+
+				 if (paths.isEmpty()) {
+					 QMessageBox::critical(&dialog, title,
+							       "Nenhum arquivo de gravação válido foi encontrado.");
+					 return;
+				 }
+
+				 UploadReviewDialog reviewDialog(paths.first(), &dialog);
+
+				 if (reviewDialog.exec() != QDialog::Accepted)
+					 return;
+
+				 const CurationSettings curationSettings = reviewDialog.curationSettings();
+
+				 start_upload(&dialog, btnUpload, btnCancel, progressBar, uploadStatusLabel, apiKey,
+					      curationSettings);
 			 });
 
 	dialog.exec();

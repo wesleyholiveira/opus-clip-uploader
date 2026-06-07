@@ -2,15 +2,28 @@
 
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QUrl>
 
+#include <utility>
+
 static constexpr const char *OPUS_API_BASE_URL = "https://api.opus.pro";
 
-OpusClipClient::OpusClipClient(QString apiKey, QObject *parent) : QObject(parent), apiKey(std::move(apiKey)) {}
+OpusClipClient::OpusClipClient(QString apiKey, QString brandTemplateId, QString sourceLang,
+			       CurationSettings curationSettings, QObject *parent)
+	: QObject(parent),
+	  apiKey(std::move(apiKey)),
+	  brandTemplateId(std::move(brandTemplateId)),
+	  sourceLang(std::move(sourceLang)),
+	  curationSettings(std::move(curationSettings))
+{
+	if (this->sourceLang.trimmed().isEmpty())
+		this->sourceLang = "auto";
+}
 
 void OpusClipClient::uploadFileResumableAndCreateProjectAsync(const QString &filePath, const QString &fileName,
 							      const QString &mimeType)
@@ -19,7 +32,7 @@ void OpusClipClient::uploadFileResumableAndCreateProjectAsync(const QString &fil
 	Q_UNUSED(mimeType);
 
 	if (apiKey.trimmed().isEmpty()) {
-		UploadResult result;
+		OpusUploadResult result;
 		result.error.message = "Opus Clip API key is empty";
 		emit uploadFailed(result);
 		return;
@@ -28,7 +41,7 @@ void OpusClipClient::uploadFileResumableAndCreateProjectAsync(const QString &fil
 	QFileInfo info(filePath);
 
 	if (!info.exists() || !info.isFile()) {
-		UploadResult result;
+		OpusUploadResult result;
 		result.error.message = "Invalid video file path";
 		emit uploadFailed(result);
 		return;
@@ -62,7 +75,7 @@ void OpusClipClient::createUploadLink(const QString &filePath)
 		reply->deleteLater();
 
 		if (error != QNetworkReply::NoError || status < 200 || status >= 300) {
-			UploadResult result;
+			OpusUploadResult result;
 			result.httpStatus = status;
 			result.error.message = QString("Failed to create Opus upload link: %1 - %2")
 						       .arg(reply->errorString(), QString::fromUtf8(response))
@@ -79,7 +92,7 @@ void OpusClipClient::createUploadLink(const QString &filePath)
 		const QString uploadId = root.value("uploadId").toString();
 
 		if (uploadUrl.trimmed().isEmpty() || uploadId.trimmed().isEmpty()) {
-			UploadResult result;
+			OpusUploadResult result;
 			result.httpStatus = status;
 			result.error.message = QString("Invalid Opus upload-links response: %1")
 						       .arg(QString::fromUtf8(response))
@@ -111,7 +124,7 @@ void OpusClipClient::startResumableSession(const QString &filePath, const QStrin
 		reply->deleteLater();
 
 		if (error != QNetworkReply::NoError || status < 200 || status >= 300) {
-			UploadResult result;
+			OpusUploadResult result;
 			result.httpStatus = status;
 			result.error.message = QString("Failed to start GCS resumable session: %1 - %2")
 						       .arg(reply->errorString(), QString::fromUtf8(response))
@@ -122,7 +135,7 @@ void OpusClipClient::startResumableSession(const QString &filePath, const QStrin
 		}
 
 		if (location.trimmed().isEmpty()) {
-			UploadResult result;
+			OpusUploadResult result;
 			result.httpStatus = status;
 			result.error.message = "GCS resumable session did not return location header";
 
@@ -140,7 +153,7 @@ void OpusClipClient::uploadFileToResumableLocation(const QString &filePath, cons
 	auto *file = new QFile(filePath, this);
 
 	if (!file->open(QIODevice::ReadOnly)) {
-		UploadResult result;
+		OpusUploadResult result;
 		result.error.message =
 			QString("Failed to open video file for upload: %1").arg(file->errorString()).toStdString();
 
@@ -173,7 +186,7 @@ void OpusClipClient::uploadFileToResumableLocation(const QString &filePath, cons
 		reply->deleteLater();
 
 		if (error != QNetworkReply::NoError || status < 200 || status >= 300) {
-			UploadResult result;
+			OpusUploadResult result;
 			result.httpStatus = status;
 			result.error.message = QString("Failed to upload video to GCS resumable location: %1 - %2")
 						       .arg(reply->errorString(), QString::fromUtf8(response))
@@ -196,11 +209,43 @@ void OpusClipClient::createClipProject(const QString &uploadId)
 	request.setRawHeader("Authorization", QString("Bearer %1").arg(apiKey).toUtf8());
 
 	QJsonObject importPref;
-	importPref.insert("sourceLang", "auto");
+	importPref.insert("sourceLang", sourceLang.trimmed().isEmpty() ? "auto" : sourceLang.trimmed());
 
 	QJsonObject payload;
 	payload.insert("videoUrl", uploadId);
 	payload.insert("importPref", importPref);
+
+	if (!brandTemplateId.trimmed().isEmpty())
+		payload.insert("brandTemplateId", brandTemplateId.trimmed());
+
+	QJsonObject curationPref;
+
+	QJsonObject range;
+	range.insert("startSec", curationSettings.rangeStartSec);
+	range.insert("endSec", curationSettings.rangeEndSec);
+	curationPref.insert("range", range);
+
+	QJsonArray clipDurations;
+	for (const auto &duration : curationSettings.clipDurations) {
+		QJsonArray item;
+		item.append(duration.startSec);
+		item.append(duration.endSec);
+		clipDurations.append(item);
+	}
+	curationPref.insert("clipDurations", clipDurations);
+
+	QJsonArray topicKeywords;
+	for (const QString &keyword : curationSettings.topicKeywords)
+		topicKeywords.append(keyword);
+
+	curationPref.insert("model",
+			    curationSettings.model.trimmed().isEmpty() ? "ClipAnything" : curationSettings.model);
+	curationPref.insert("topicKeywords", topicKeywords);
+
+	curationPref.insert("genre", curationSettings.genre.trimmed().isEmpty() ? "Auto" : curationSettings.genre);
+	curationPref.insert("skipCurate", curationSettings.skipCurate);
+
+	payload.insert("curationPref", curationPref);
 
 	const QByteArray body = QJsonDocument(payload).toJson(QJsonDocument::Compact);
 
@@ -214,7 +259,7 @@ void OpusClipClient::createClipProject(const QString &uploadId)
 		reply->deleteLater();
 
 		if (error != QNetworkReply::NoError || status < 200 || status >= 300) {
-			UploadResult result;
+			OpusUploadResult result;
 			result.httpStatus = status;
 			result.error.message = QString("Failed to create Opus Clip project: %1 - %2")
 						       .arg(reply->errorString(), QString::fromUtf8(response))
@@ -224,7 +269,7 @@ void OpusClipClient::createClipProject(const QString &uploadId)
 			return;
 		}
 
-		UploadResult result;
+		OpusUploadResult result;
 		result.httpStatus = status;
 		result.projectId = extractProjectId(response, uploadId).toStdString();
 

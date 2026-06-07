@@ -1,29 +1,13 @@
 #pragma once
 
+#include "models/upload-result.hpp"
+
 #include <QObject>
 #include <QNetworkAccessManager>
 #include <QFile>
 #include <QString>
 
 #include <cstdint>
-#include <functional>
-#include <string>
-
-struct UploadError {
-	int code = 0;
-	std::string message;
-};
-
-struct UploadResult {
-	bool ok = false;
-	bool completed = false;
-	long httpStatus = 0;
-	std::string response;
-	std::string sessionUrl;
-	std::uint64_t nextOffset = 0;
-	std::uint64_t uploadedBytes = 0;
-	UploadError error;
-};
 
 class DriveRequest : public QObject {
 	Q_OBJECT
@@ -36,8 +20,8 @@ public:
 
 signals:
 	void progressChanged(int progress);
-	void uploadFinished(const UploadResult &result);
-	void uploadFailed(const UploadResult &result);
+	void uploadFinished(const UploadChunkResult &result);
+	void uploadFailed(const UploadChunkResult &result);
 
 private:
 	static constexpr std::uint64_t DefaultChunkSize = 8 * 1024 * 1024;
@@ -61,7 +45,7 @@ private:
 	void queryUploadStatusAsync();
 
 	void fail(const QString &message, int code = -1, long httpStatus = 0, const QByteArray &body = {});
-	void finish(const UploadResult &result);
+	void finish(const UploadChunkResult &result);
 
 	static QString escapeDriveQueryString(QString value);
 	static std::uint64_t fileSizeOrZero(const QString &path);
