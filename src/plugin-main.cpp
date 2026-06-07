@@ -17,7 +17,10 @@ extern "C" {
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
+#include <QAction>
 #include <QFileInfo>
+#include <QMenu>
+#include <QMenuBar>
 #include <QMetaObject>
 #include <QString>
 #include <QStringList>
@@ -25,6 +28,7 @@ extern "C" {
 
 void open_settings(void *private_data);
 void open_confirm_dialog(void *private_data);
+void open_video_editor(void *private_data);
 void ensure_opus_api_key(QWidget *parent);
 void set_pending_recording_paths(const QStringList &paths);
 
@@ -285,6 +289,79 @@ static void clip_cropper_vertical_recording_stopped(void *data, calldata_t *cd)
 	open_confirm_dialog_on_ui_thread();
 }
 
+
+static QString obs_text(const char *key)
+{
+	return QString::fromUtf8(obs_module_text(key));
+}
+
+static QString normalized_menu_title(const QString &title)
+{
+	QString result = title;
+	result.remove('&');
+	return result.trimmed().toLower();
+}
+
+static QMenu *find_tools_menu(QWidget *mainWindow)
+{
+	if (!mainWindow)
+		return nullptr;
+
+	QMenuBar *menuBar = mainWindow->findChild<QMenuBar *>();
+	if (!menuBar)
+		return nullptr;
+
+	for (QAction *action : menuBar->actions()) {
+		QMenu *menu = action ? action->menu() : nullptr;
+		if (!menu)
+			continue;
+
+		const QString objectName = menu->objectName().toLower();
+		const QString title = normalized_menu_title(menu->title());
+
+		if (objectName.contains("tools") || title == "tools" || title == "ferramentas")
+			return menu;
+	}
+
+	return nullptr;
+}
+
+static void add_clip_cropper_tools_submenu_on_ui_thread()
+{
+	QWidget *mainWindow = main_window();
+	QMenu *toolsMenu = find_tools_menu(mainWindow);
+
+	if (!toolsMenu) {
+		obs_log(LOG_WARNING, "[clip-cropper] Tools menu not found. Falling back to flat Tools menu items.");
+		obs_frontend_add_tools_menu_item("Clip Cropper - Settings", open_settings, nullptr);
+		obs_frontend_add_tools_menu_item("Clip Cropper - Video editor", open_video_editor, nullptr);
+		return;
+	}
+
+	QMenu *clipCropperMenu = nullptr;
+	for (QAction *action : toolsMenu->actions()) {
+		QMenu *menu = action ? action->menu() : nullptr;
+		if (menu && menu->objectName() == QStringLiteral("clipCropperToolsMenu")) {
+			clipCropperMenu = menu;
+			break;
+		}
+	}
+
+	if (!clipCropperMenu) {
+		clipCropperMenu = new QMenu(QStringLiteral("Clip Cropper"), toolsMenu);
+		clipCropperMenu->setObjectName(QStringLiteral("clipCropperToolsMenu"));
+		toolsMenu->addMenu(clipCropperMenu);
+	}
+
+	clipCropperMenu->clear();
+
+	QAction *settingsAction = clipCropperMenu->addAction(obs_text("Menu.Settings"));
+	QObject::connect(settingsAction, &QAction::triggered, []() { open_settings(nullptr); });
+
+	QAction *videoEditorAction = clipCropperMenu->addAction(obs_text("Menu.VideoEditor"));
+	QObject::connect(videoEditorAction, &QAction::triggered, []() { open_video_editor(nullptr); });
+}
+
 bool obs_module_load(void)
 {
 	add_clip_cropper_qt_plugin_path();
@@ -297,7 +374,7 @@ bool obs_module_load(void)
 	proc_handler_add(ph, "void clip_cropper_vertical_recording_stopped()", clip_cropper_vertical_recording_stopped,
 			 nullptr);
 
-	obs_frontend_add_tools_menu_item("Clip Cropper Settings", open_settings, nullptr);
+	QMetaObject::invokeMethod(QCoreApplication::instance(), []() { add_clip_cropper_tools_submenu_on_ui_thread(); }, Qt::QueuedConnection);
 	obs_frontend_add_event_callback(on_frontend_event, nullptr);
 
 	obs_log(LOG_INFO, "plugin loaded (version %s)", PLUGIN_VERSION);

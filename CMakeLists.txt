@@ -77,6 +77,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 	src/ui/ui.cpp
 	src/ui/advanced-settings-tree.cpp
 	src/ui/advanced-settings-tree.hpp
+	src/ui/video-marker-editor.cpp
+	src/ui/video-marker-editor.hpp
 	src/ui/upload-review-dialog.cpp
 	src/ui/upload-review-dialog.hpp
 

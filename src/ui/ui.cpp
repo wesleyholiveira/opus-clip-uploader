@@ -11,6 +11,7 @@ extern "C" {
 #endif
 
 #include "ui/upload-review-dialog.hpp"
+#include "ui/video-marker-editor.hpp"
 
 #include <utils/config.hpp>
 #include <utils/file.hpp>
@@ -19,9 +20,11 @@ extern "C" {
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QFrame>
+#include <QTimer>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -97,10 +100,9 @@ static void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *b
 
 		btnUpload->setEnabled(true);
 		btnCancel->setEnabled(true);
-		progressBar->hide();
+		progressBar->parentWidget()->hide();
 
 		if (uploadStatusLabel) {
-			uploadStatusLabel->hide();
 			uploadStatusLabel->clear();
 		}
 
@@ -114,10 +116,9 @@ static void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *b
 
 		btnUpload->setEnabled(true);
 		btnCancel->setEnabled(true);
-		progressBar->hide();
+		progressBar->parentWidget()->hide();
 
 		if (uploadStatusLabel) {
-			uploadStatusLabel->hide();
 			uploadStatusLabel->clear();
 		}
 
@@ -145,6 +146,7 @@ static void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *b
 	btnUpload->setEnabled(false);
 	btnCancel->setEnabled(false);
 
+	progressBar->parentWidget()->show();
 	progressBar->show();
 	progressBar->setValue(0);
 	progressBar->setFormat(obsText("Status.ProgressPreparing"));
@@ -448,17 +450,28 @@ void open_confirm_dialog(void *private_data)
 	label->setWordWrap(true);
 	mainLayout->addWidget(label);
 
-	QLabel *uploadStatusLabel = new QLabel("", &dialog);
-	uploadStatusLabel->setWordWrap(true);
-	uploadStatusLabel->setMinimumHeight(36);
-	uploadStatusLabel->hide();
-	mainLayout->addWidget(uploadStatusLabel);
+	auto *progressContainer = new QFrame(&dialog);
+	progressContainer->setFrameShape(QFrame::NoFrame);
+	progressContainer->hide();
 
-	QProgressBar *progressBar = new QProgressBar(&dialog);
+	auto *progressLayout = new QVBoxLayout(progressContainer);
+	progressLayout->setContentsMargins(0, 8, 0, 8);
+	progressLayout->setSpacing(8);
+
+	QLabel *uploadStatusLabel = new QLabel("", progressContainer);
+	uploadStatusLabel->setWordWrap(true);
+	uploadStatusLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+	uploadStatusLabel->setMinimumHeight(22);
+
+	QProgressBar *progressBar = new QProgressBar(progressContainer);
 	progressBar->setRange(0, 100);
 	progressBar->setValue(0);
-	progressBar->hide();
-	mainLayout->addWidget(progressBar);
+	progressBar->setMinimumHeight(24);
+	progressBar->setTextVisible(true);
+
+	progressLayout->addWidget(uploadStatusLabel);
+	progressLayout->addWidget(progressBar);
+	mainLayout->addWidget(progressContainer);
 
 	QPushButton *btnUpload = new QPushButton(obsText("Button.Yes"), &dialog);
 	QPushButton *btnCancel = new QPushButton(obsText("Button.No"), &dialog);
@@ -509,6 +522,106 @@ void open_confirm_dialog(void *private_data)
 			start_upload(&dialog, btnUpload, btnCancel, progressBar, uploadStatusLabel, apiKey,
 				     curationSettings);
 		});
+
+	dialog.exec();
+}
+
+
+static void upload_reviewed_video(QWidget *parent, const QString &videoPath, const CurationSettings &curationSettings)
+{
+	const QString apiKey = get_opus_api_key();
+
+	if (apiKey.trimmed().isEmpty()) {
+		QMessageBox::warning(parent, title, obsText("Message.ConfigureApiKeyInSettings"));
+		open_settings(nullptr);
+		return;
+	}
+
+	set_pending_recording_paths(QStringList{videoPath});
+
+	QDialog uploadDialog(parent);
+	uploadDialog.setWindowTitle(title + " - " + obsText("Dialog.ConfirmUploadTitle"));
+
+	auto *mainLayout = new QVBoxLayout(&uploadDialog);
+	mainLayout->setContentsMargins(22, 16, 22, 16);
+	mainLayout->setSpacing(10);
+
+	auto *progressContainer = new QFrame(&uploadDialog);
+	progressContainer->setFrameShape(QFrame::NoFrame);
+
+	auto *progressLayout = new QVBoxLayout(progressContainer);
+	progressLayout->setContentsMargins(0, 0, 0, 0);
+	progressLayout->setSpacing(8);
+
+	auto *uploadStatusLabel = new QLabel(obsText("Status.PreparingUpload").arg(1), progressContainer);
+	uploadStatusLabel->setWordWrap(true);
+	uploadStatusLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+	uploadStatusLabel->setMinimumHeight(24);
+
+	auto *progressBar = new QProgressBar(progressContainer);
+	progressBar->setRange(0, 100);
+	progressBar->setValue(0);
+	progressBar->setMinimumHeight(26);
+	progressBar->setTextVisible(true);
+
+	progressLayout->addWidget(uploadStatusLabel);
+	progressLayout->addWidget(progressBar);
+	mainLayout->addWidget(progressContainer);
+
+	auto *btnUpload = new QPushButton(&uploadDialog);
+	auto *btnCancel = new QPushButton(&uploadDialog);
+	btnUpload->hide();
+	btnCancel->hide();
+
+	uploadDialog.setMinimumWidth(540);
+	uploadDialog.adjustSize();
+
+	QTimer::singleShot(0, &uploadDialog, [&uploadDialog, btnUpload, btnCancel, progressBar, uploadStatusLabel, apiKey, curationSettings]() {
+		start_upload(&uploadDialog, btnUpload, btnCancel, progressBar, uploadStatusLabel, apiKey, curationSettings);
+	});
+
+	uploadDialog.exec();
+}
+
+void open_video_editor(void *private_data)
+{
+	UNUSED_PARAMETER(private_data);
+
+	QWidget *parent = reinterpret_cast<QWidget *>(obs_frontend_get_main_window());
+
+	const QString videoPath = QFileDialog::getOpenFileName(parent, obsText("Dialog.SelectVideoTitle"), QString(),
+		obsText("Dialog.VideoFileFilter"));
+
+	if (videoPath.trimmed().isEmpty())
+		return;
+
+	QDialog dialog(parent);
+	dialog.setWindowTitle(title + " - " + obsText("Dialog.VideoEditorTitle"));
+	dialog.resize(980, 720);
+
+	auto *mainLayout = new QVBoxLayout(&dialog);
+	mainLayout->setContentsMargins(12, 12, 12, 12);
+	mainLayout->setSpacing(8);
+
+	auto *editor = new VideoMarkerEditor(videoPath, &dialog);
+	editor->setReviewActionVisible(true);
+	mainLayout->addWidget(editor, 1);
+
+	QObject::connect(editor, &VideoMarkerEditor::reviewRequested, &dialog, [&dialog, editor, videoPath]() {
+		editor->exitFullScreen();
+
+		UploadReviewDialog reviewDialog(videoPath, &dialog);
+		if (reviewDialog.exec() != QDialog::Accepted)
+			return;
+
+		const CurationSettings curationSettings = reviewDialog.curationSettings();
+		upload_reviewed_video(&dialog, videoPath, curationSettings);
+		dialog.accept();
+	});
+
+	QTimer::singleShot(0, editor, [editor]() {
+		editor->toggleFullScreen();
+	});
 
 	dialog.exec();
 }
