@@ -75,6 +75,10 @@ UploadReviewDialog::UploadReviewDialog(const QString &videoPath, QWidget *parent
 	connect(clipTable, &QTableWidget::currentCellChanged, this, [this](int currentRow, int, int, int) {
 		videoEditor->selectRange(currentRow);
 	});
+	connect(clipTable, &QTableWidget::cellClicked, this, [this](int row, int) {
+		videoEditor->selectRange(row);
+		videoEditor->goToSelectedRange();
+	});
 	connect(clipTable, &QTableWidget::cellDoubleClicked, this, [this](int row, int) {
 		videoEditor->selectRange(row);
 		videoEditor->goToSelectedRange();

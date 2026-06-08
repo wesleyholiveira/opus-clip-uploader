@@ -610,12 +610,15 @@ void open_video_editor(void *private_data)
 	QObject::connect(editor, &VideoMarkerEditor::reviewRequested, &dialog, [&dialog, editor, videoPath]() {
 		editor->exitFullScreen();
 
-		UploadReviewDialog reviewDialog(videoPath, &dialog);
-		if (reviewDialog.exec() != QDialog::Accepted)
-			return;
+		QWidget *reviewParent = dialog.parentWidget();
+		dialog.hide();
 
-		const CurationSettings curationSettings = reviewDialog.curationSettings();
-		upload_reviewed_video(&dialog, videoPath, curationSettings);
+		UploadReviewDialog reviewDialog(videoPath, reviewParent);
+		if (reviewDialog.exec() == QDialog::Accepted) {
+			const CurationSettings curationSettings = reviewDialog.curationSettings();
+			upload_reviewed_video(reviewParent, videoPath, curationSettings);
+		}
+
 		dialog.accept();
 	});
 

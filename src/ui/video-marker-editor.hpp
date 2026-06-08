@@ -2,11 +2,11 @@
 
 #include "models/curation-settings.hpp"
 
+#include <QMediaPlayer>
 #include <QWidget>
 #include <QVector>
 
 class QLabel;
-class QMediaPlayer;
 class QAudioOutput;
 class QVideoWidget;
 class TimelineWidget;
@@ -62,6 +62,7 @@ private:
 	QString videoPath;
 	qint64 durationMs = 0;
 	bool updatingTimelineFromPlayer = false;
+	bool pauseAfterSeekWarmup = false;
 	int selectedRangeIndex = -1;
 
 	QMediaPlayer *player = nullptr;
@@ -91,6 +92,8 @@ private:
 	void addClipDuration(double startSec, double endSec);
 	void updateTimelinePosition(qint64 positionMs);
 	void updateTimelineDuration(qint64 newDurationMs);
+	void handleMediaStatusChanged(QMediaPlayer::MediaStatus status);
+	void warmUpVideoFrameAfterSeek(bool wasPlaying);
 	void updateSelectedClipPreview(double startSec);
 	void refreshTimelineMarkers();
 	void positionOverlayControls();

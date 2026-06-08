@@ -325,6 +325,27 @@ set_target_properties_plugin(${CMAKE_PROJECT_NAME}
 	OUTPUT_NAME ${_name}
 )
 
+set(WHISPER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(WHISPER_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+
+add_subdirectory(deps/whisper.cpp EXCLUDE_FROM_ALL)
+
+set_target_properties(whisper PROPERTIES
+    COMPILE_WARNING_AS_ERROR OFF
+)
+
+if(MSVC)
+    target_compile_options(whisper PRIVATE /WX-)
+endif()
+
+target_link_libraries(clip-cropper
+    PRIVATE
+        whisper
+)
+
 add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
 	COMMAND ${CMAKE_COMMAND} -E make_directory "${OBS_PLUGIN_BIN_DIR}"
 
