@@ -9,6 +9,10 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+
+      - name: Fix format script permission
+        run: chmod +x build-aux/run-clang-format
+
       - name: clang-format check 🐉
         id: clang-format
         uses: ./.github/actions/run-clang-format

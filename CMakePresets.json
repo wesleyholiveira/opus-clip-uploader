@@ -114,6 +114,15 @@
         "CMAKE_COMPILE_WARNING_AS_ERROR": false,
         "CMAKE_EXPORT_COMPILE_COMMANDS": true
       }
+    },
+    {
+      "name": "ubuntu-ninja-cuda-x86_64",
+      "inherits": ["ubuntu-x86_64"],
+      "cacheVariables": {
+        "ENABLE_WHISPER_CUDA": true,
+        "CMAKE_COMPILE_WARNING_AS_ERROR": false,
+        "CMAKE_EXPORT_COMPILE_COMMANDS": true
+      }
     }
   ],
   "buildPresets": [
@@ -135,6 +144,11 @@
     {
       "name": "ubuntu-ci-x86_64",
       "configurePreset": "ubuntu-ci-x86_64",
+      "configuration": "RelWithDebInfo"
+    },
+    {
+      "name": "ubuntu-ninja-cuda-x86_64",
+      "configurePreset": "ubuntu-ninja-cuda-x86_64",
       "configuration": "RelWithDebInfo"
     }
   ]

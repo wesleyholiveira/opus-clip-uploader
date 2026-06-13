@@ -189,7 +189,12 @@ ${_usage_host:-}"
       *) cmake_args+=(--debug-output) ;;
     }
 
-    local -r _preset="${target%%-*}${CI:+-ci}"
+    local _preset="${target%%-*}${CI:+-ci}"
+
+    if [[ ${target} == ubuntu-* && ${ENABLE_WHISPER_CUDA:-0} == 1 ]] {
+      _preset="ubuntu-ninja-cuda"
+    }
+    
     case ${target} {
       ubuntu-*)
         cmake_args+=(
