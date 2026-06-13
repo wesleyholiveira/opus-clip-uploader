@@ -13,6 +13,9 @@ extern "C" {
 #include "ui/upload-review-dialog.hpp"
 #include "ui/video-marker-editor.hpp"
 
+#include <gpt/gpt-prompt-client.hpp>
+#include <gpt/gpt-prompt-store.hpp>
+#include <transcription/transcript-store.hpp>
 #include <utils/config.hpp>
 #include <utils/file.hpp>
 #include <worker/upload-worker.hpp>
@@ -31,6 +34,10 @@ extern "C" {
 #include <QMessageBox>
 #include <QObject>
 #include <QProgressBar>
+#include <QProgressDialog>
+#include <QEventLoop>
+#include <QElapsedTimer>
+#include <QCoreApplication>
 #include <QPushButton>
 #include <QThread>
 #include <QTreeWidget>
@@ -73,6 +80,22 @@ static QStringList get_recording_paths_for_upload()
 static QString get_opus_api_key()
 {
 	return PluginConfig::getValue("opus_api_key").trimmed();
+}
+
+static QString get_openai_api_key()
+{
+	return PluginConfig::getValue("openai_api_key").trimmed();
+}
+
+static QString get_openai_model()
+{
+	return PluginConfig::getValue("openai_model", "gpt-5.4-mini").trimmed();
+}
+
+static void set_combo_current_data(QComboBox *combo, const QString &value, int fallbackIndex = 0)
+{
+	const int index = combo->findData(value);
+	combo->setCurrentIndex(index >= 0 ? index : fallbackIndex);
 }
 
 static void resize_upload_dialog(QDialog *dialog, bool expanded)
@@ -248,10 +271,13 @@ static void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *b
 			const QString brandTemplateId = PluginConfig::getValue("opus_brand_template_id").trimmed();
 			const QString sourceLang = PluginConfig::getValue("opus_source_lang", "auto").trimmed();
 
+			const QString openAiApiKey = get_openai_api_key();
+			const QString openAiModel = get_openai_model();
+
 			auto *worker = new UploadWorker(apiKey, QString::fromStdString(fInfo.filePath),
 							QString::fromStdString(fInfo.fileName),
 							QString::fromStdString(fInfo.mimeType), brandTemplateId,
-							sourceLang, curationSettings);
+							sourceLang, curationSettings, openAiApiKey, openAiModel);
 
 			state->running++;
 
@@ -351,6 +377,21 @@ void open_settings(void *private_data)
 
 	formLayout->addRow(obsText("Settings.OpusApiKey"), apiKeyInput);
 
+	QLineEdit *openAiApiKeyInput = new QLineEdit(&dialog);
+	openAiApiKeyInput->setEchoMode(QLineEdit::Password);
+	openAiApiKeyInput->setPlaceholderText("OpenAI API Key");
+	openAiApiKeyInput->setText(PluginConfig::getValue("openai_api_key"));
+	formLayout->addRow(obsText("Settings.OpenAiApiKey"), openAiApiKeyInput);
+
+	QComboBox *whisperModelInput = new QComboBox(&dialog);
+	whisperModelInput->addItem(obsText("WhisperModel.Tiny"), QStringLiteral("ggml-tiny.bin"));
+	whisperModelInput->addItem(obsText("WhisperModel.Base"), QStringLiteral("ggml-base.bin"));
+	whisperModelInput->addItem(obsText("WhisperModel.Small"), QStringLiteral("ggml-small.bin"));
+	whisperModelInput->addItem(obsText("WhisperModel.Medium"), QStringLiteral("ggml-medium.bin"));
+	whisperModelInput->addItem(obsText("WhisperModel.LargeV3"), QStringLiteral("ggml-large-v3.bin"));
+	set_combo_current_data(whisperModelInput, PluginConfig::getValue("whisper_model_file", "ggml-base.bin"), 1);
+	formLayout->addRow(obsText("Settings.WhisperModel"), whisperModelInput);
+
 	QTreeWidget *treeWidget = new QTreeWidget(&dialog);
 	treeWidget->setColumnCount(2);
 	treeWidget->setHeaderHidden(true);
@@ -402,6 +443,21 @@ void open_settings(void *private_data)
 
 	treeWidget->setItemWidget(sourceLangItem, 1, sourceLangInput);
 
+	auto *openAiModelItem = new QTreeWidgetItem(advancedItem);
+	openAiModelItem->setText(0, obsText("Settings.OpenAiModel"));
+
+	QComboBox *openAiModelInput = new QComboBox(treeWidget);
+	openAiModelInput->addItem(QStringLiteral("GPT-5.4 mini"), QStringLiteral("gpt-5.4-mini"));
+	openAiModelInput->addItem(QStringLiteral("GPT-5.4 nano"), QStringLiteral("gpt-5.4-nano"));
+	openAiModelInput->addItem(QStringLiteral("GPT-5.5"), QStringLiteral("gpt-5.5"));
+	openAiModelInput->addItem(QStringLiteral("GPT-5.4"), QStringLiteral("gpt-5.4"));
+	openAiModelInput->addItem(QStringLiteral("GPT-5.2"), QStringLiteral("gpt-5.2"));
+	openAiModelInput->addItem(QStringLiteral("GPT-5 mini"), QStringLiteral("gpt-5-mini"));
+	openAiModelInput->addItem(QStringLiteral("GPT-5"), QStringLiteral("gpt-5"));
+	openAiModelInput->addItem(QStringLiteral("GPT-4.1 mini"), QStringLiteral("gpt-4.1-mini"));
+	set_combo_current_data(openAiModelInput, PluginConfig::getValue("openai_model", "gpt-5.4-mini"), 0);
+	treeWidget->setItemWidget(openAiModelItem, 1, openAiModelInput);
+
 	treeWidget->resizeColumnToContents(0);
 
 	QPushButton *btn = new QPushButton(obsText("Button.Save"), &dialog);
@@ -418,9 +474,12 @@ void open_settings(void *private_data)
 			advancedItem->setExpanded(!advancedItem->isExpanded());
 	});
 
-	QObject::connect(btn, &QPushButton::clicked, [&dialog, apiKeyInput, brandTemplateIdInput, sourceLangInput]() {
+	QObject::connect(btn, &QPushButton::clicked, [&dialog, apiKeyInput, openAiApiKeyInput, whisperModelInput, brandTemplateIdInput, sourceLangInput, openAiModelInput]() {
 		PluginConfig::setValue("opus_api_key", apiKeyInput->text().trimmed());
 		PluginConfig::setValue("opus_brand_template_id", brandTemplateIdInput->text().trimmed());
+		PluginConfig::setValue("openai_api_key", openAiApiKeyInput->text().trimmed());
+		PluginConfig::setValue("whisper_model_file", whisperModelInput->currentData().toString());
+		PluginConfig::setValue("openai_model", openAiModelInput->currentData().toString().trimmed().isEmpty() ? QStringLiteral("gpt-5.4-mini") : openAiModelInput->currentData().toString().trimmed());
 
 		const QString sourceLang = sourceLangInput->currentText().trimmed();
 		PluginConfig::setValue("opus_source_lang", sourceLang.isEmpty() ? "auto" : sourceLang);
@@ -431,6 +490,92 @@ void open_settings(void *private_data)
 	});
 
 	dialog.exec();
+}
+
+
+static RecordingTranscript wait_for_transcript(const QString &videoPath, int timeoutMs = 120000)
+{
+	QElapsedTimer timer;
+	timer.start();
+
+	while (timer.elapsed() < timeoutMs) {
+		RecordingTranscript transcript = TranscriptStore::loadForVideoPath(videoPath);
+		if (!transcript.segments.isEmpty())
+			return transcript;
+
+		QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+		QThread::msleep(200);
+	}
+
+	return {};
+}
+
+static QString generate_custom_prompt_before_review(QWidget *parent, const QString &videoPath)
+{
+	const QString cachedPrompt = GptPromptStore::loadForVideoPath(videoPath);
+	if (!cachedPrompt.trimmed().isEmpty()) {
+		obs_log(LOG_INFO, "GPT prompt cache hit for %s", videoPath.toUtf8().constData());
+		return cachedPrompt;
+	}
+
+	const QString openAiApiKey = get_openai_api_key();
+	if (openAiApiKey.trimmed().isEmpty()) {
+		obs_log(LOG_WARNING, "OpenAI API key is empty. Skipping GPT prompt generation before review.");
+		return {};
+	}
+
+	QProgressDialog progress(obsText("Status.GeneratingGptPrompt"), QString(), 0, 0, parent);
+	progress.setWindowTitle(obsText("Dialog.GeneratingGptPromptTitle"));
+	progress.setWindowModality(Qt::WindowModal);
+	progress.setCancelButton(nullptr);
+	progress.setMinimumDuration(0);
+	progress.show();
+	QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+
+	obs_log(LOG_INFO, "Waiting for transcript before GPT prompt generation: %s", videoPath.toUtf8().constData());
+	const RecordingTranscript transcript = wait_for_transcript(videoPath);
+	if (transcript.segments.isEmpty()) {
+		progress.close();
+		obs_log(LOG_WARNING, "No transcript available for %s after waiting. Skipping GPT prompt generation before review.",
+			videoPath.toUtf8().constData());
+		QMessageBox::warning(parent, title, obsText("Message.TranscriptUnavailableForGpt"));
+		return {};
+	}
+
+	CurationSettings settings;
+	settings.rangeStartSec = 0.0;
+	settings.rangeEndSec = transcript.segments.isEmpty() ? 0.0 : transcript.segments.last().endSec;
+	settings.genre = QStringLiteral("Auto");
+	settings.model = QStringLiteral("ClipAnything");
+	settings.skipCurate = false;
+
+	QEventLoop loop;
+	QString generatedPrompt;
+
+	GptPromptClient client(openAiApiKey, get_openai_model(), parent);
+	QObject::connect(&client, &GptPromptClient::promptReady, &loop, [&](const QString &prompt) {
+		generatedPrompt = prompt.trimmed();
+		loop.quit();
+	});
+	QObject::connect(&client, &GptPromptClient::promptFailed, &loop, [&](const QString &message) {
+		obs_log(LOG_WARNING, "GPT prompt generation before review failed: %s", message.toUtf8().constData());
+		loop.quit();
+	});
+
+	obs_log(LOG_INFO, "Sending transcript to GPT before review. video=%s segments=%d model=%s",
+		videoPath.toUtf8().constData(), transcript.segments.size(), get_openai_model().toUtf8().constData());
+	client.createOpusPromptAsync(videoPath, transcript, settings);
+	loop.exec();
+	progress.close();
+
+	if (generatedPrompt.trimmed().isEmpty()) {
+		QMessageBox::warning(parent, title, obsText("Status.GptPromptUnavailable"));
+		return {};
+	}
+
+	GptPromptStore::saveForVideoPath(videoPath, generatedPrompt);
+	obs_log(LOG_INFO, "GPT prompt generated and cached before review for %s", videoPath.toUtf8().constData());
+	return generatedPrompt;
 }
 
 void open_confirm_dialog(void *private_data)
@@ -511,6 +656,8 @@ void open_confirm_dialog(void *private_data)
 				QMessageBox::critical(&dialog, title, obsText("Message.NoValidRecordingFile"));
 				return;
 			}
+
+			generate_custom_prompt_before_review(&dialog, paths.first());
 
 			UploadReviewDialog reviewDialog(paths.first(), &dialog);
 

@@ -17,4 +17,5 @@ struct CurationSettings {
 	QString genre = "Auto";
 	bool skipCurate = false;
 	QString model = "ClipAnything";
+	QString aiPrompt;
 };

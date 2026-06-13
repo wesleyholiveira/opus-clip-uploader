@@ -83,6 +83,17 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 	src/ui/upload-review-dialog.hpp
 
 	src/models/curation-settings.hpp
+	src/models/transcript.hpp
+
+	src/transcription/transcript-store.cpp
+	src/transcription/transcript-store.hpp
+	src/transcription/realtime-transcription-service.cpp
+	src/transcription/realtime-transcription-service.hpp
+
+	src/gpt/gpt-prompt-client.cpp
+	src/gpt/gpt-prompt-client.hpp
+	src/gpt/gpt-prompt-store.cpp
+	src/gpt/gpt-prompt-store.hpp
 
 	src/utils/config.cpp
 	src/utils/config.hpp
@@ -106,6 +117,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 target_include_directories(${CMAKE_PROJECT_NAME}
 	PRIVATE
 	${CMAKE_CURRENT_SOURCE_DIR}/src
+	${CMAKE_CURRENT_SOURCE_DIR}/deps/whisper.cpp/include
+	${CMAKE_CURRENT_SOURCE_DIR}/deps/whisper.cpp/ggml/include
 )
 
 target_link_libraries(${CMAKE_PROJECT_NAME}
@@ -328,8 +341,58 @@ set_target_properties_plugin(${CMAKE_PROJECT_NAME}
 set(WHISPER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(WHISPER_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+set(WHISPER_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
+set(GGML_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
+set(GGML_NATIVE ON CACHE BOOL "" FORCE)
+
+option(ENABLE_WHISPER_CUDA "Enable Whisper CUDA backend" OFF)
+
+if (ENABLE_WHISPER_CUDA)
+	message(STATUS "Whisper CUDA/GPU backend requested")
+	set(GGML_CUDA ON CACHE BOOL "" FORCE)
+
+	if (MSVC)
+		# CUDA 12.8 does not officially recognize Visual Studio 18 / MSVC 14.50 yet.
+		# Keep this at the root level so local builds and CI use the same reproducible flags
+		# without editing deps/whisper.cpp.
+		set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -allow-unsupported-compiler")
+
+		# ggml-cuda currently appends `-Werror all-warnings`, so these NVCC diagnostics
+		# become hard errors with newer CUDA/MSVC combinations.
+		set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcudafe --diag_suppress=221")
+		set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcudafe --diag_suppress=177")
+	endif ()
+else ()
+	message(STATUS "Whisper CUDA/GPU backend disabled")
+	set(GGML_CUDA OFF CACHE BOOL "" FORCE)
+endif ()
 
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+
+if (MSVC)
+	foreach (flag_var
+		CMAKE_CUDA_FLAGS
+		CMAKE_CUDA_FLAGS_DEBUG
+		CMAKE_CUDA_FLAGS_RELEASE
+		CMAKE_CUDA_FLAGS_RELWITHDEBINFO
+		CMAKE_CUDA_FLAGS_MINSIZEREL
+	)
+		string(REPLACE "/W3" "" ${flag_var} "${${flag_var}}")
+		string(REPLACE "/utf-8" "" ${flag_var} "${${flag_var}}")
+		string(REPLACE "/Brepro" "" ${flag_var} "${${flag_var}}")
+		string(REPLACE "/permissive-" "" ${flag_var} "${${flag_var}}")
+		string(REPLACE "/Gy" "" ${flag_var} "${${flag_var}}")
+		string(REPLACE "/GL" "" ${flag_var} "${${flag_var}}")
+		string(REPLACE "/Oi" "" ${flag_var} "${${flag_var}}")
+	endforeach ()
+endif ()
+
+set(GGML_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
+set(WHISPER_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
+
+if (MSVC AND ENABLE_WHISPER_CUDA)
+	set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -allow-unsupported-compiler -Xcudafe --diag_suppress=177 -Xcudafe --diag_suppress=221 -Xcudafe --diag_suppress=550")
+endif ()
 
 add_subdirectory(deps/whisper.cpp EXCLUDE_FROM_ALL)
 
@@ -359,6 +422,15 @@ add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
 	"${CMAKE_CURRENT_SOURCE_DIR}/data"
 	"${OBS_PLUGIN_DIR}/data"
 )
+
+if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/models")
+	add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
+		COMMAND ${CMAKE_COMMAND} -E make_directory "${OBS_PLUGIN_DIR}/data/models"
+		COMMAND ${CMAKE_COMMAND} -E copy_directory
+		"${CMAKE_CURRENT_SOURCE_DIR}/models"
+		"${OBS_PLUGIN_DIR}/data/models"
+	)
+endif ()
 
 install(TARGETS ${CMAKE_PROJECT_NAME}
 	RUNTIME DESTINATION "obs-plugins/64bit"

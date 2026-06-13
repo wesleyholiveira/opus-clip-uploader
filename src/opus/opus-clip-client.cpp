@@ -1,5 +1,13 @@
 #include "opus/opus-clip-client.hpp"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+#include <obs-module.h>
+#ifdef __cplusplus
+}
+#endif
+
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -14,6 +22,11 @@
 #include <utility>
 
 static constexpr const char *OPUS_API_BASE_URL = "https://api.opus.pro";
+
+static QString obsText(const char *key)
+{
+	return QString::fromUtf8(obs_module_text(key));
+}
 
 OpusClipClient::OpusClipClient(QString apiKey, QString brandTemplateId, QString sourceLang,
 			       CurationSettings curationSettings, QObject *parent)
@@ -177,7 +190,7 @@ void OpusClipClient::uploadFileToResumableLocation(const QString &filePath, cons
 			return;
 
 		const int uploadProgress = static_cast<int>((bytesSent * 50) / bytesTotal);
-		emit progressChanged(qBound(0, uploadProgress, 50), QStringLiteral("Uploading video"));
+		emit progressChanged(qBound(0, uploadProgress, 50), obsText("Status.UploadingVideo"));
 	});
 
 	connect(reply, &QNetworkReply::finished, this, [this, reply, file, uploadId]() {
@@ -200,7 +213,7 @@ void OpusClipClient::uploadFileToResumableLocation(const QString &filePath, cons
 			return;
 		}
 
-		emit progressChanged(50, QStringLiteral("Upload complete. Creating clip projects..."));
+		emit progressChanged(50, obsText("Status.UploadCompleteCreatingProjects"));
 		createNextClipProject(uploadId, 0);
 	});
 }
@@ -239,7 +252,7 @@ void OpusClipClient::createNextClipProject(const QString &uploadId, int projectI
 		result.ok = true;
 		result.httpStatus = 200;
 		result.projectId = QStringList(createdProjectIds).join(", ").toStdString();
-		emit progressChanged(100, QStringLiteral("All clip projects created"));
+		emit progressChanged(100, obsText("Status.AllClipProjectsCreated"));
 		emit uploadFinished(result);
 		return;
 	}
@@ -251,7 +264,7 @@ void OpusClipClient::createClipProject(const QString &uploadId, const ClipDurati
 				       int totalProjects)
 {
 	emit progressChanged(50 + static_cast<int>((projectIndex * 50.0) / std::max(1, totalProjects)),
-			     QString("Creating clip project %1/%2").arg(projectIndex + 1).arg(totalProjects));
+			     obsText("Status.CreatingClipProject").arg(projectIndex + 1).arg(totalProjects));
 
 	QNetworkRequest request{QUrl(QString("%1/api/clip-projects").arg(OPUS_API_BASE_URL))};
 	request.setRawHeader("Accept", "application/json");
@@ -300,6 +313,11 @@ void OpusClipClient::createClipProject(const QString &uploadId, const ClipDurati
 	curationPref.insert("genre", curationSettings.genre.trimmed().isEmpty() ? "Auto" : curationSettings.genre);
 	curationPref.insert("skipCurate", curationSettings.skipCurate);
 
+	if (!curationSettings.aiPrompt.trimmed().isEmpty()) {
+		curationPref.insert("prompt", curationSettings.aiPrompt.trimmed());
+		curationPref.insert("userPrompt", curationSettings.aiPrompt.trimmed());
+	}
+
 	payload.insert("curationPref", curationPref);
 
 	const QByteArray body = QJsonDocument(payload).toJson(QJsonDocument::Compact);
@@ -331,7 +349,7 @@ void OpusClipClient::createClipProject(const QString &uploadId, const ClipDurati
 		createdProjectIds.append(projectId);
 
 		emit progressChanged(50 + static_cast<int>(((projectIndex + 1) * 50.0) / std::max(1, totalProjects)),
-				     QString("Created clip project %1/%2").arg(projectIndex + 1).arg(totalProjects));
+				     obsText("Status.CreatedClipProject").arg(projectIndex + 1).arg(totalProjects));
 
 		createNextClipProject(uploadId, projectIndex + 1);
 	});

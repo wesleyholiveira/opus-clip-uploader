@@ -38,7 +38,8 @@
         "windows-x64"
       ],
       "cacheVariables": {
-        "CMAKE_COMPILE_WARNING_AS_ERROR": true
+        "CMAKE_COMPILE_WARNING_AS_ERROR": true,
+        "ENABLE_WHISPER_CUDA": true
       }
     },
     {
@@ -89,11 +90,38 @@
         "ubuntu-x86_64"
       ],
       "cacheVariables": {
-        "CMAKE_COMPILE_WARNING_AS_ERROR": true
+        "CMAKE_COMPILE_WARNING_AS_ERROR": true,
+        "ENABLE_WHISPER_CUDA": true
+      }
+    },
+    {
+      "name": "windows-ninja-cuda-x64",
+      "displayName": "Windows Ninja CUDA x64",
+      "inherits": [
+        "template"
+      ],
+      "binaryDir": "${sourceDir}/build_cuda",
+      "generator": "Ninja",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_SYSTEM_VERSION": "10.0.26100.0",
+        "ENABLE_WHISPER_CUDA": true,
+        "CMAKE_COMPILE_WARNING_AS_ERROR": false,
+        "CMAKE_EXPORT_COMPILE_COMMANDS": true
       }
     }
   ],
   "buildPresets": [
+    {
+      "name": "windows-ninja-cuda-x64",
+      "configurePreset": "windows-ninja-cuda-x64",
+      "configuration": "RelWithDebInfo"
+    },
     {
       "name": "windows-ci-x64",
       "configurePreset": "windows-ci-x64",

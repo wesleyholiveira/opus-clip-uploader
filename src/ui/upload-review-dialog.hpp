@@ -6,6 +6,7 @@
 #include <QComboBox>
 #include <QDialog>
 #include <QLineEdit>
+#include <QPlainTextEdit>
 #include <QTableWidget>
 #include <QString>
 
@@ -28,6 +29,7 @@ private:
 	QComboBox *genreInput = nullptr;
 	QComboBox *modelInput = nullptr;
 	QCheckBox *skipCurateInput = nullptr;
+	QPlainTextEdit *customPromptInput = nullptr;
 
 	void refreshClipTable(const QVector<ClipDuration> &ranges);
 	void loadSavedCurationOptions();

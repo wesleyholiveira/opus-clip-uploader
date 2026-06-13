@@ -239,7 +239,8 @@ private:
 			return -1;
 
 		const QRectF track = trackRect();
-		const QRectF hitBand(track.left() - 8.0, track.top() - 22.0, track.width() + 16.0, track.height() + 34.0);
+		const QRectF hitBand(track.left() - 8.0, track.top() - 22.0, track.width() + 16.0,
+				     track.height() + 34.0);
 		if (!hitBand.contains(QPointF(x, y)))
 			return -1;
 
@@ -354,15 +355,13 @@ VideoMarkerEditor::VideoMarkerEditor(const QString &videoPath, QWidget *parent) 
 	videoWidget->setMouseTracking(true);
 	videoWidget->installEventFilter(this);
 
-	fullscreenControl = new QToolButton(this);
+	fullscreenControl = new QToolButton(videoContainer);
 	fullscreenControl->setIcon(style()->standardIcon(QStyle::SP_TitleBarMaxButton));
 	fullscreenControl->setToolTip(obsText("Tooltip.FullScreen"));
 	fullscreenControl->setAutoRaise(true);
 	fullscreenControl->setCursor(Qt::PointingHandCursor);
 	fullscreenControl->setText(QString());
 	fullscreenControl->setFocusPolicy(Qt::NoFocus);
-	fullscreenControl->setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
-	fullscreenControl->setAttribute(Qt::WA_ShowWithoutActivating, true);
 	fullscreenControl->setFixedSize(38, 38);
 	fullscreenControl->setIconSize(QSize(22, 22));
 	fullscreenControl->setStyleSheet(
@@ -370,6 +369,7 @@ VideoMarkerEditor::VideoMarkerEditor(const QString &videoPath, QWidget *parent) 
 		"QToolButton:hover { background: rgba(0, 0, 0, 220); border: 1px solid rgba(255, 255, 255, 160); }");
 
 	videoOverlayLayout->addWidget(videoWidget, 0, 0);
+	videoOverlayLayout->addWidget(fullscreenControl, 0, 0, Qt::AlignRight | Qt::AlignBottom);
 	fullscreenControl->hide();
 	connect(fullscreenControl, &QToolButton::clicked, this, &VideoMarkerEditor::toggleFullScreen);
 
@@ -380,11 +380,17 @@ VideoMarkerEditor::VideoMarkerEditor(const QString &videoPath, QWidget *parent) 
 	player->setSource(QUrl::fromLocalFile(videoPath));
 
 	playPauseControl = new PlaybackIconButton(editorSurface);
-	playPauseControl->clicked = [this]() { togglePlayback(); };
+	playPauseControl->clicked = [this]() {
+		togglePlayback();
+	};
 
 	timeline = new TimelineWidget(editorSurface);
-	timeline->previewSeekRequested = [this](qint64 positionMs) { seekToMilliseconds(positionMs); };
-	timeline->commitSeekRequested = [this](qint64 positionMs) { seekToMilliseconds(positionMs); };
+	timeline->previewSeekRequested = [this](qint64 positionMs) {
+		seekToMilliseconds(positionMs);
+	};
+	timeline->commitSeekRequested = [this](qint64 positionMs) {
+		seekToMilliseconds(positionMs);
+	};
 
 	currentTimeLabel = new QLabel("00:00:00", editorSurface);
 	durationTimeLabel = new QLabel("00:00:00", editorSurface);
@@ -453,6 +459,11 @@ QVector<ClipDuration> VideoMarkerEditor::clipRanges() const
 
 	QVector<ClipDuration> ranges;
 	const double durationSec = durationMs > 0 ? durationMs / 1000.0 : 0.0;
+
+	if (markers.isEmpty() && durationSec > 0.0) {
+		ranges.append({0.0, std::min(DefaultClipDurationSec, durationSec)});
+		return ranges;
+	}
 
 	for (int i = 0; i < markers.size(); i += 2) {
 		double startSec = markers[i];
@@ -560,8 +571,8 @@ bool VideoMarkerEditor::shouldHandleShortcut() const
 bool VideoMarkerEditor::eventFilter(QObject *watched, QEvent *event)
 {
 	if ((watched == videoContainer || watched == videoWidget || watched == editorSurface) &&
-	    (event->type() == QEvent::Resize || event->type() == QEvent::Show || event->type() == QEvent::LayoutRequest ||
-	     event->type() == QEvent::Move)) {
+	    (event->type() == QEvent::Resize || event->type() == QEvent::Show ||
+	     event->type() == QEvent::LayoutRequest || event->type() == QEvent::Move)) {
 		QTimer::singleShot(0, this, [this]() { positionOverlayControls(); });
 	}
 
@@ -585,16 +596,15 @@ void VideoMarkerEditor::positionOverlayControls()
 		return;
 
 	/*
-	 * QVideoWidget on Windows is commonly backed by a native video surface.
-	 * Regular child widgets can be painted behind that surface, so the fullscreen
-	 * control is a tiny frameless tool window positioned over the video in global
-	 * coordinates.  This keeps the icon visible above QMedia/QVideoWidget.
+	 * Keep the fullscreen control as a child of the video container.  The previous
+	 * implementation used a top-level Tool window with global coordinates, which
+	 * made the icon stay fixed on the screen when the review/editor window moved.
 	 */
-	const QPoint bottomRight = videoContainer->mapToGlobal(
-		QPoint(videoContainer->width() - fullscreenControl->width() - 14,
-		       videoContainer->height() - fullscreenControl->height() - 14));
+	const int margin = 14;
+	const int x = std::max(margin, videoContainer->width() - fullscreenControl->width() - margin);
+	const int y = std::max(margin, videoContainer->height() - fullscreenControl->height() - margin);
 
-	fullscreenControl->move(bottomRight);
+	fullscreenControl->move(x, y);
 	fullscreenControl->show();
 	fullscreenControl->raise();
 }
@@ -801,9 +811,9 @@ void VideoMarkerEditor::updateSelectedClipPreview(double startSec)
 		const auto &range = ranges[selectedRangeIndex];
 		const double selectedSec = std::max(0.0, range.endSec - range.startSec);
 		selectedClipLabel->setText(obsText("Label.SelectedClipRange")
-					       .arg(selectedRangeIndex + 1)
-					       .arg(formatTimecode(range.startSec), formatTimecode(range.endSec))
-					       .arg(selectedSec, 0, 'f', 0));
+						   .arg(selectedRangeIndex + 1)
+						   .arg(formatTimecode(range.startSec), formatTimecode(range.endSec))
+						   .arg(selectedSec, 0, 'f', 0));
 		return;
 	}
 
@@ -811,10 +821,11 @@ void VideoMarkerEditor::updateSelectedClipPreview(double startSec)
 		const auto &range = ranges[i];
 		if (startSec >= range.startSec && startSec <= range.endSec) {
 			const double selectedSec = std::max(0.0, range.endSec - range.startSec);
-			selectedClipLabel->setText(obsText("Label.SelectedClipRange")
-						       .arg(i + 1)
-						       .arg(formatTimecode(range.startSec), formatTimecode(range.endSec))
-						       .arg(selectedSec, 0, 'f', 0));
+			selectedClipLabel->setText(
+				obsText("Label.SelectedClipRange")
+					.arg(i + 1)
+					.arg(formatTimecode(range.startSec), formatTimecode(range.endSec))
+					.arg(selectedSec, 0, 'f', 0));
 			return;
 		}
 	}
@@ -870,11 +881,6 @@ void VideoMarkerEditor::handleMediaStatusChanged(QMediaPlayer::MediaStatus statu
 	if (status != QMediaPlayer::EndOfMedia)
 		return;
 
-	/*
-	 * WMF/QVideoWidget can leave the native surface black at EndOfMedia.
-	 * Loop back to the beginning immediately so playback never gets stuck on the
-	 * final black frame.
-	 */
 	pauseAfterSeekWarmup = false;
 	updatingTimelineFromPlayer = true;
 	player->setPosition(0);
@@ -979,7 +985,8 @@ QString VideoMarkerEditor::markerConfigKey() const
 	if (fileName.isEmpty())
 		return {};
 
-	const QString safeFileName = QString::fromLatin1(fileName.toUtf8().toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals));
+	const QString safeFileName = QString::fromLatin1(
+		fileName.toUtf8().toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals));
 	return QStringLiteral("video_markers.%1").arg(safeFileName);
 }
 

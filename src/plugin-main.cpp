@@ -11,6 +11,8 @@ extern "C" {
 #endif
 
 #include <ui/ui.hpp>
+#include <transcription/realtime-transcription-service.hpp>
+#include <utils/config.hpp>
 
 #include <memory>
 
@@ -22,6 +24,7 @@ extern "C" {
 #include <QMenu>
 #include <QMenuBar>
 #include <QMetaObject>
+#include <QMessageBox>
 #include <QString>
 #include <QStringList>
 #include <QWidget>
@@ -53,6 +56,35 @@ static void add_clip_cropper_qt_plugin_path()
 	for (const QString &path : QCoreApplication::libraryPaths()) {
 		blog(LOG_INFO, "[clip-cropper] Qt library path: %s", path.toUtf8().constData());
 	}
+}
+
+static QString clip_cropper_plugin_dir()
+{
+	const QString appData = QString::fromLocal8Bit(qgetenv("APPDATA"));
+
+	if (!appData.trimmed().isEmpty()) {
+		return QDir::fromNativeSeparators(appData) + QStringLiteral("/obs-studio/plugins/clip-cropper");
+	}
+
+	return QDir::homePath() + QStringLiteral("/AppData/Roaming/obs-studio/plugins/clip-cropper");
+}
+
+static QString resolve_whisper_model_path()
+{
+	QString modelFile = PluginConfig::getValue("whisper_model_file", "ggml-base.bin").trimmed();
+
+	if (modelFile.isEmpty())
+		modelFile = QStringLiteral("ggml-base.bin");
+
+	// Backward compatibility with builds that saved an absolute model path before the combobox.
+	const QString legacyModelPath = PluginConfig::getValue("whisper_model_path").trimmed();
+	if (!legacyModelPath.isEmpty() && QFileInfo::exists(legacyModelPath))
+		return legacyModelPath;
+
+	if (QFileInfo(modelFile).isAbsolute())
+		return modelFile;
+
+	return QDir(clip_cropper_plugin_dir() + QStringLiteral("/models")).filePath(modelFile);
 }
 
 static QString obs_current_recording_output_path()
@@ -217,6 +249,7 @@ static void on_frontend_event(enum obs_frontend_event event, void *private_data)
 
 		reset_recording_state();
 		recordingStartedAt = QDateTime::currentDateTime().addSecs(-10);
+		global_realtime_transcription_service()->start(resolve_whisper_model_path());
 
 		ensure_opus_api_key_on_ui_thread();
 		break;
@@ -227,6 +260,7 @@ static void on_frontend_event(enum obs_frontend_event event, void *private_data)
 		recordingStoppedAt = QDateTime::currentDateTime().addSecs(10);
 
 		const QStringList paths = resolve_recording_files_for_upload();
+		global_realtime_transcription_service()->stopAndSaveForVideos(paths);
 
 		if (!paths.isEmpty()) {
 			set_pending_recording_paths(paths);
@@ -252,6 +286,7 @@ static void clip_cropper_vertical_recording_started(void *data, calldata_t *cd)
 
 	reset_recording_state();
 	recordingStartedAt = QDateTime::currentDateTime().addSecs(-10);
+	global_realtime_transcription_service()->start(resolve_whisper_model_path());
 
 	ensure_opus_api_key_on_ui_thread();
 }
@@ -264,6 +299,7 @@ static void clip_cropper_vertical_recording_stopped(void *data, calldata_t *cd)
 
 	recordingStoppedAt = QDateTime::currentDateTime().addSecs(10);
 
+	QStringList paths;
 	const char *path = calldata_string(cd, "path");
 
 	if (path && path[0] != '\0') {
@@ -271,28 +307,53 @@ static void clip_cropper_vertical_recording_stopped(void *data, calldata_t *cd)
 		const QFileInfo info(receivedPath);
 
 		if (info.isFile()) {
-			set_pending_recording_paths({info.absoluteFilePath()});
+			paths = {info.absoluteFilePath()};
+			set_pending_recording_paths(paths);
 		} else if (info.isDir()) {
-			const QStringList files = video_files_modified_between(info.absoluteFilePath(),
-									       recordingStartedAt, recordingStoppedAt);
+			paths = video_files_modified_between(info.absoluteFilePath(), recordingStartedAt,
+							     recordingStoppedAt);
 
-			if (!files.isEmpty())
-				set_pending_recording_paths(files);
+			if (!paths.isEmpty())
+				set_pending_recording_paths(paths);
 		}
 	} else {
-		const QStringList paths = resolve_recording_files_for_upload();
+		paths = resolve_recording_files_for_upload();
 
 		if (!paths.isEmpty())
 			set_pending_recording_paths(paths);
 	}
 
+	global_realtime_transcription_service()->stopAndSaveForVideos(paths);
 	open_confirm_dialog_on_ui_thread();
 }
-
 
 static QString obs_text(const char *key)
 {
 	return QString::fromUtf8(obs_module_text(key));
+}
+
+static void show_missing_whisper_model_warning_on_ui_thread()
+{
+	const QString modelFile = PluginConfig::getValue("whisper_model_file", "ggml-base.bin").trimmed();
+	const QString displayModel = modelFile.isEmpty() ? QStringLiteral("ggml-base.bin") : modelFile;
+	const QString modelPath = resolve_whisper_model_path();
+
+	blog(LOG_INFO, "[clip-cropper] Validating selected Whisper model at startup: file=%s path=%s",
+	     displayModel.toUtf8().constData(), modelPath.toUtf8().constData());
+
+	if (!modelPath.trimmed().isEmpty() && QFileInfo(modelPath).isFile()) {
+		blog(LOG_INFO, "[clip-cropper] Selected Whisper model exists: %s", modelPath.toUtf8().constData());
+		return;
+	}
+
+	blog(LOG_ERROR, "[clip-cropper] Selected Whisper model was not found: %s", modelPath.toUtf8().constData());
+
+	QWidget *parent = reinterpret_cast<QWidget *>(obs_frontend_get_main_window());
+	const QString title = QStringLiteral("Clip Cropper - ") + obs_text("Dialog.MissingWhisperModelTitle");
+
+	QMessageBox::critical(
+		parent, title,
+		obs_text("Message.MissingWhisperModel").arg(displayModel, QDir::toNativeSeparators(modelPath)));
 }
 
 static QString normalized_menu_title(const QString &title)
@@ -374,7 +435,12 @@ bool obs_module_load(void)
 	proc_handler_add(ph, "void clip_cropper_vertical_recording_stopped()", clip_cropper_vertical_recording_stopped,
 			 nullptr);
 
-	QMetaObject::invokeMethod(QCoreApplication::instance(), []() { add_clip_cropper_tools_submenu_on_ui_thread(); }, Qt::QueuedConnection);
+	QMetaObject::invokeMethod(
+		QCoreApplication::instance(), []() { add_clip_cropper_tools_submenu_on_ui_thread(); },
+		Qt::QueuedConnection);
+	QMetaObject::invokeMethod(
+		QCoreApplication::instance(), []() { show_missing_whisper_model_warning_on_ui_thread(); },
+		Qt::QueuedConnection);
 	obs_frontend_add_event_callback(on_frontend_event, nullptr);
 
 	obs_log(LOG_INFO, "plugin loaded (version %s)", PLUGIN_VERSION);
@@ -385,5 +451,6 @@ bool obs_module_load(void)
 void obs_module_unload(void)
 {
 	obs_frontend_remove_event_callback(on_frontend_event, nullptr);
+	global_realtime_transcription_service()->stopAndSaveForVideos({});
 	obs_log(LOG_INFO, "plugin unloaded");
 }

@@ -22,6 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          submodules: recursive
           fetch-depth: 0
       - name: Check Event Data ☑️
         id: setup
@@ -207,6 +208,15 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ matrix.os }}-ccache-x86_64-
 
+      - name: Install CUDA 🟩
+        uses: Jimver/cuda-toolkit@v0.2.24
+        with:
+          cuda: '12.8.0'
+          method: network
+
+      - name: Check CUDA 🔎
+        run: nvcc --version
+
       - name: Build Plugin 🧱
         uses: ./.github/actions/build-plugin
         with:
@@ -272,6 +282,15 @@ jobs:
 
           "pluginName=${ProductName}" >> $env:GITHUB_OUTPUT
           "pluginVersion=${ProductVersion}" >> $env:GITHUB_OUTPUT
+
+      - name: Install CUDA 🟩
+        uses: Jimver/cuda-toolkit@v0.2.24
+        with:
+          cuda: '12.8.0'
+          method: network
+
+      - name: Check CUDA 🔎
+        run: nvcc --version
 
       - name: Build Plugin 🧱
         uses: ./.github/actions/build-plugin

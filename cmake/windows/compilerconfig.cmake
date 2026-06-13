@@ -35,17 +35,13 @@ if(CMAKE_CXX_STANDARD GREATER_EQUAL 20)
 endif()
 
 add_compile_options(
-  /W3
-  /utf-8
-  /Brepro
-  /permissive-
-  "$<$<COMPILE_LANG_AND_ID:C,MSVC>:${_obs_msvc_c_options}>"
-  "$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:${_obs_msvc_cpp_options}>"
-  "$<$<COMPILE_LANG_AND_ID:C,Clang>:${_obs_clang_c_options}>"
-  "$<$<COMPILE_LANG_AND_ID:CXX,Clang>:${_obs_clang_cxx_options}>"
-  $<$<NOT:$<CONFIG:Debug>>:/Gy>
-  $<$<NOT:$<CONFIG:Debug>>:/GL>
-  $<$<NOT:$<CONFIG:Debug>>:/Oi>
+	$<$<COMPILE_LANGUAGE:C,CXX>:/W3>
+	$<$<COMPILE_LANGUAGE:C,CXX>:/utf-8>
+	$<$<COMPILE_LANGUAGE:C,CXX>:/Brepro>
+	$<$<COMPILE_LANGUAGE:C,CXX>:/permissive->
+	$<$<COMPILE_LANGUAGE:C,CXX>:/Gy>
+	$<$<COMPILE_LANGUAGE:C,CXX>:/GL>
+	$<$<COMPILE_LANGUAGE:C,CXX>:/Oi>
 )
 
 add_compile_definitions(

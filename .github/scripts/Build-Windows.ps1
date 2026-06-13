@@ -47,23 +47,37 @@ function Build {
     Push-Location -Stack BuildTemp
     Ensure-Location $ProjectRoot
 
+    $ConfigurePreset = "windows-ci-${Target}"
+    $BuildPreset = "windows-ci-${Target}"
+    $BuildDir = "$ProjectRoot/build_${Target}"
+    $IsNinjaPreset = $false
+
+    if ($Target -eq "x64") {
+        $ConfigurePreset = "windows-ninja-cuda-x64"
+        $BuildPreset = "windows-ninja-cuda-x64"
+        $BuildDir = "$ProjectRoot/build_cuda"
+        $IsNinjaPreset = $true
+    }
+
     $CmakeArgs = @(
-        '--preset', "windows-ci-${Target}"
+        '--preset', $ConfigurePreset
     )
 
     $CmakeBuildArgs = @(
         '--build'
-        '--preset', "windows-ci-${Target}"
-        '--config', $Configuration
+        '--preset', $BuildPreset
         '--parallel'
-        '--', '/consoleLoggerParameters:Summary', '/noLogo'
     )
 
     $CmakeInstallArgs = @(
-        '--install', "$ProjectRoot/build_${Target}"
+        '--install', $BuildDir
         '--prefix', "$ProjectRoot/release/${Configuration}"
-        '--config', $Configuration
     )
+
+    if (-not $IsNinjaPreset) {
+        $CmakeBuildArgs += @('--config', $Configuration)
+        $CmakeInstallArgs += @('--config', $Configuration)
+    }
 
     if ($DebugPreference -eq 'Continue') {
         $CmakeArgs += '--debug-output'
