@@ -394,6 +394,11 @@ if (MSVC AND ENABLE_WHISPER_CUDA)
 	set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -allow-unsupported-compiler -Xcudafe --diag_suppress=177 -Xcudafe --diag_suppress=221 -Xcudafe --diag_suppress=550")
 endif ()
 
+if (APPLE)
+	set(CMAKE_OBJC_FLAGS "${CMAKE_OBJC_FLAGS} -fno-objc-arc")
+	set(CMAKE_OBJCXX_FLAGS "${CMAKE_OBJCXX_FLAGS} -fno-objc-arc")
+endif ()
+
 add_subdirectory(deps/whisper.cpp EXCLUDE_FROM_ALL)
 
 set_target_properties(whisper PROPERTIES
