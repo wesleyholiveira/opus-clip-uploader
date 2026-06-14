@@ -208,11 +208,26 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ matrix.os }}-ccache-x86_64-
 
+      - name: Restore CUDA cache 🟩
+        id: cuda-cache
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/cuda-12.8
+          key: ${{ runner.os }}-${{ matrix.os }}-cuda-12.8.0
+
       - name: Install CUDA 🟩
-        uses: Jimver/cuda-toolkit@v0.2.24
+        if: steps.cuda-cache.outputs.cache-hit != 'true'
+        uses: Jimver/cuda-toolkit@v0.2.35
         with:
           cuda: '12.8.0'
           method: network
+          sub-packages: '["nvcc", "cudart", "cuda_runtime", "cuda_cudart_dev"]'
+
+      - name: Export cached CUDA env 🟩
+        run: |
+          echo "CUDA_PATH=/usr/local/cuda-12.8" >> $GITHUB_ENV
+          echo "/usr/local/cuda-12.8/bin" >> $GITHUB_PATH
+          echo "LD_LIBRARY_PATH=/usr/local/cuda-12.8/lib64:${LD_LIBRARY_PATH}" >> $GITHUB_ENV
 
       - name: Check CUDA 🔎
         run: nvcc --version
@@ -283,11 +298,25 @@ jobs:
           "pluginName=${ProductName}" >> $env:GITHUB_OUTPUT
           "pluginVersion=${ProductVersion}" >> $env:GITHUB_OUTPUT
 
+      - name: Restore CUDA cache 🟩
+        id: cuda-cache
+        uses: actions/cache@v4
+        with:
+          path: 'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8'
+          key: ${{ runner.os }}-cuda-12.8.0
+
       - name: Install CUDA 🟩
-        uses: Jimver/cuda-toolkit@v0.2.24
+        if: steps.cuda-cache.outputs.cache-hit != 'true'
+        uses: Jimver/cuda-toolkit@v0.2.35
         with:
           cuda: '12.8.0'
           method: network
+          sub-packages: '["nvcc", "visual_studio_integration", "cudart", "cudart_dev"]'
+
+      - name: Export cached CUDA env 🟩
+        run: |
+          "CUDA_PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8" >> $env:GITHUB_ENV
+          "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\bin" >> $env:GITHUB_PATH
 
       - name: Check CUDA 🔎
         run: nvcc --version

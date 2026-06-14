@@ -57,15 +57,27 @@ file(GLOB_RECURSE W32_PTHREADS_CONFIG
 
 message(STATUS "W32_PTHREADS_CONFIG = ${W32_PTHREADS_CONFIG}")
 
-if (W32_PTHREADS_CONFIG)
-	list(GET W32_PTHREADS_CONFIG 0 W32_PTHREADS_CONFIG_FILE)
-	get_filename_component(W32_PTHREADS_DIR "${W32_PTHREADS_CONFIG_FILE}" DIRECTORY)
+if (WIN32)
+	file(GLOB_RECURSE W32_PTHREADS_CONFIG
+		"${CMAKE_SOURCE_DIR}/.deps/*w32-pthreadsConfig.cmake"
+		"${CMAKE_SOURCE_DIR}/.deps/*w32-pthreads-config.cmake"
+	)
 
-	set("w32-pthreads_DIR" "${W32_PTHREADS_DIR}" CACHE PATH "Path to w32-pthreadsConfig.cmake" FORCE)
+	message(STATUS "W32_PTHREADS_CONFIG = ${W32_PTHREADS_CONFIG}")
 
-	list(APPEND CMAKE_PREFIX_PATH "${W32_PTHREADS_DIR}")
+	if (W32_PTHREADS_CONFIG)
+		list(GET W32_PTHREADS_CONFIG 0 W32_PTHREADS_CONFIG_FILE)
+		get_filename_component(W32_PTHREADS_DIR "${W32_PTHREADS_CONFIG_FILE}" DIRECTORY)
 
-	message(STATUS "w32-pthreads_DIR = ${w32-pthreads_DIR}")
+		set("w32-pthreads_DIR" "${W32_PTHREADS_DIR}" CACHE PATH "Path to w32-pthreadsConfig.cmake" FORCE)
+		list(APPEND CMAKE_PREFIX_PATH "${W32_PTHREADS_DIR}")
+
+		message(STATUS "w32-pthreads_DIR = ${w32-pthreads_DIR}")
+
+		find_package(w32-pthreads REQUIRED CONFIG)
+	else ()
+		message(FATAL_ERROR "Could not find w32-pthreadsConfig.cmake under .deps")
+	endif ()
 endif ()
 
 find_package(libobs REQUIRED)
@@ -395,6 +407,9 @@ if (MSVC AND ENABLE_WHISPER_CUDA)
 endif ()
 
 if (APPLE)
+	set(GGML_METAL OFF CACHE BOOL "" FORCE)
+	set(WHISPER_COREML OFF CACHE BOOL "" FORCE)
+	set(GGML_ACCELERATE ON CACHE BOOL "" FORCE)
 	set(CMAKE_OBJC_FLAGS "${CMAKE_OBJC_FLAGS} -fno-objc-arc")
 	set(CMAKE_OBJCXX_FLAGS "${CMAKE_OBJCXX_FLAGS} -fno-objc-arc")
 endif ()
