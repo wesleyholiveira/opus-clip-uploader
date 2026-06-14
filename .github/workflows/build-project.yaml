@@ -221,7 +221,7 @@ jobs:
         with:
           cuda: '12.8.0'
           method: network
-          sub-packages: '["nvcc", "cudart", "cudart_dev", "nvrtc", "nvrtc_dev"]'
+          sub-packages: '["nvcc", "cudart", "cudart-dev", "nvrtc", "nvrtc-dev"]'
 
       - name: Export cached CUDA env 🟩
         run: |
@@ -311,7 +311,7 @@ jobs:
         with:
           cuda: '12.8.0'
           method: network
-          sub-packages: '["nvcc", "visual_studio_integration", "cudart", "cudart_dev"]'
+          sub-packages: '["nvcc", "cudart", "cudart_dev"]'
 
       - name: Export cached CUDA env 🟩
         run: |
