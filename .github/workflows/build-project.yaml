@@ -221,7 +221,7 @@ jobs:
         with:
           cuda: '12.8.0'
           method: network
-          sub-packages: '["nvcc", "cudart", "cudart-dev", "nvrtc", "nvrtc-dev"]'
+          sub-packages: '["nvcc", "cudart", "cudart-dev", "nvrtc", "nvrtc-dev", "cublas", "cublas-dev"]'
 
       - name: Export cached CUDA env 🟩
         run: |
@@ -317,6 +317,11 @@ jobs:
           "CUDA_PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8" >> $env:GITHUB_ENV
           "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\bin" >> $env:GITHUB_PATH
 
+      - name: Setup MSVC 🪟
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+        
       - name: Check CUDA 🔎
         run: nvcc --version
 
