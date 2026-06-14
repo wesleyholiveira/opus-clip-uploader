@@ -212,10 +212,12 @@ private:
 
 			if (!samples.isEmpty()) {
 				const auto bytes = reinterpret_cast<const char *>(samples.constData());
-				const qint64 byteCount = static_cast<qint64>(samples.size()) * static_cast<qint64>(sizeof(float));
+				const qint64 byteCount =
+					static_cast<qint64>(samples.size()) * static_cast<qint64>(sizeof(float));
 				const qint64 written = file.write(bytes, byteCount);
 				if (written != byteCount) {
-					blog(LOG_WARNING, "[clip-cropper] Incomplete transcription capture write. expectedBytes=%lld writtenBytes=%lld",
+					blog(LOG_WARNING,
+					     "[clip-cropper] Incomplete transcription capture write. expectedBytes=%lld writtenBytes=%lld",
 					     static_cast<long long>(byteCount), static_cast<long long>(written));
 				}
 				writtenSamples.fetch_add(samples.size());
@@ -224,7 +226,8 @@ private:
 
 		file.flush();
 		file.close();
-		blog(LOG_INFO, "[clip-cropper] Audio capture writer stopped. path=%s writtenSamples=%lld droppedSamples=%lld",
+		blog(LOG_INFO,
+		     "[clip-cropper] Audio capture writer stopped. path=%s writtenSamples=%lld droppedSamples=%lld",
 		     capturePath.toUtf8().constData(), static_cast<long long>(writtenSamples.load()),
 		     static_cast<long long>(droppedSamples.load()));
 	}
@@ -244,7 +247,8 @@ private:
 
 class PostRecordingTranscriptionJob {
 public:
-	PostRecordingTranscriptionJob(QString modelPath, QString capturePath, int sourceSampleRate, QStringList videoPaths)
+	PostRecordingTranscriptionJob(QString modelPath, QString capturePath, int sourceSampleRate,
+				      QStringList videoPaths)
 		: modelPath(std::move(modelPath)),
 		  capturePath(std::move(capturePath)),
 		  sourceSampleRate(sourceSampleRate),
@@ -255,13 +259,15 @@ public:
 	void run()
 	{
 		if (videoPaths.isEmpty()) {
-			blog(LOG_INFO, "[clip-cropper] Post-recording transcription skipped because there are no video paths.");
+			blog(LOG_INFO,
+			     "[clip-cropper] Post-recording transcription skipped because there are no video paths.");
 			QFile::remove(capturePath);
 			return;
 		}
 
 		if (modelPath.trimmed().isEmpty()) {
-			blog(LOG_INFO, "[clip-cropper] Whisper model path is empty; post-recording transcription skipped.");
+			blog(LOG_INFO,
+			     "[clip-cropper] Whisper model path is empty; post-recording transcription skipped.");
 			QFile::remove(capturePath);
 			return;
 		}
@@ -275,8 +281,10 @@ public:
 		}
 
 		const QFileInfo modelInfo(modelPath);
-		blog(LOG_INFO, "[clip-cropper] Loading Whisper model for post-recording transcription. path=%s exists=%s sizeBytes=%lld cudaRequested=%s",
-		     modelPath.toUtf8().constData(), boolText(modelInfo.isFile()), static_cast<long long>(modelInfo.size()),
+		blog(LOG_INFO,
+		     "[clip-cropper] Loading Whisper model for post-recording transcription. path=%s exists=%s sizeBytes=%lld cudaRequested=%s",
+		     modelPath.toUtf8().constData(), boolText(modelInfo.isFile()),
+		     static_cast<long long>(modelInfo.size()),
 #if CLIP_CROPPER_WHISPER_CUDA_REQUESTED
 		     "true"
 #else
@@ -291,9 +299,11 @@ public:
 		contextParams.use_gpu = false;
 #endif
 
-		whisper_context *ctx = whisper_init_from_file_with_params(modelPath.toUtf8().constData(), contextParams);
+		whisper_context *ctx =
+			whisper_init_from_file_with_params(modelPath.toUtf8().constData(), contextParams);
 		if (!ctx) {
-			blog(LOG_ERROR, "[clip-cropper] Failed to load Whisper model for post-recording transcription. path=%s use_gpu=%s",
+			blog(LOG_ERROR,
+			     "[clip-cropper] Failed to load Whisper model for post-recording transcription. path=%s use_gpu=%s",
 			     modelPath.toUtf8().constData(), boolText(contextParams.use_gpu));
 			QFile::remove(capturePath);
 			return;
@@ -307,8 +317,10 @@ public:
 			QVector<float> chunk;
 			chunk.resize(chunkSamples);
 
-			const qint64 requestedBytes = static_cast<qint64>(chunkSamples) * static_cast<qint64>(sizeof(float));
-			const qint64 readBytes = captureFile.read(reinterpret_cast<char *>(chunk.data()), requestedBytes);
+			const qint64 requestedBytes =
+				static_cast<qint64>(chunkSamples) * static_cast<qint64>(sizeof(float));
+			const qint64 readBytes =
+				captureFile.read(reinterpret_cast<char *>(chunk.data()), requestedBytes);
 			if (readBytes <= 0)
 				break;
 
@@ -322,8 +334,9 @@ public:
 		captureFile.close();
 		whisper_free(ctx);
 
-		blog(LOG_INFO, "[clip-cropper] Post-recording transcription finalized with %d segment(s) for %d video path(s).",
-		     transcript.segments.size(), videoPaths.size());
+		blog(LOG_INFO,
+		     "[clip-cropper] Post-recording transcription finalized with %lld segment(s) for %d video path(s).",
+		     static_cast<long long>(transcript.segments.size()), static_cast<long long>(videoPaths.size()));
 
 		for (const QString &videoPath : videoPaths) {
 			if (videoPath.trimmed().isEmpty() || transcript.segments.isEmpty())
@@ -350,8 +363,9 @@ private:
 		const double chunkStartSec = chunkStartSourceSample / static_cast<double>(sourceSampleRate);
 		QVector<float> pcm16k = resampleLinear(chunk, sourceSampleRate, TargetSampleRate);
 		if (pcm16k.isEmpty()) {
-			blog(LOG_WARNING, "[clip-cropper] Whisper post-recording chunk skipped because resampled PCM is empty. inputSamples=%d sourceRate=%d",
-			     chunk.size(), sourceSampleRate);
+			blog(LOG_WARNING,
+			     "[clip-cropper] Whisper post-recording chunk skipped because resampled PCM is empty. inputSamples=%lld sourceRate=%d",
+			     static_cast<long long>(chunk.size()), sourceSampleRate);
 			return;
 		}
 
@@ -366,17 +380,20 @@ private:
 		const int sampleCount =
 			static_cast<int>(std::min<qsizetype>(pcm16k.size(), std::numeric_limits<int>::max()));
 
-		blog(LOG_INFO, "[clip-cropper] Whisper post-recording processing chunk. sourceSamples=%d pcm16kSamples=%d startSec=%.2f threads=%d",
-		     chunk.size(), sampleCount, chunkStartSec, params.n_threads);
+		blog(LOG_INFO,
+		     "[clip-cropper] Whisper post-recording processing chunk. sourceSamples=%d pcm16kSamples=%lld startSec=%.2f threads=%d",
+		     static_cast<long long>(chunk.size()), sampleCount, chunkStartSec, params.n_threads);
 
 		const int result = whisper_full(ctx, params, pcm16k.constData(), sampleCount);
 		if (result != 0) {
-			blog(LOG_WARNING, "[clip-cropper] Whisper post-recording transcription failed for chunk. result=%d", result);
+			blog(LOG_WARNING,
+			     "[clip-cropper] Whisper post-recording transcription failed for chunk. result=%d", result);
 			return;
 		}
 
 		const int segmentCount = whisper_full_n_segments(ctx);
-		blog(LOG_INFO, "[clip-cropper] Whisper post-recording chunk completed. rawSegmentCount=%d", segmentCount);
+		blog(LOG_INFO, "[clip-cropper] Whisper post-recording chunk completed. rawSegmentCount=%d",
+		     segmentCount);
 		for (int i = 0; i < segmentCount; ++i) {
 			const char *rawText = whisper_full_get_segment_text(ctx, i);
 			const QString text = QString::fromUtf8(rawText ? rawText : "").trimmed();
@@ -384,7 +401,8 @@ private:
 				continue;
 
 			TranscriptSegment segment;
-			segment.startSec = chunkStartSec + whisper_full_get_segment_t0(ctx, i) * WhisperTimeUnitToSeconds;
+			segment.startSec =
+				chunkStartSec + whisper_full_get_segment_t0(ctx, i) * WhisperTimeUnitToSeconds;
 			segment.endSec = chunkStartSec + whisper_full_get_segment_t1(ctx, i) * WhisperTimeUnitToSeconds;
 			segment.text = text;
 			transcript.segments.append(segment);
@@ -463,11 +481,13 @@ void RealtimeTranscriptionService::stopAndSaveForVideos(const QStringList &video
 	delete finishedWriter;
 
 	blog(LOG_INFO,
-	     "[clip-cropper] Audio capture finalized. writtenSamples=%lld droppedSamples=%lld videoPaths=%d. Starting post-recording transcription.",
-	     static_cast<long long>(writtenSamples), static_cast<long long>(droppedSamples), videoPaths.size());
+	     "[clip-cropper] Audio capture finalized. writtenSamples=%lld droppedSamples=%lld videoPaths=%lld. Starting post-recording transcription.",
+	     static_cast<long long>(writtenSamples), static_cast<long long>(droppedSamples),
+	     static_cast<long long>(videoPaths.size()));
 
 	if (writtenSamples <= 0) {
-		blog(LOG_WARNING, "[clip-cropper] Post-recording transcription skipped because no audio samples were captured.");
+		blog(LOG_WARNING,
+		     "[clip-cropper] Post-recording transcription skipped because no audio samples were captured.");
 		QFile::remove(finishedCapturePath);
 		return;
 	}
@@ -475,7 +495,8 @@ void RealtimeTranscriptionService::stopAndSaveForVideos(const QStringList &video
 	const QString finishedModelPath = modelPath;
 	const int finishedSampleRate = sampleRate;
 	std::thread([finishedModelPath, finishedCapturePath, finishedSampleRate, videoPaths]() {
-		PostRecordingTranscriptionJob job(finishedModelPath, finishedCapturePath, finishedSampleRate, videoPaths);
+		PostRecordingTranscriptionJob job(finishedModelPath, finishedCapturePath, finishedSampleRate,
+						  videoPaths);
 		job.run();
 	}).detach();
 }
@@ -498,14 +519,16 @@ void RealtimeTranscriptionService::handleRawAudio(size_t mixIdx, struct audio_da
 	if (rawAudioCallbackCount == 1 || rawAudioCallbackCount % AudioCallbackLogInterval == 0) {
 		blog(LOG_INFO,
 		     "[clip-cropper] Raw audio captured for post-recording transcription. count=%llu mixIdx=%llu frames=%u totalFrames=%llu plane0=%s",
-		     static_cast<unsigned long long>(rawAudioCallbackCount), static_cast<unsigned long long>(mixIdx), data->frames,
-		     static_cast<unsigned long long>(queuedRawFrames), boolText(data->data[0] != nullptr));
+		     static_cast<unsigned long long>(rawAudioCallbackCount), static_cast<unsigned long long>(mixIdx),
+		     data->frames, static_cast<unsigned long long>(queuedRawFrames),
+		     boolText(data->data[0] != nullptr));
 	}
 
 	QVector<float> monoSamples = downmixFirstPlaneToMono(data);
 	if (monoSamples.isEmpty()) {
 		if (rawAudioCallbackCount == 1 || rawAudioCallbackCount % AudioCallbackLogInterval == 0) {
-			blog(LOG_WARNING, "[clip-cropper] Raw audio callback had no usable mono samples. frames=%u plane0=%s",
+			blog(LOG_WARNING,
+			     "[clip-cropper] Raw audio callback had no usable mono samples. frames=%u plane0=%s",
 			     data->frames, boolText(data->data[0] != nullptr));
 		}
 		return;
