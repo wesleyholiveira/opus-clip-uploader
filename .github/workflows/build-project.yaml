@@ -221,8 +221,8 @@ jobs:
         with:
           cuda: '12.8.0'
           method: network
-          sub-packages: '["nvcc", "cudart", "cudart-dev", "nvrtc", "nvrtc-dev", "cublas", "cublas-dev"]'
-
+          sub-packages: '["nvcc", "cudart", "cudart-dev", "nvrtc", "nvrtc-dev", "libcublas", "libcublas-dev"]'
+        
       - name: Export cached CUDA env 🟩
         run: |
           echo "CUDA_PATH=/usr/local/cuda-12.8" >> $GITHUB_ENV
