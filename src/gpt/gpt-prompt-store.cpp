@@ -20,8 +20,7 @@ QString GptPromptStore::keyForVideoPath(const QString &videoPath)
 
 static QString pendingKeyForVideoPath(const QString &videoPath)
 {
-	return QStringLiteral("gpt_prompt_pending.%1")
-		.arg(GptPromptStore::keyForVideoPath(videoPath).section(QLatin1Char('.'), -1));
+	return QStringLiteral("gpt_prompt_pending.%1").arg(GptPromptStore::keyForVideoPath(videoPath).section(QLatin1Char('.'), -1));
 }
 
 QString GptPromptStore::loadForVideoPath(const QString &videoPath)

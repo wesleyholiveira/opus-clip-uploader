@@ -2,6 +2,8 @@
 
 #include "ui/ui-common.hpp"
 
+#include "gpt/gpt-prompt-client.hpp"
+
 #include <obs-frontend-api.h>
 #include <obs-module.h>
 #include <plugin-support.h>
@@ -13,6 +15,8 @@
 #include <QFormLayout>
 #include <QFrame>
 #include <QLineEdit>
+#include <QPlainTextEdit>
+#include <QSize>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QStringList>
@@ -22,7 +26,6 @@
 #include <QWidget>
 
 static const QString &title = clipCropperTitle();
-
 static void set_combo_current_data(QComboBox *combo, const QString &value, int fallbackIndex = 0)
 {
 	const int index = combo->findData(value);
@@ -37,7 +40,7 @@ void open_settings_impl(void *private_data)
 
 	QDialog dialog(parent);
 	dialog.setWindowTitle(title);
-	dialog.resize(620, 300);
+	dialog.resize(820, 620);
 
 	QVBoxLayout *mainLayout = new QVBoxLayout(&dialog);
 	mainLayout->setContentsMargins(20, 20, 20, 12);
@@ -74,7 +77,7 @@ void open_settings_impl(void *private_data)
 	treeWidget->setRootIsDecorated(true);
 	treeWidget->setItemsExpandable(true);
 	treeWidget->setAnimated(true);
-	treeWidget->setMinimumHeight(110);
+	treeWidget->setMinimumHeight(330);
 	treeWidget->setFrameShape(QFrame::NoFrame);
 	treeWidget->setAutoFillBackground(false);
 	treeWidget->setAttribute(Qt::WA_TranslucentBackground);
@@ -136,6 +139,17 @@ void open_settings_impl(void *private_data)
 	set_combo_current_data(openAiModelInput, PluginConfig::getValue("openai_model", OPENAI_MODEL_DISABLED), 0);
 	treeWidget->setItemWidget(openAiModelItem, 1, openAiModelInput);
 
+	auto *gptDefaultPromptItem = new QTreeWidgetItem(advancedItem);
+	gptDefaultPromptItem->setText(0, obsText("Settings.GptInputTemplate"));
+	gptDefaultPromptItem->setSizeHint(0, QSize(220, 180));
+	gptDefaultPromptItem->setSizeHint(1, QSize(520, 180));
+
+	QPlainTextEdit *gptDefaultPromptInput = new QPlainTextEdit(treeWidget);
+	gptDefaultPromptInput->setMinimumHeight(170);
+	gptDefaultPromptInput->setPlaceholderText(obsText("Placeholder.GptInputTemplate"));
+	gptDefaultPromptInput->setPlainText(GptPromptClient::configuredInputTextTemplate());
+	treeWidget->setItemWidget(gptDefaultPromptItem, 1, gptDefaultPromptInput);
+
 	treeWidget->resizeColumnToContents(0);
 
 	QPushButton *btn = new QPushButton(obsText("Button.Save"), &dialog);
@@ -155,7 +169,7 @@ void open_settings_impl(void *private_data)
 	QObject::connect(
 		btn, &QPushButton::clicked,
 		[&dialog, apiKeyInput, openAiApiKeyInput, whisperModelInput, brandTemplateIdInput, sourceLangInput,
-		 openAiModelInput]() {
+		 openAiModelInput, gptDefaultPromptInput]() {
 			PluginConfig::setValue("opus_api_key", apiKeyInput->text().trimmed());
 			PluginConfig::setValue("opus_brand_template_id", brandTemplateIdInput->text().trimmed());
 			PluginConfig::setValue("openai_api_key", openAiApiKeyInput->text().trimmed());
@@ -164,6 +178,8 @@ void open_settings_impl(void *private_data)
 					       openAiModelInput->currentData().toString().trimmed().isEmpty()
 						       ? QStringLiteral("gpt-5.4-mini")
 						       : openAiModelInput->currentData().toString().trimmed());
+			PluginConfig::setValue(GptPromptClient::inputTemplateConfigKey(),
+					       gptDefaultPromptInput->toPlainText().trimmed());
 
 			const QString sourceLang = sourceLangInput->currentText().trimmed();
 			PluginConfig::setValue("opus_source_lang", sourceLang.isEmpty() ? "auto" : sourceLang);

@@ -87,8 +87,7 @@ static void invoke_finished(QWidget *parent, std::function<void()> finishedCallb
 		context,
 		[safeContext, finishedCallback = std::move(finishedCallback)]() mutable {
 			if (!safeContext || !finishedCallback) {
-				obs_log(LOG_WARNING,
-					"Could not continue review flow because the Qt async context was destroyed.");
+				obs_log(LOG_WARNING, "Could not continue review flow because the Qt async context was destroyed.");
 				return;
 			}
 
@@ -99,7 +98,7 @@ static void invoke_finished(QWidget *parent, std::function<void()> finishedCallb
 }
 
 static void transcribe_video_with_progress_dialog_async(QWidget *parent, const QString &videoPath,
-							std::function<void(RecordingTranscript, bool)> finishedCallback)
+					       std::function<void(RecordingTranscript, bool)> finishedCallback)
 {
 	RecordingTranscript cached = TranscriptStore::loadForVideoPath(videoPath);
 	if (!cached.segments.isEmpty()) {
@@ -120,11 +119,11 @@ static void transcribe_video_with_progress_dialog_async(QWidget *parent, const Q
 
 	QPointer<QObject> safeContext(context);
 
-	auto *progressDialog =
-		new QProgressDialog(obsText("Status.PreparingTranscription"), obsText("Button.Cancel"), 0, 100, parent);
+	auto *progressDialog = new QProgressDialog(obsText("Status.PreparingTranscription"), obsText("Button.Cancel"), 0,
+						    100, parent);
 	QPointer<QProgressDialog> safeProgress(progressDialog);
 	progressDialog->setWindowTitle(obsText("Dialog.TranscribingAudioTitle"));
-	progressDialog->setWindowModality(Qt::WindowModal);
+	configure_background_progress_window(progressDialog, true);
 	progressDialog->setMinimumDuration(0);
 	progressDialog->setAutoClose(false);
 	progressDialog->setAutoReset(false);
@@ -164,21 +163,24 @@ static void transcribe_video_with_progress_dialog_async(QWidget *parent, const Q
 	});
 	thread->setObjectName(QStringLiteral("ClipCropperTranscriptionThread"));
 
-	QObject::connect(progressDialog, &QProgressDialog::canceled, progressDialog,
-			 [cancelRequested, operationFinished, safeProgress, videoPath]() {
-				 if (operationFinished && operationFinished->load())
-					 return;
+	auto requestTranscriptionCancel = [cancelRequested, operationFinished, safeProgress, videoPath]() {
+		if (operationFinished && operationFinished->load())
+			return;
 
-				 cancelRequested->store(true);
-				 if (safeProgress)
-					 safeProgress->setLabelText(obsText("Status.CancelingOperation"));
-				 obs_log(LOG_INFO, "User canceled on-demand transcription before review: %s",
-					 videoPath.toUtf8().constData());
+		cancelRequested->store(true);
+		if (safeProgress)
+			safeProgress->setLabelText(obsText("Status.CancelingOperation"));
+		obs_log(LOG_INFO, "User canceled on-demand transcription before review: %s",
+			videoPath.toUtf8().constData());
+	};
+
+	QObject::connect(progressDialog, &QProgressDialog::canceled, progressDialog, requestTranscriptionCancel);
+	bind_progress_window_cancel(progressDialog, requestTranscriptionCancel);
+	QObject::connect(progressDialog, &QObject::destroyed, progressDialog,
+			 [cancelRequested, operationFinished]() {
+				 if (!operationFinished || !operationFinished->load())
+					 cancelRequested->store(true);
 			 });
-	QObject::connect(progressDialog, &QObject::destroyed, progressDialog, [cancelRequested, operationFinished]() {
-		if (!operationFinished || !operationFinished->load())
-			cancelRequested->store(true);
-	});
 
 	QObject::connect(thread, &QThread::finished, thread, &QObject::deleteLater);
 	QObject::connect(thread, &QThread::finished, context,
@@ -188,13 +190,13 @@ static void transcribe_video_with_progress_dialog_async(QWidget *parent, const Q
 					 return;
 
 				 const bool canceled = cancelRequested && cancelRequested->load();
-				 const RecordingTranscript transcript = transcriptResult ? *transcriptResult
-											 : RecordingTranscript{};
+				 const RecordingTranscript transcript = transcriptResult ? *transcriptResult : RecordingTranscript{};
 
 				 if (operationFinished)
 					 operationFinished->store(true);
 
 				 if (safeProgress) {
+					 mark_progress_window_finished(safeProgress);
 					 safeProgress->close();
 					 safeProgress->deleteLater();
 				 }
@@ -207,8 +209,8 @@ static void transcribe_video_with_progress_dialog_async(QWidget *parent, const Q
 }
 
 static void generate_gpt_prompt_with_progress_dialog_async(QWidget *parent, const QString &videoPath,
-							   const RecordingTranscript &transcript,
-							   std::function<void(QString)> finishedCallback)
+						  const RecordingTranscript &transcript,
+						  std::function<void(QString)> finishedCallback)
 {
 	CurationSettings settings;
 	settings.rangeStartSec = 0.0;
@@ -217,11 +219,11 @@ static void generate_gpt_prompt_with_progress_dialog_async(QWidget *parent, cons
 	settings.model = QStringLiteral("ClipAnything");
 	settings.skipCurate = false;
 
-	auto *progress =
-		new QProgressDialog(obsText("Status.GeneratingGptPrompt"), obsText("Button.Cancel"), 0, 0, parent);
+	auto *progress = new QProgressDialog(obsText("Status.GeneratingGptPrompt"), obsText("Button.Cancel"), 0, 0,
+						   parent);
 	QPointer<QProgressDialog> safeProgress(progress);
 	progress->setWindowTitle(obsText("Dialog.GeneratingGptPromptTitle"));
-	progress->setWindowModality(Qt::WindowModal);
+	configure_background_progress_window(progress, true);
 	progress->setMinimumDuration(0);
 	progress->setAutoClose(false);
 	progress->setAutoReset(false);
@@ -232,18 +234,22 @@ static void generate_gpt_prompt_with_progress_dialog_async(QWidget *parent, cons
 	auto canceled = std::make_shared<std::atomic_bool>(false);
 	auto callback = std::make_shared<std::function<void(QString)>>(std::move(finishedCallback));
 
-	QObject::connect(progress, &QProgressDialog::canceled, client, [safeClient, safeProgress, canceled]() {
+	auto requestGptCancel = [safeClient, safeProgress, canceled]() {
 		canceled->store(true);
 		if (safeProgress)
 			safeProgress->setLabelText(obsText("Status.CancelingOperation"));
 		if (safeClient)
 			safeClient->cancel();
-	});
+	};
+
+	QObject::connect(progress, &QProgressDialog::canceled, client, requestGptCancel);
+	bind_progress_window_cancel(progress, requestGptCancel);
 
 	QObject::connect(client, &GptPromptClient::promptReady, progress,
 			 [safeProgress, callback](const QString &prompt) {
 				 const QString generatedPrompt = prompt.trimmed();
 				 if (safeProgress) {
+					 mark_progress_window_finished(safeProgress);
 					 safeProgress->close();
 					 safeProgress->deleteLater();
 				 }
@@ -259,6 +265,7 @@ static void generate_gpt_prompt_with_progress_dialog_async(QWidget *parent, cons
 						 message.toUtf8().constData());
 
 				 if (safeProgress) {
+					 mark_progress_window_finished(safeProgress);
 					 safeProgress->close();
 					 safeProgress->deleteLater();
 				 }
@@ -273,7 +280,7 @@ static void generate_gpt_prompt_with_progress_dialog_async(QWidget *parent, cons
 }
 
 void generate_custom_prompt_before_review_async(QWidget *parent, const QString &videoPath, bool transcribeOnDemand,
-						std::function<void()> finishedCallback)
+					       std::function<void()> finishedCallback)
 {
 	const QString cachedPrompt = GptPromptStore::loadForVideoPath(videoPath);
 	if (!cachedPrompt.trimmed().isEmpty()) {
@@ -290,8 +297,7 @@ void generate_custom_prompt_before_review_async(QWidget *parent, const QString &
 	}
 
 	auto continueWithTranscript = [parent, videoPath, finishedCallback = std::move(finishedCallback)](
-					      const RecordingTranscript &transcript,
-					      bool transcriptionCanceled) mutable {
+				       const RecordingTranscript &transcript, bool transcriptionCanceled) mutable {
 		if (transcriptionCanceled) {
 			obs_log(LOG_INFO, "GPT prompt generation skipped because transcription was canceled: %s",
 				videoPath.toUtf8().constData());
@@ -300,8 +306,7 @@ void generate_custom_prompt_before_review_async(QWidget *parent, const QString &
 		}
 
 		if (transcript.segments.isEmpty()) {
-			obs_log(LOG_WARNING,
-				"No transcript available for %s. Skipping GPT prompt generation before review.",
+			obs_log(LOG_WARNING, "No transcript available for %s. Skipping GPT prompt generation before review.",
 				videoPath.toUtf8().constData());
 			QMessageBox::warning(parent, title, obsText("Message.TranscriptUnavailableForGpt"));
 			invoke_finished(parent, std::move(finishedCallback));
@@ -310,8 +315,7 @@ void generate_custom_prompt_before_review_async(QWidget *parent, const QString &
 
 		generate_gpt_prompt_with_progress_dialog_async(
 			parent, videoPath, transcript,
-			[parent, videoPath,
-			 finishedCallback = std::move(finishedCallback)](const QString &generatedPrompt) mutable {
+			[parent, videoPath, finishedCallback = std::move(finishedCallback)](const QString &generatedPrompt) mutable {
 				if (!generatedPrompt.trimmed().isEmpty()) {
 					GptPromptStore::saveForVideoPath(videoPath, generatedPrompt);
 					obs_log(LOG_INFO, "GPT prompt generated and cached before review for %s",
@@ -330,16 +334,15 @@ void generate_custom_prompt_before_review_async(QWidget *parent, const QString &
 	}
 
 	if (!transcribeOnDemand) {
-		obs_log(LOG_WARNING,
-			"No cached transcript available for %s. Skipping GPT prompt generation before review.",
+		obs_log(LOG_WARNING, "No cached transcript available for %s. Skipping GPT prompt generation before review.",
 			videoPath.toUtf8().constData());
 		QMessageBox::warning(parent, title, obsText("Message.TranscriptUnavailableForGpt"));
 		invoke_finished(parent, std::move(finishedCallback));
 		return;
 	}
 
-	obs_log(LOG_INFO,
-		"No cached transcript found. Starting on-demand transcription before GPT prompt generation: %s",
+	obs_log(LOG_INFO, "No cached transcript found. Starting on-demand transcription before GPT prompt generation: %s",
 		videoPath.toUtf8().constData());
 	transcribe_video_with_progress_dialog_async(parent, videoPath, std::move(continueWithTranscript));
 }
+

@@ -15,6 +15,7 @@
 #include <QFrame>
 #include <QLabel>
 #include <QMessageBox>
+#include <QObject>
 #include <QProgressBar>
 #include <QPointer>
 #include <QPushButton>
@@ -43,14 +44,16 @@ static void upload_reviewed_video(QWidget *parent, const QString &videoPath, con
 
 	set_pending_recording_paths(QStringList{videoPath});
 
-	QDialog uploadDialog(parent);
-	uploadDialog.setWindowTitle(title + " - " + obsText("Dialog.ConfirmUploadTitle"));
+	auto *uploadDialog = new BackgroundProgressDialog(parent);
+	uploadDialog->setWindowTitle(title + " - " + obsText("Dialog.ConfirmUploadTitle"));
+	configure_background_progress_window(uploadDialog, true);
+	QObject::connect(uploadDialog, &QDialog::finished, uploadDialog, &QObject::deleteLater);
 
-	auto *mainLayout = new QVBoxLayout(&uploadDialog);
+	auto *mainLayout = new QVBoxLayout(uploadDialog);
 	mainLayout->setContentsMargins(22, 16, 22, 16);
 	mainLayout->setSpacing(10);
 
-	auto *progressContainer = new QFrame(&uploadDialog);
+	auto *progressContainer = new QFrame(uploadDialog);
 	progressContainer->setFrameShape(QFrame::NoFrame);
 
 	auto *progressLayout = new QVBoxLayout(progressContainer);
@@ -72,22 +75,23 @@ static void upload_reviewed_video(QWidget *parent, const QString &videoPath, con
 	progressLayout->addWidget(progressBar);
 	mainLayout->addWidget(progressContainer);
 
-	auto *btnUpload = new QPushButton(&uploadDialog);
-	auto *btnCancel = new QPushButton(obsText("Button.Cancel"), &uploadDialog);
+	auto *btnUpload = new QPushButton(uploadDialog);
+	auto *btnCancel = new QPushButton(obsText("Button.Cancel"), uploadDialog);
 	btnUpload->hide();
 	mainLayout->addWidget(btnCancel);
 
-	uploadDialog.setMinimumWidth(540);
-	uploadDialog.adjustSize();
+	uploadDialog->setMinimumWidth(540);
+	uploadDialog->adjustSize();
 
-	QTimer::singleShot(0, &uploadDialog,
-			   [&uploadDialog, btnUpload, btnCancel, progressBar, uploadStatusLabel, apiKey,
+	QTimer::singleShot(0, uploadDialog,
+			   [uploadDialog, btnUpload, btnCancel, progressBar, uploadStatusLabel, apiKey,
 			    curationSettings]() {
-				   start_upload(&uploadDialog, btnUpload, btnCancel, progressBar, uploadStatusLabel,
+				   start_upload(uploadDialog, btnUpload, btnCancel, progressBar, uploadStatusLabel,
 						apiKey, curationSettings);
 			   });
 
-	uploadDialog.exec();
+	uploadDialog->show();
+	uploadDialog->raise();
 }
 
 void open_video_editor_impl(void *private_data)

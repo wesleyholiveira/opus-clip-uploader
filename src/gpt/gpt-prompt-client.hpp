@@ -14,9 +14,12 @@ class GptPromptClient : public QObject {
 
 public:
 	explicit GptPromptClient(QString apiKey, QString model = {}, QObject *parent = nullptr);
+	static QString inputTemplateConfigKey();
+	static QString defaultInputTextTemplate();
+	static QString configuredInputTextTemplate();
 	void cancel();
 	void createOpusPromptAsync(const QString &videoPath, const RecordingTranscript &transcript,
-				   const CurationSettings &curationSettings);
+					 const CurationSettings &curationSettings);
 
 signals:
 	void promptReady(QString prompt);
@@ -30,6 +33,6 @@ private:
 	bool cancelRequested = false;
 
 	QString buildInputText(const QString &videoPath, const RecordingTranscript &transcript,
-			       const CurationSettings &curationSettings) const;
+			     const CurationSettings &curationSettings) const;
 	QString extractOutputText(const QByteArray &response) const;
 };

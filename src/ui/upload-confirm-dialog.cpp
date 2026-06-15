@@ -56,14 +56,16 @@ static void open_review_and_upload(QWidget *parent, const QStringList &paths, co
 
 	const CurationSettings curationSettings = reviewDialog.curationSettings();
 
-	QDialog progressDialog(parent);
-	progressDialog.setWindowTitle(title);
+	auto *progressDialog = new BackgroundProgressDialog(parent);
+	progressDialog->setWindowTitle(title);
+	configure_background_progress_window(progressDialog, true);
+	QObject::connect(progressDialog, &QDialog::finished, progressDialog, &QObject::deleteLater);
 
-	QVBoxLayout *progressMainLayout = new QVBoxLayout(&progressDialog);
+	QVBoxLayout *progressMainLayout = new QVBoxLayout(progressDialog);
 	progressMainLayout->setContentsMargins(22, 16, 22, 16);
 	progressMainLayout->setSpacing(8);
 
-	auto *progressContainer = new QFrame(&progressDialog);
+	auto *progressContainer = new QFrame(progressDialog);
 	progressContainer->setFrameShape(QFrame::NoFrame);
 
 	auto *progressLayout = new QVBoxLayout(progressContainer);
@@ -85,21 +87,23 @@ static void open_review_and_upload(QWidget *parent, const QStringList &paths, co
 	progressLayout->addWidget(progressBar);
 	progressMainLayout->addWidget(progressContainer);
 
-	QPushButton *hiddenUploadButton = new QPushButton(&progressDialog);
-	QPushButton *cancelUploadButton = new QPushButton(obsText("Button.Cancel"), &progressDialog);
+	QPushButton *hiddenUploadButton = new QPushButton(progressDialog);
+	QPushButton *cancelUploadButton = new QPushButton(obsText("Button.Cancel"), progressDialog);
 	hiddenUploadButton->hide();
 	progressMainLayout->addWidget(cancelUploadButton);
 
-	progressDialog.setMinimumWidth(560);
-	progressDialog.adjustSize();
+	progressDialog->setMinimumWidth(560);
+	progressDialog->adjustSize();
 
-	QTimer::singleShot(0, &progressDialog,
-			   [&progressDialog, hiddenUploadButton, cancelUploadButton, progressBar, uploadStatusLabel,
-			    apiKey, curationSettings]() {
-				   start_upload(&progressDialog, hiddenUploadButton, cancelUploadButton, progressBar,
+	QTimer::singleShot(0, progressDialog,
+			   [progressDialog, hiddenUploadButton, cancelUploadButton, progressBar, uploadStatusLabel, apiKey,
+			    curationSettings]() {
+				   start_upload(progressDialog, hiddenUploadButton, cancelUploadButton, progressBar,
 						uploadStatusLabel, apiKey, curationSettings);
 			   });
-	progressDialog.exec();
+
+	progressDialog->show();
+	progressDialog->raise();
 }
 
 void open_confirm_dialog_impl(void *private_data)
@@ -181,9 +185,8 @@ void open_confirm_dialog_impl(void *private_data)
 	}
 
 	if (is_openai_model_enabled()) {
-		generate_custom_prompt_before_review_async(parent, paths.first(), true, [parent, paths, apiKey]() {
-			open_review_and_upload(parent, paths, apiKey);
-		});
+		generate_custom_prompt_before_review_async(parent, paths.first(), true,
+							   [parent, paths, apiKey]() { open_review_and_upload(parent, paths, apiKey); });
 		return;
 	}
 
