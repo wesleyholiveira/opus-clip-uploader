@@ -24,7 +24,7 @@ runs:
       uses: ./.github/actions/check-changes
       id: checks
       with:
-        checkGlob: "'*.c' '*.h' '*.cpp' '*.hpp' '*.m' '*.mm'"
+        checkGlob: "':(glob)src/*.c' ':(glob)src/*.h' ':(glob)src/*.cpp' ':(glob)src/*.hpp' ':(glob)src/*.m' ':(glob)src/*.mm' ':(glob)src/**/*.c' ':(glob)src/**/*.h' ':(glob)src/**/*.cpp' ':(glob)src/**/*.hpp' ':(glob)src/**/*.m' ':(glob)src/**/*.mm'"
         diffFilter: 'ACM'
 
     - name: Install Dependencies 🛍️
@@ -56,5 +56,19 @@ runs:
 
         print ::group::Run clang-format-19
         local -a changes=(${(s:,:)CHANGED_FILES//[\[\]\'\"]/})
-        ./build-aux/run-clang-format --fail-${{ inputs.failCondition }} --check ${changes}
+        local -a source_changes=()
+        local file
+
+        for file (${changes}) {
+          if [[ -f ${file} && ${file} == src/* && ${file} == *.(c|h|cpp|hpp|m|mm) ]] {
+            source_changes+=(${file})
+          }
+        }
+
+        if (( ! ${#source_changes} )) {
+          print 'No src source files require clang-format.'
+          exit 0
+        }
+
+        ./build-aux/run-clang-format --fail-${{ inputs.failCondition }} --check ${source_changes}
         print ::endgroup::
