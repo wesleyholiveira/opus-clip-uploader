@@ -367,20 +367,25 @@ void OpusClipClient::createClipProject(const QString &uploadId, const ClipDurati
 	range.insert("endSec", rangeValue.endSec);
 	curationPref.insert("range", range);
 
-	QJsonArray clipDurations;
-	QJsonArray item;
-	item.append(rangeValue.startSec);
-	item.append(rangeValue.endSec);
-	clipDurations.append(item);
-	curationPref.insert("clipDurations", clipDurations);
+	const double rangeDurationSec = std::max(0.0, rangeValue.endSec - rangeValue.startSec);
+	const bool createFixedClip = curationSettings.skipCurate;
 
-	QJsonArray clipStarts;
-	clipStarts.append(rangeValue.startSec);
-	curationPref.insert("clip_start", clipStarts);
+	if (createFixedClip) {
+		QJsonArray clipDurations;
+		QJsonArray item;
+		item.append(rangeValue.startSec);
+		item.append(rangeValue.endSec);
+		clipDurations.append(item);
+		curationPref.insert("clipDurations", clipDurations);
 
-	QJsonArray clipDurationSeconds;
-	clipDurationSeconds.append(std::max(0.0, rangeValue.endSec - rangeValue.startSec));
-	curationPref.insert("clip_duration", clipDurationSeconds);
+		QJsonArray clipStarts;
+		clipStarts.append(rangeValue.startSec);
+		curationPref.insert("clip_start", clipStarts);
+
+		QJsonArray clipDurationSeconds;
+		clipDurationSeconds.append(rangeDurationSec);
+		curationPref.insert("clip_duration", clipDurationSeconds);
+	}
 
 	QJsonArray topicKeywords;
 	for (const QString &keyword : curationSettings.topicKeywords)
@@ -396,6 +401,12 @@ void OpusClipClient::createClipProject(const QString &uploadId, const ClipDurati
 		curationPref.insert("prompt", curationSettings.aiPrompt.trimmed());
 		curationPref.insert("userPrompt", curationSettings.aiPrompt.trimmed());
 	}
+
+	blog(LOG_INFO,
+	     "[clip-cropper] Creating Opus Clip project %d/%d. mode=%s startSec=%.2f endSec=%.2f durationSec=%.2f "
+	     "skipCurate=%s",
+	     projectIndex + 1, totalProjects, createFixedClip ? "fixed-clip" : "curation-window", rangeValue.startSec,
+	     rangeValue.endSec, rangeDurationSec, curationSettings.skipCurate ? "true" : "false");
 
 	payload.insert("curationPref", curationPref);
 

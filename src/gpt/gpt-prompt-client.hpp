@@ -16,7 +16,7 @@ public:
 	explicit GptPromptClient(QString apiKey, QString model = {}, QObject *parent = nullptr);
 	void cancel();
 	void createOpusPromptAsync(const QString &videoPath, const RecordingTranscript &transcript,
-					 const CurationSettings &curationSettings);
+				   const CurationSettings &curationSettings);
 
 signals:
 	void promptReady(QString prompt);
@@ -30,6 +30,6 @@ private:
 	bool cancelRequested = false;
 
 	QString buildInputText(const QString &videoPath, const RecordingTranscript &transcript,
-			     const CurationSettings &curationSettings) const;
+			       const CurationSettings &curationSettings) const;
 	QString extractOutputText(const QByteArray &response) const;
 };
