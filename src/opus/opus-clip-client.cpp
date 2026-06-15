@@ -40,27 +40,68 @@ OpusClipClient::OpusClipClient(QString apiKey, QString brandTemplateId, QString 
 		this->sourceLang = "auto";
 }
 
+void OpusClipClient::cancel()
+{
+	cancelRequested = true;
+
+	if (currentUploadFile)
+		currentUploadFile->close();
+
+	if (currentReply) {
+		currentReply->abort();
+		return;
+	}
+
+	emitCanceledIfNeeded();
+}
+
+void OpusClipClient::emitCanceledIfNeeded()
+{
+	if (terminalSignalEmitted)
+		return;
+
+	terminalSignalEmitted = true;
+	OpusUploadResult result;
+	result.error.message = obsText("Message.UploadCanceled").toStdString();
+	emit uploadFailed(result);
+}
+
+void OpusClipClient::fail(const QString &message, int code, long httpStatus, const QByteArray &body)
+{
+	Q_UNUSED(code);
+
+	if (terminalSignalEmitted)
+		return;
+
+	terminalSignalEmitted = true;
+	OpusUploadResult result;
+	result.httpStatus = httpStatus;
+	QString finalMessage = message;
+	if (!body.isEmpty())
+		finalMessage += QStringLiteral(" - ") + QString::fromUtf8(body);
+	result.error.message = finalMessage.toStdString();
+	emit uploadFailed(result);
+}
+
 void OpusClipClient::uploadFileResumableAndCreateProjectAsync(const QString &filePath, const QString &fileName,
 							      const QString &mimeType)
 {
 	createdProjectIds.clear();
+	cancelRequested = false;
+	terminalSignalEmitted = false;
 
 	Q_UNUSED(fileName);
 	Q_UNUSED(mimeType);
 
 	if (apiKey.trimmed().isEmpty()) {
-		OpusUploadResult result;
-		result.error.message = "Opus Clip API key is empty";
-		emit uploadFailed(result);
+		fail(QStringLiteral("Opus Clip API key is empty"));
 		return;
 	}
 
 	QFileInfo info(filePath);
 
 	if (!info.exists() || !info.isFile()) {
-		OpusUploadResult result;
-		result.error.message = "Invalid video file path";
-		emit uploadFailed(result);
+		fail(QStringLiteral("Invalid video file path"));
 		return;
 	}
 
@@ -83,11 +124,21 @@ void OpusClipClient::createUploadLink(const QString &filePath)
 	const QByteArray body = QJsonDocument(payload).toJson(QJsonDocument::Compact);
 
 	QNetworkReply *reply = network.post(request, body);
+	currentReply = reply;
 
 	connect(reply, &QNetworkReply::finished, this, [this, reply, filePath]() {
 		const QByteArray response = reply->readAll();
 		const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 		const QNetworkReply::NetworkError error = reply->error();
+
+		if (currentReply == reply)
+			currentReply = nullptr;
+
+		if (cancelRequested || error == QNetworkReply::OperationCanceledError) {
+			reply->deleteLater();
+			emitCanceledIfNeeded();
+			return;
+		}
 
 		reply->deleteLater();
 
@@ -130,6 +181,7 @@ void OpusClipClient::startResumableSession(const QString &filePath, const QStrin
 	request.setHeader(QNetworkRequest::ContentLengthHeader, 0);
 
 	QNetworkReply *reply = network.post(request, QByteArray());
+	currentReply = reply;
 
 	connect(reply, &QNetworkReply::finished, this, [this, reply, filePath, uploadId]() {
 		const QByteArray response = reply->readAll();
@@ -137,6 +189,15 @@ void OpusClipClient::startResumableSession(const QString &filePath, const QStrin
 		const QNetworkReply::NetworkError error = reply->error();
 
 		const QString location = QString::fromUtf8(reply->rawHeader("location"));
+
+		if (currentReply == reply)
+			currentReply = nullptr;
+
+		if (cancelRequested || error == QNetworkReply::OperationCanceledError) {
+			reply->deleteLater();
+			emitCanceledIfNeeded();
+			return;
+		}
 
 		reply->deleteLater();
 
@@ -184,6 +245,8 @@ void OpusClipClient::uploadFileToResumableLocation(const QString &filePath, cons
 	request.setHeader(QNetworkRequest::ContentTypeHeader, "application/octet-stream");
 
 	QNetworkReply *reply = network.put(request, file);
+	currentReply = reply;
+	currentUploadFile = file;
 
 	connect(reply, &QNetworkReply::uploadProgress, this, [this](qint64 bytesSent, qint64 bytesTotal) {
 		if (bytesTotal <= 0)
@@ -199,6 +262,18 @@ void OpusClipClient::uploadFileToResumableLocation(const QString &filePath, cons
 		const QNetworkReply::NetworkError error = reply->error();
 
 		file->close();
+		if (currentUploadFile == file)
+			currentUploadFile = nullptr;
+		if (currentReply == reply)
+			currentReply = nullptr;
+
+		if (cancelRequested || error == QNetworkReply::OperationCanceledError) {
+			file->deleteLater();
+			reply->deleteLater();
+			emitCanceledIfNeeded();
+			return;
+		}
+
 		file->deleteLater();
 		reply->deleteLater();
 
@@ -248,6 +323,10 @@ void OpusClipClient::createNextClipProject(const QString &uploadId, int projectI
 	}
 
 	if (projectIndex >= ranges.size()) {
+		if (terminalSignalEmitted)
+			return;
+
+		terminalSignalEmitted = true;
 		OpusUploadResult result;
 		result.ok = true;
 		result.httpStatus = 200;
@@ -323,12 +402,22 @@ void OpusClipClient::createClipProject(const QString &uploadId, const ClipDurati
 	const QByteArray body = QJsonDocument(payload).toJson(QJsonDocument::Compact);
 
 	QNetworkReply *reply = network.post(request, body);
+	currentReply = reply;
 
 	connect(reply, &QNetworkReply::finished, this, [this, reply, uploadId, projectIndex, totalProjects]() {
 		const QByteArray response = reply->readAll();
 		const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 		const QNetworkReply::NetworkError error = reply->error();
 		const QString errorString = reply->errorString();
+
+		if (currentReply == reply)
+			currentReply = nullptr;
+
+		if (cancelRequested || error == QNetworkReply::OperationCanceledError) {
+			reply->deleteLater();
+			emitCanceledIfNeeded();
+			return;
+		}
 
 		reply->deleteLater();
 

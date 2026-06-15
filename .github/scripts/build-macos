@@ -103,6 +103,12 @@ build() {
 
   cmake_args+=(--preset 'macos-ci')
 
+  if [[ -n ${CLIP_CROPPER_FFMPEG_RUNTIME_DIR:-} ]] {
+    cmake_args+=(
+      -DCLIP_CROPPER_FFMPEG_RUNTIME_DIR=${CLIP_CROPPER_FFMPEG_RUNTIME_DIR}
+    )
+  }
+
   typeset -gx NSUnbufferedIO=YES
 
   typeset -gx CODESIGN_IDENT="${CODESIGN_IDENT:--}"

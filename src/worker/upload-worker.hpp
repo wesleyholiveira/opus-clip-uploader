@@ -5,6 +5,8 @@
 
 #include "models/curation-settings.hpp"
 
+class OpusClipClient;
+
 class UploadWorker : public QObject {
 	Q_OBJECT
 
@@ -16,6 +18,7 @@ public:
 
 public slots:
 	void run();
+	void cancel();
 
 signals:
 	void progressChanged(int value, QString message);
@@ -32,6 +35,7 @@ private:
 	CurationSettings curationSettings;
 	QString openAiApiKey;
 	QString openAiModel;
+	OpusClipClient *client = nullptr;
 
 	void startOpusUpload(const CurationSettings &settings);
 };

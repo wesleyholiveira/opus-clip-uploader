@@ -112,12 +112,15 @@
         "CMAKE_SYSTEM_VERSION": "10.0.26100.0",
         "ENABLE_WHISPER_CUDA": true,
         "CMAKE_COMPILE_WARNING_AS_ERROR": false,
-        "CMAKE_EXPORT_COMPILE_COMMANDS": true
+        "CMAKE_EXPORT_COMPILE_COMMANDS": true,
+        "CMAKE_SUPPRESS_REGENERATION": true
       }
     },
     {
       "name": "ubuntu-ninja-cuda-x86_64",
-      "inherits": ["ubuntu-x86_64"],
+      "inherits": [
+        "ubuntu-x86_64"
+      ],
       "cacheVariables": {
         "ENABLE_WHISPER_CUDA": true,
         "CMAKE_COMPILE_WARNING_AS_ERROR": false,
@@ -128,8 +131,7 @@
   "buildPresets": [
     {
       "name": "windows-ninja-cuda-x64",
-      "configurePreset": "windows-ninja-cuda-x64",
-      "configuration": "RelWithDebInfo"
+      "configurePreset": "windows-ninja-cuda-x64"
     },
     {
       "name": "windows-ci-x64",
@@ -148,8 +150,7 @@
     },
     {
       "name": "ubuntu-ninja-cuda-x86_64",
-      "configurePreset": "ubuntu-ninja-cuda-x86_64",
-      "configuration": "RelWithDebInfo"
+      "configurePreset": "ubuntu-ninja-cuda-x86_64"
     }
   ]
 }

@@ -5,6 +5,8 @@
 
 #include <QObject>
 #include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QPointer>
 #include <QString>
 
 class GptPromptClient : public QObject {
@@ -12,6 +14,7 @@ class GptPromptClient : public QObject {
 
 public:
 	explicit GptPromptClient(QString apiKey, QString model = {}, QObject *parent = nullptr);
+	void cancel();
 	void createOpusPromptAsync(const QString &videoPath, const RecordingTranscript &transcript,
 					 const CurationSettings &curationSettings);
 
@@ -21,8 +24,10 @@ signals:
 
 private:
 	QNetworkAccessManager network;
+	QPointer<QNetworkReply> currentReply;
 	QString apiKey;
 	QString model;
+	bool cancelRequested = false;
 
 	QString buildInputText(const QString &videoPath, const RecordingTranscript &transcript,
 			     const CurationSettings &curationSettings) const;

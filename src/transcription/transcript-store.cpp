@@ -40,7 +40,8 @@ void TranscriptStore::saveForVideoPath(const QString &videoPath, const Recording
 	}
 
 	root.insert(QStringLiteral("segments"), segments);
-	PluginConfig::setValue(keyForVideoPath(videoPath), QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact)));
+	PluginConfig::setValue(keyForVideoPath(videoPath),
+			       QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact)));
 }
 
 RecordingTranscript TranscriptStore::loadForVideoPath(const QString &videoPath)

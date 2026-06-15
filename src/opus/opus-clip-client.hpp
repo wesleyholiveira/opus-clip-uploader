@@ -5,7 +5,10 @@
 
 #include <QObject>
 #include <QByteArray>
+#include <QFile>
 #include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QPointer>
 #include <QString>
 #include <QStringList>
 
@@ -15,6 +18,7 @@ class OpusClipClient : public QObject {
 public:
 	explicit OpusClipClient(QString apiKey, QString brandTemplateId = {}, QString sourceLang = "auto",
 				CurationSettings curationSettings = {}, QObject *parent = nullptr);
+	void cancel();
 	void uploadFileResumableAndCreateProjectAsync(const QString &filePath, const QString &fileName,
 						      const QString &mimeType);
 
@@ -25,11 +29,15 @@ signals:
 
 private:
 	QNetworkAccessManager network;
+	QPointer<QNetworkReply> currentReply;
+	QPointer<QFile> currentUploadFile;
 	QString apiKey;
 	QString brandTemplateId;
 	QString sourceLang;
 	CurationSettings curationSettings;
 	QStringList createdProjectIds;
+	bool cancelRequested = false;
+	bool terminalSignalEmitted = false;
 
 	void createUploadLink(const QString &filePath);
 	void startResumableSession(const QString &filePath, const QString &uploadUrl, const QString &uploadId);
@@ -39,6 +47,7 @@ private:
 	QVector<ClipDuration> projectRanges() const;
 
 	void fail(const QString &message, int code = -1, long httpStatus = 0, const QByteArray &body = {});
+	void emitCanceledIfNeeded();
 
 	QString extractProjectId(const QByteArray &response, const QString &fallbackUploadId) const;
 };

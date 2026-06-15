@@ -2,14 +2,14 @@
 
 #include "models/curation-settings.hpp"
 
-#include <QCheckBox>
-#include <QComboBox>
 #include <QDialog>
-#include <QLineEdit>
-#include <QPlainTextEdit>
-#include <QTableWidget>
 #include <QString>
 
+class QCheckBox;
+class QComboBox;
+class QLineEdit;
+class QPlainTextEdit;
+class QTableWidget;
 class VideoMarkerEditor;
 
 class UploadReviewDialog : public QDialog {

@@ -21,6 +21,13 @@ GptPromptClient::GptPromptClient(QString apiKey, QString model, QObject *parent)
 		this->model = QStringLiteral("gpt-5.4-mini");
 }
 
+void GptPromptClient::cancel()
+{
+	cancelRequested = true;
+	if (currentReply)
+		currentReply->abort();
+}
+
 QString GptPromptClient::buildInputText(const QString &videoPath, const RecordingTranscript &transcript,
 					const CurationSettings &curationSettings) const
 {
@@ -119,14 +126,24 @@ void GptPromptClient::createOpusPromptAsync(const QString &videoPath, const Reco
 	payload.insert(QStringLiteral("input"), buildInputText(videoPath, transcript, curationSettings));
 	payload.insert(QStringLiteral("max_output_tokens"), 1200);
 
+	cancelRequested = false;
 	QNetworkReply *reply = network.post(request, QJsonDocument(payload).toJson(QJsonDocument::Compact));
+	currentReply = reply;
 
 	connect(reply, &QNetworkReply::finished, this, [this, reply]() {
 		const QByteArray response = reply->readAll();
 		const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 		const QNetworkReply::NetworkError error = reply->error();
 		const QString errorString = reply->errorString();
+		if (currentReply == reply)
+			currentReply = nullptr;
 		reply->deleteLater();
+
+		if (cancelRequested || error == QNetworkReply::OperationCanceledError) {
+			cancelRequested = false;
+			emit promptFailed(QStringLiteral("Canceled"));
+			return;
+		}
 
 		if (error != QNetworkReply::NoError || status < 200 || status >= 300) {
 			emit promptFailed(QStringLiteral("GPT prompt generation failed: %1 - %2")

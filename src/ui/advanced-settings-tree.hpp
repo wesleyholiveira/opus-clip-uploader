@@ -1,8 +1,10 @@
 #pragma once
 
 #include <QTreeWidget>
-#include <QTreeWidgetItem>
-#include <QWidget>
+#include <QString>
+
+class QTreeWidgetItem;
+class QWidget;
 
 class AdvancedSettingsTree : public QTreeWidget {
 public:

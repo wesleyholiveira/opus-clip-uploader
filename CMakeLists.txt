@@ -87,6 +87,15 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 	src/plugin-main.cpp
 
 	src/ui/ui.cpp
+	src/ui/ui-common.cpp
+	src/ui/ui-common.hpp
+	src/ui/settings-dialog.cpp
+	src/ui/upload-flow.cpp
+	src/ui/upload-flow.hpp
+	src/ui/upload-confirm-dialog.cpp
+	src/ui/gpt-review-prompt.cpp
+	src/ui/gpt-review-prompt.hpp
+	src/ui/video-editor-actions.cpp
 	src/ui/advanced-settings-tree.cpp
 	src/ui/advanced-settings-tree.hpp
 	src/ui/video-marker-editor.cpp
@@ -166,23 +175,7 @@ if (ENABLE_FRONTEND_API)
 	)
 endif ()
 
-if (APPLE)
-	set(OBS_PLUGIN_DIR "$ENV{HOME}/Library/Application Support/obs-studio/plugins/${OBS_PLUGIN_NAME}")
-elseif (WIN32)
-	set(PROGRAMDATA_CMAKE_PATH "$ENV{PROGRAMDATA}")
-	cmake_path(CONVERT "${PROGRAMDATA_CMAKE_PATH}" TO_CMAKE_PATH_LIST PROGRAMDATA_CMAKE_PATH)
-	set(OBS_PLUGIN_DIR "${PROGRAMDATA_CMAKE_PATH}/obs-studio/plugins/${OBS_PLUGIN_NAME}")
-elseif (UNIX AND USE_FLATPAK_PATH)
-	set(OBS_PLUGIN_DIR "$ENV{HOME}/.var/app/com.obsproject.Studio/config/obs-studio/plugins/${OBS_PLUGIN_NAME}")
-elseif (UNIX)
-	set(OBS_PLUGIN_DIR "$ENV{HOME}/.config/obs-studio/plugins/${OBS_PLUGIN_NAME}")
-endif ()
-
-set(OBS_PLUGIN_BIN_DIR "${OBS_PLUGIN_DIR}/bin/64bit")
-
 message(STATUS "OBS_PLUGIN_NAME = ${OBS_PLUGIN_NAME}")
-message(STATUS "OBS_PLUGIN_DIR = ${OBS_PLUGIN_DIR}")
-message(STATUS "OBS_PLUGIN_BIN_DIR = ${OBS_PLUGIN_BIN_DIR}")
 message(STATUS "TARGET = ${CMAKE_PROJECT_NAME}")
 
 set(QT_RUNTIME_DLLS "")
@@ -283,67 +276,45 @@ if (ENABLE_QT)
 		message(STATUS "QT_ICONENGINE_PLUGINS = ${QT_ICONENGINE_PLUGINS}")
 		message(STATUS "QT_STYLE_PLUGINS = ${QT_STYLE_PLUGINS}")
 
-		add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
-			COMMAND ${CMAKE_COMMAND} -E make_directory "${OBS_PLUGIN_BIN_DIR}"
+			endif ()
+endif ()
 
-			COMMAND ${CMAKE_COMMAND} -E copy_if_different
-			${QT_RUNTIME_DLLS}
-			"${OBS_PLUGIN_BIN_DIR}/"
-		)
 
-		if (QT_TLS_BACKENDS)
-			add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
-				COMMAND ${CMAKE_COMMAND} -E make_directory "${OBS_PLUGIN_BIN_DIR}/tls"
-				COMMAND ${CMAKE_COMMAND} -E copy_if_different
-				${QT_TLS_BACKENDS}
-				"${OBS_PLUGIN_BIN_DIR}/tls/"
+set(CLIP_CROPPER_FFMPEG_RUNTIME_DIR "" CACHE PATH "Directory containing the ffmpeg executable to bundle with the plugin")
+
+if (NOT CLIP_CROPPER_FFMPEG_RUNTIME_DIR AND DEFINED ENV{CLIP_CROPPER_FFMPEG_RUNTIME_DIR})
+	set(CLIP_CROPPER_FFMPEG_RUNTIME_DIR "$ENV{CLIP_CROPPER_FFMPEG_RUNTIME_DIR}")
+endif ()
+
+if (CLIP_CROPPER_FFMPEG_RUNTIME_DIR)
+	cmake_path(CONVERT "${CLIP_CROPPER_FFMPEG_RUNTIME_DIR}" TO_CMAKE_PATH_LIST CLIP_CROPPER_FFMPEG_RUNTIME_DIR)
+endif ()
+
+set(CLIP_CROPPER_BUNDLED_FFMPEG_EXECUTABLE "")
+
+if (CLIP_CROPPER_FFMPEG_RUNTIME_DIR)
+	if (WIN32)
+		set(CLIP_CROPPER_FFMPEG_EXECUTABLE_NAME "ffmpeg.exe")
+	else ()
+		set(CLIP_CROPPER_FFMPEG_EXECUTABLE_NAME "ffmpeg")
+	endif ()
+
+	set(CLIP_CROPPER_BUNDLED_FFMPEG_EXECUTABLE
+		"${CLIP_CROPPER_FFMPEG_RUNTIME_DIR}/${CLIP_CROPPER_FFMPEG_EXECUTABLE_NAME}")
+
+	if (EXISTS "${CLIP_CROPPER_BUNDLED_FFMPEG_EXECUTABLE}")
+		message(STATUS "Bundled ffmpeg executable = ${CLIP_CROPPER_BUNDLED_FFMPEG_EXECUTABLE}")
+
+		if (APPLE)
+			target_sources(${CMAKE_PROJECT_NAME} PRIVATE "${CLIP_CROPPER_BUNDLED_FFMPEG_EXECUTABLE}")
+			set_source_files_properties("${CLIP_CROPPER_BUNDLED_FFMPEG_EXECUTABLE}"
+				PROPERTIES
+				MACOSX_PACKAGE_LOCATION "Resources/ffmpeg"
 			)
 		endif ()
-
-		if (QT_PLATFORM_PLUGINS)
-			add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
-				COMMAND ${CMAKE_COMMAND} -E make_directory "${OBS_PLUGIN_BIN_DIR}/platforms"
-				COMMAND ${CMAKE_COMMAND} -E copy_if_different
-				${QT_PLATFORM_PLUGINS}
-				"${OBS_PLUGIN_BIN_DIR}/platforms/"
-			)
-		endif ()
-
-		if (QT_MULTIMEDIA_PLUGINS)
-			add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
-				COMMAND ${CMAKE_COMMAND} -E make_directory "${OBS_PLUGIN_BIN_DIR}/multimedia"
-				COMMAND ${CMAKE_COMMAND} -E copy_if_different
-				${QT_MULTIMEDIA_PLUGINS}
-				"${OBS_PLUGIN_BIN_DIR}/multimedia/"
-			)
-		endif ()
-
-		if (QT_IMAGEFORMAT_PLUGINS)
-			add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
-				COMMAND ${CMAKE_COMMAND} -E make_directory "${OBS_PLUGIN_BIN_DIR}/imageformats"
-				COMMAND ${CMAKE_COMMAND} -E copy_if_different
-				${QT_IMAGEFORMAT_PLUGINS}
-				"${OBS_PLUGIN_BIN_DIR}/imageformats/"
-			)
-		endif ()
-
-		if (QT_ICONENGINE_PLUGINS)
-			add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
-				COMMAND ${CMAKE_COMMAND} -E make_directory "${OBS_PLUGIN_BIN_DIR}/iconengines"
-				COMMAND ${CMAKE_COMMAND} -E copy_if_different
-				${QT_ICONENGINE_PLUGINS}
-				"${OBS_PLUGIN_BIN_DIR}/iconengines/"
-			)
-		endif ()
-
-		if (QT_STYLE_PLUGINS)
-			add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
-				COMMAND ${CMAKE_COMMAND} -E make_directory "${OBS_PLUGIN_BIN_DIR}/styles"
-				COMMAND ${CMAKE_COMMAND} -E copy_if_different
-				${QT_STYLE_PLUGINS}
-				"${OBS_PLUGIN_BIN_DIR}/styles/"
-			)
-		endif ()
+	else ()
+		message(FATAL_ERROR
+			"CLIP_CROPPER_FFMPEG_RUNTIME_DIR was set, but ${CLIP_CROPPER_FFMPEG_EXECUTABLE_NAME} was not found at ${CLIP_CROPPER_BUNDLED_FFMPEG_EXECUTABLE}")
 	endif ()
 endif ()
 
@@ -360,6 +331,11 @@ set(GGML_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
 set(GGML_NATIVE ON CACHE BOOL "" FORCE)
 
 option(ENABLE_WHISPER_CUDA "Enable Whisper CUDA backend" OFF)
+
+target_compile_definitions(${CMAKE_PROJECT_NAME}
+	PRIVATE
+	CLIP_CROPPER_WHISPER_CUDA_REQUESTED=$<IF:$<BOOL:${ENABLE_WHISPER_CUDA}>,1,0>
+)
 
 if (ENABLE_WHISPER_CUDA)
 	message(STATUS "Whisper CUDA/GPU backend requested")
@@ -416,43 +392,29 @@ if (APPLE)
 	set(CMAKE_OBJCXX_FLAGS "${CMAKE_OBJCXX_FLAGS} -fno-objc-arc")
 endif ()
 
-add_subdirectory(deps/whisper.cpp EXCLUDE_FROM_ALL)
+option(CLANGD_LIGHT_MODE "Do not build heavy third-party deps for clangd" OFF)
 
-set_target_properties(whisper PROPERTIES
-    COMPILE_WARNING_AS_ERROR OFF
-)
+if (CLANGD_LIGHT_MODE)
+	target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
+		${CMAKE_CURRENT_SOURCE_DIR}/deps/whisper.cpp/include
+		${CMAKE_CURRENT_SOURCE_DIR}/deps/whisper.cpp/ggml/include
+	)
+else()
+	add_subdirectory(deps/whisper.cpp EXCLUDE_FROM_ALL)
 
-if(MSVC)
-    target_compile_options(whisper PRIVATE /WX-)
+	set_target_properties(whisper PROPERTIES
+		COMPILE_WARNING_AS_ERROR OFF
+	)
+
+	if (MSVC)
+		target_compile_options(whisper PRIVATE /WX-)
+	endif()
+
+	target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
+		whisper
+	)
 endif()
 
-target_link_libraries(clip-cropper
-    PRIVATE
-        whisper
-)
-
-add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
-	COMMAND ${CMAKE_COMMAND} -E make_directory "${OBS_PLUGIN_BIN_DIR}"
-
-	COMMAND ${CMAKE_COMMAND} -E copy_if_different
-	"$<TARGET_FILE:${CMAKE_PROJECT_NAME}>"
-	"${OBS_PLUGIN_BIN_DIR}/"
-)
-
-add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
-	COMMAND ${CMAKE_COMMAND} -E copy_directory
-	"${CMAKE_CURRENT_SOURCE_DIR}/data"
-	"${OBS_PLUGIN_DIR}/data"
-)
-
-if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/models")
-	add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
-		COMMAND ${CMAKE_COMMAND} -E make_directory "${OBS_PLUGIN_DIR}/data/models"
-		COMMAND ${CMAKE_COMMAND} -E copy_directory
-		"${CMAKE_CURRENT_SOURCE_DIR}/models"
-		"${OBS_PLUGIN_DIR}/data/models"
-	)
-endif ()
 
 install(TARGETS ${CMAKE_PROJECT_NAME}
 	RUNTIME DESTINATION "obs-plugins/64bit"
@@ -502,7 +464,24 @@ if (WIN32 AND ENABLE_QT)
 	endif ()
 endif ()
 
-install(DIRECTORY data/locale/
-	DESTINATION "data/obs-plugins/${OBS_PLUGIN_NAME}/locale"
-	FILES_MATCHING PATTERN "*.ini"
+if (CLIP_CROPPER_BUNDLED_FFMPEG_EXECUTABLE)
+	if (WIN32)
+		install(PROGRAMS "${CLIP_CROPPER_BUNDLED_FFMPEG_EXECUTABLE}"
+			DESTINATION "data/obs-plugins/${OBS_PLUGIN_NAME}/ffmpeg"
+		)
+	elseif (NOT APPLE)
+		install(PROGRAMS "${CLIP_CROPPER_BUNDLED_FFMPEG_EXECUTABLE}"
+			DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/obs/obs-plugins/${OBS_PLUGIN_NAME}/ffmpeg"
+		)
+	endif ()
+endif ()
+
+install(DIRECTORY data/
+	DESTINATION "data/obs-plugins/${OBS_PLUGIN_NAME}"
 )
+
+if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/models")
+	install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/models/"
+		DESTINATION "data/obs-plugins/${OBS_PLUGIN_NAME}/models"
+	)
+endif ()

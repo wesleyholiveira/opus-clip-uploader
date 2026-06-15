@@ -3,19 +3,20 @@
 #include "models/curation-settings.hpp"
 
 #include <QMediaPlayer>
-#include <QWidget>
+#include <QString>
 #include <QVector>
+#include <QWidget>
 
-class QLabel;
 class QAudioOutput;
+class QEvent;
+class QLabel;
+class QPushButton;
+class QTimer;
+class QToolButton;
+class QVBoxLayout;
 class QVideoWidget;
 class TimelineWidget;
 class PlaybackIconButton;
-class QToolButton;
-class QPushButton;
-class QVBoxLayout;
-class QEvent;
-class QTimer;
 
 class VideoMarkerEditor : public QWidget {
 	Q_OBJECT

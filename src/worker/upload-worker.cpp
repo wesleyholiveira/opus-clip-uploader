@@ -40,26 +40,34 @@ void UploadWorker::run()
 	startOpusUpload(curationSettings);
 }
 
+void UploadWorker::cancel()
+{
+	if (client)
+		client->cancel();
+}
+
 void UploadWorker::startOpusUpload(const CurationSettings &settings)
 {
-	auto *request = new OpusClipClient(apiKey, brandTemplateId, sourceLang, settings, this);
+	client = new OpusClipClient(apiKey, brandTemplateId, sourceLang, settings, this);
 
-	connect(request, &OpusClipClient::progressChanged, this,
+	connect(client, &OpusClipClient::progressChanged, this,
 		[this](int progress, const QString &message) { emit progressChanged(progress, message); });
 
-	connect(request, &OpusClipClient::uploadFinished, this, [this, request](const OpusUploadResult &result) {
+	connect(client, &OpusClipClient::uploadFinished, this, [this](const OpusUploadResult &result) {
 		emit finished(QString::fromStdString(result.projectId));
-		request->deleteLater();
+		client->deleteLater();
+		client = nullptr;
 	});
 
-	connect(request, &OpusClipClient::uploadFailed, this, [this, request](const OpusUploadResult &result) {
+	connect(client, &OpusClipClient::uploadFailed, this, [this](const OpusUploadResult &result) {
 		QString message = QString::fromUtf8(result.error.message.c_str());
 		if (result.httpStatus > 0)
 			message += QString(" (HTTP %1)").arg(result.httpStatus);
 
 		emit failed(message);
-		request->deleteLater();
+		client->deleteLater();
+		client = nullptr;
 	});
 
-	request->uploadFileResumableAndCreateProjectAsync(filePath, fileName, mimeType);
+	client->uploadFileResumableAndCreateProjectAsync(filePath, fileName, mimeType);
 }

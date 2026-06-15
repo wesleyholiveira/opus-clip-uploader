@@ -16,15 +16,15 @@ extern "C" {
 
 #include <memory>
 
+#include <QAction>
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
-#include <QAction>
 #include <QFileInfo>
 #include <QMenu>
 #include <QMenuBar>
-#include <QMetaObject>
 #include <QMessageBox>
+#include <QMetaObject>
 #include <QString>
 #include <QStringList>
 #include <QWidget>
@@ -37,8 +37,6 @@ void set_pending_recording_paths(const QStringList &paths);
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE("clip-cropper", "en-US")
-
-static bool uploadDialogOpen = false;
 
 static QDateTime recordingStartedAt;
 static QDateTime recordingStoppedAt;
@@ -76,7 +74,6 @@ static QString resolve_whisper_model_path()
 	if (modelFile.isEmpty())
 		modelFile = QStringLiteral("ggml-base.bin");
 
-	// Backward compatibility with builds that saved an absolute model path before the combobox.
 	const QString legacyModelPath = PluginConfig::getValue("whisper_model_path").trimmed();
 	if (!legacyModelPath.isEmpty() && QFileInfo::exists(legacyModelPath))
 		return legacyModelPath;
@@ -199,6 +196,24 @@ static QWidget *main_window()
 	return reinterpret_cast<QWidget *>(obs_frontend_get_main_window());
 }
 
+static bool is_openai_model_enabled()
+{
+	const QString model = PluginConfig::getValue("openai_model", "disabled").trimmed();
+	return !model.isEmpty() && model != QStringLiteral("disabled");
+}
+
+static void log_on_demand_transcription_status()
+{
+	if (!is_openai_model_enabled()) {
+		obs_log(LOG_INFO,
+			"[clip-cropper] OpenAI model is disabled. Audio transcription will be skipped on review.");
+		return;
+	}
+
+	obs_log(LOG_INFO,
+		"[clip-cropper] OpenAI model is enabled. Audio transcription will run from the video file via ffmpeg when the review flow starts.");
+}
+
 static void ensure_opus_api_key_on_ui_thread()
 {
 	QWidget *parent = main_window();
@@ -229,12 +244,8 @@ static void open_confirm_dialog_on_ui_thread()
 	QMetaObject::invokeMethod(
 		parent,
 		[]() {
-			if (uploadDialogOpen)
-				return;
-
-			uploadDialogOpen = true;
+			obs_log(LOG_INFO, "[clip-cropper] Opening upload confirm dialog.");
 			open_confirm_dialog(nullptr);
-			uploadDialogOpen = false;
 		},
 		Qt::QueuedConnection);
 }
@@ -249,7 +260,7 @@ static void on_frontend_event(enum obs_frontend_event event, void *private_data)
 
 		reset_recording_state();
 		recordingStartedAt = QDateTime::currentDateTime().addSecs(-10);
-		global_realtime_transcription_service()->start(resolve_whisper_model_path());
+		log_on_demand_transcription_status();
 
 		ensure_opus_api_key_on_ui_thread();
 		break;
@@ -260,15 +271,16 @@ static void on_frontend_event(enum obs_frontend_event event, void *private_data)
 		recordingStoppedAt = QDateTime::currentDateTime().addSecs(10);
 
 		const QStringList paths = resolve_recording_files_for_upload();
-		global_realtime_transcription_service()->stopAndSaveForVideos(paths);
 
-		if (!paths.isEmpty()) {
-			set_pending_recording_paths(paths);
-		} else {
-			obs_log(LOG_WARNING, "[clip-cropper] No valid recording files found.");
+		if (paths.isEmpty()) {
+			obs_log(LOG_WARNING,
+				"[clip-cropper] No valid recording files found. Upload confirm dialog will not be shown.");
+			break;
 		}
 
+		set_pending_recording_paths(paths);
 		open_confirm_dialog_on_ui_thread();
+
 		break;
 	}
 
@@ -282,49 +294,16 @@ static void clip_cropper_vertical_recording_started(void *data, calldata_t *cd)
 	UNUSED_PARAMETER(data);
 	UNUSED_PARAMETER(cd);
 
-	obs_log(LOG_INFO, "[clip-cropper] Vertical recording started.");
-
-	reset_recording_state();
-	recordingStartedAt = QDateTime::currentDateTime().addSecs(-10);
-	global_realtime_transcription_service()->start(resolve_whisper_model_path());
-
-	ensure_opus_api_key_on_ui_thread();
+	obs_log(LOG_INFO,
+		"[clip-cropper] Vertical recording started. Ignoring to avoid duplicate normal recording flow.");
 }
 
 static void clip_cropper_vertical_recording_stopped(void *data, calldata_t *cd)
 {
 	UNUSED_PARAMETER(data);
+	UNUSED_PARAMETER(cd);
 
-	obs_log(LOG_INFO, "[clip-cropper] Vertical recording stopped.");
-
-	recordingStoppedAt = QDateTime::currentDateTime().addSecs(10);
-
-	QStringList paths;
-	const char *path = calldata_string(cd, "path");
-
-	if (path && path[0] != '\0') {
-		const QString receivedPath = QString::fromUtf8(path);
-		const QFileInfo info(receivedPath);
-
-		if (info.isFile()) {
-			paths = {info.absoluteFilePath()};
-			set_pending_recording_paths(paths);
-		} else if (info.isDir()) {
-			paths = video_files_modified_between(info.absoluteFilePath(), recordingStartedAt,
-							     recordingStoppedAt);
-
-			if (!paths.isEmpty())
-				set_pending_recording_paths(paths);
-		}
-	} else {
-		paths = resolve_recording_files_for_upload();
-
-		if (!paths.isEmpty())
-			set_pending_recording_paths(paths);
-	}
-
-	global_realtime_transcription_service()->stopAndSaveForVideos(paths);
-	open_confirm_dialog_on_ui_thread();
+	obs_log(LOG_INFO, "[clip-cropper] Vertical recording stopped. Ignoring dialog open to avoid duplicate prompt.");
 }
 
 static QString obs_text(const char *key)
@@ -441,6 +420,7 @@ bool obs_module_load(void)
 	QMetaObject::invokeMethod(
 		QCoreApplication::instance(), []() { show_missing_whisper_model_warning_on_ui_thread(); },
 		Qt::QueuedConnection);
+
 	obs_frontend_add_event_callback(on_frontend_event, nullptr);
 
 	obs_log(LOG_INFO, "plugin loaded (version %s)", PLUGIN_VERSION);
@@ -451,6 +431,5 @@ bool obs_module_load(void)
 void obs_module_unload(void)
 {
 	obs_frontend_remove_event_callback(on_frontend_event, nullptr);
-	global_realtime_transcription_service()->stopAndSaveForVideos({});
 	obs_log(LOG_INFO, "plugin unloaded");
 }

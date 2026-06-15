@@ -205,6 +205,12 @@ ${_usage_host:-}"
           -DCMAKE_INSTALL_PREFIX=/usr
         )
 
+        if [[ -n ${CLIP_CROPPER_FFMPEG_RUNTIME_DIR:-} ]] {
+          cmake_args+=(
+            -DCLIP_CROPPER_FFMPEG_RUNTIME_DIR=${CLIP_CROPPER_FFMPEG_RUNTIME_DIR}
+          )
+        }
+
         local cmake_version
         read -r _ _ cmake_version <<< "$(cmake --version)"
 

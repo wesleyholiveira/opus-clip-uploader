@@ -131,6 +131,9 @@ jobs:
           notarizationUser: ${{ secrets.MACOS_NOTARIZATION_USERNAME }}
           notarizationPassword: ${{ secrets.MACOS_NOTARIZATION_PASSWORD }}
 
+      - name: Prepare FFmpeg Runtime 🎞️
+        run: node .github/scripts/prepare-ffmpeg-runtime.mjs
+
       - name: Build Plugin 🧱
         uses: ./.github/actions/build-plugin
         with:
@@ -232,6 +235,9 @@ jobs:
       - name: Check CUDA 🔎
         run: nvcc --version
 
+      - name: Prepare FFmpeg Runtime 🎞️
+        run: node .github/scripts/prepare-ffmpeg-runtime.mjs
+
       - name: Build Plugin 🧱
         uses: ./.github/actions/build-plugin
         with:
@@ -324,6 +330,9 @@ jobs:
         
       - name: Check CUDA 🔎
         run: nvcc --version
+
+      - name: Prepare FFmpeg Runtime 🎞️
+        run: node .github/scripts/prepare-ffmpeg-runtime.mjs
 
       - name: Build Plugin 🧱
         uses: ./.github/actions/build-plugin

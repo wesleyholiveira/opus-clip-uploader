@@ -63,6 +63,11 @@ function Build {
         '--preset', $ConfigurePreset
     )
 
+    if (-not [string]::IsNullOrWhiteSpace($env:CLIP_CROPPER_FFMPEG_RUNTIME_DIR)) {
+        $FfmpegRuntimeDir = $env:CLIP_CROPPER_FFMPEG_RUNTIME_DIR.Replace('\', '/')
+        $CmakeArgs += "-DCLIP_CROPPER_FFMPEG_RUNTIME_DIR=${FfmpegRuntimeDir}"
+    }
+
     $CmakeBuildArgs = @(
         '--build'
         '--preset', $BuildPreset
