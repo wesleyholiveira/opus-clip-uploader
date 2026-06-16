@@ -132,11 +132,6 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 	src/utils/request.cpp
 	src/utils/request.hpp
 
-	src/auth/google-oauth.cpp
-	src/auth/google-oauth.hpp
-	src/auth/oauth-callback-server.cpp
-	src/auth/oauth-callback-server.hpp
-
 	src/opus/opus-clip-client.cpp
 	src/opus/opus-clip-client.hpp
 
