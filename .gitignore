@@ -18,6 +18,7 @@
 
 # Exclude lock files
 *.lock.json
+!.clangd
 
 # Exclude macOS legacy resource forks
 .DS_Store

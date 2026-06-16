@@ -14,11 +14,13 @@
 #include <QDialog>
 #include <QFormLayout>
 #include <QFrame>
+#include <QLabel>
 #include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QSize>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QStringList>
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
@@ -139,6 +141,34 @@ void open_settings_impl(void *private_data)
 	set_combo_current_data(openAiModelInput, PluginConfig::getValue("openai_model", OPENAI_MODEL_DISABLED), 0);
 	treeWidget->setItemWidget(openAiModelItem, 1, openAiModelInput);
 
+	auto *openAiModelStatusItem = new QTreeWidgetItem(advancedItem);
+	openAiModelStatusItem->setText(0, obsText("Settings.OpenAiModelStatus"));
+
+	QLabel *openAiModelStatusLabel = new QLabel(treeWidget);
+	openAiModelStatusLabel->setWordWrap(true);
+	treeWidget->setItemWidget(openAiModelStatusItem, 1, openAiModelStatusLabel);
+
+	auto updateOpenAiModelAvailability = [whisperModelInput, openAiModelInput, openAiModelStatusLabel]() {
+		const QString selectedModelFile = whisperModelInput->currentData().toString().trimmed();
+		const bool modelExists = whisper_model_exists(selectedModelFile);
+
+		if (!modelExists) {
+			const QSignalBlocker blocker(openAiModelInput);
+			set_combo_current_data(openAiModelInput, OPENAI_MODEL_DISABLED, openAiModelInput->count() - 1);
+			openAiModelInput->setEnabled(false);
+			openAiModelStatusLabel->setText(
+				obsText("Status.OpenAiModelDisabledMissingWhisper").arg(selectedModelFile));
+			return;
+		}
+
+		openAiModelInput->setEnabled(true);
+		openAiModelStatusLabel->setText(obsText("Status.OpenAiModelEnabledWhisperFound"));
+	};
+
+	QObject::connect(whisperModelInput, qOverload<int>(&QComboBox::currentIndexChanged), &dialog,
+			 [&updateOpenAiModelAvailability](int) { updateOpenAiModelAvailability(); });
+	updateOpenAiModelAvailability();
+
 	auto *gptDefaultPromptItem = new QTreeWidgetItem(advancedItem);
 	gptDefaultPromptItem->setText(0, obsText("Settings.GptInputTemplate"));
 	gptDefaultPromptItem->setSizeHint(0, QSize(220, 180));
@@ -173,11 +203,21 @@ void open_settings_impl(void *private_data)
 			PluginConfig::setValue("opus_api_key", apiKeyInput->text().trimmed());
 			PluginConfig::setValue("opus_brand_template_id", brandTemplateIdInput->text().trimmed());
 			PluginConfig::setValue("openai_api_key", openAiApiKeyInput->text().trimmed());
-			PluginConfig::setValue("whisper_model_file", whisperModelInput->currentData().toString());
-			PluginConfig::setValue("openai_model",
-					       openAiModelInput->currentData().toString().trimmed().isEmpty()
-						       ? QStringLiteral("gpt-5.4-mini")
-						       : openAiModelInput->currentData().toString().trimmed());
+			const QString selectedWhisperModel = whisperModelInput->currentData().toString().trimmed();
+			PluginConfig::setValue("whisper_model_file", selectedWhisperModel);
+
+			const bool selectedWhisperModelExists = whisper_model_exists(selectedWhisperModel);
+			QString openAiModel = openAiModelInput->currentData().toString().trimmed();
+			if (openAiModel.isEmpty())
+				openAiModel = QStringLiteral("disabled");
+
+			if (!selectedWhisperModelExists) {
+				openAiModel = QStringLiteral("disabled");
+				obs_log(LOG_WARNING,
+					"[clip-cropper] Selected Whisper model was not found. Saving OpenAI model as disabled.");
+			}
+
+			PluginConfig::setValue("openai_model", openAiModel);
 			PluginConfig::setValue(GptPromptClient::inputTemplateConfigKey(),
 					       gptDefaultPromptInput->toPlainText().trimmed());
 

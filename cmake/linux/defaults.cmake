@@ -17,7 +17,19 @@ set(CPACK_PACKAGE_VERSION "${CMAKE_PROJECT_VERSION}")
 set(CPACK_PACKAGE_FILE_NAME "${CPACK_PACKAGE_NAME}-${CPACK_PACKAGE_VERSION}-${CMAKE_C_LIBRARY_ARCHITECTURE}")
 
 set(CPACK_GENERATOR "DEB")
-set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+
+if(ENABLE_WHISPER_CUDA)
+  # CUDA-enabled ggml links against libcuda.so.1, which is provided by the
+  # NVIDIA driver on the target machine. GitHub-hosted runners only provide
+  # CUDA toolkit/stub libraries, so dpkg-shlibdeps cannot resolve libcuda.so.1
+  # during CPack generation and fails the package step. Disable automatic
+  # shlib dependency scanning for CUDA builds instead of adding a bogus package
+  # dependency for a driver-provided library.
+  set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS OFF)
+else()
+  set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+endif()
+
 set(CPACK_DEBIAN_PACKAGE_MAINTAINER "${PLUGIN_EMAIL}")
 set(CPACK_SET_DESTDIR ON)
 

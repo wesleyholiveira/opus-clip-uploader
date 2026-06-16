@@ -50,26 +50,26 @@ static void upload_reviewed_video(QWidget *parent, const QString &videoPath, con
 	QObject::connect(uploadDialog, &QDialog::finished, uploadDialog, &QObject::deleteLater);
 
 	auto *mainLayout = new QVBoxLayout(uploadDialog);
-	mainLayout->setContentsMargins(22, 16, 22, 16);
-	mainLayout->setSpacing(10);
+	mainLayout->setContentsMargins(20, 14, 20, 16);
+	mainLayout->setSpacing(8);
 
 	auto *progressContainer = new QFrame(uploadDialog);
 	progressContainer->setFrameShape(QFrame::NoFrame);
 
 	auto *progressLayout = new QVBoxLayout(progressContainer);
 	progressLayout->setContentsMargins(0, 0, 0, 0);
-	progressLayout->setSpacing(8);
+	progressLayout->setSpacing(6);
 
 	auto *uploadStatusLabel = new QLabel(obsText("Status.PreparingUpload").arg(1), progressContainer);
-	uploadStatusLabel->setWordWrap(true);
+	uploadStatusLabel->setWordWrap(false);
 	uploadStatusLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-	uploadStatusLabel->setMinimumHeight(24);
+	uploadStatusLabel->setMinimumHeight(20);
 
 	auto *progressBar = new QProgressBar(progressContainer);
 	progressBar->setRange(0, 100);
 	progressBar->setValue(0);
-	progressBar->setMinimumHeight(26);
-	progressBar->setTextVisible(true);
+	progressBar->setFixedHeight(22);
+	progressBar->setTextVisible(false);
 
 	progressLayout->addWidget(uploadStatusLabel);
 	progressLayout->addWidget(progressBar);

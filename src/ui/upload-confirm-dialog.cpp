@@ -39,20 +39,20 @@ static void open_review_and_upload(QWidget *parent, const QStringList &paths, co
 		return;
 	}
 
-	obs_log(LOG_INFO, "Opening upload review dialog after transcript/GPT flow: %s",
-		paths.first().toUtf8().constData());
+	blog(LOG_INFO, "Opening upload review dialog after transcript/GPT flow: %s",
+	     paths.first().toUtf8().constData());
 
 	UploadReviewDialog reviewDialog(paths.first(), parent);
 
 	if (reviewDialog.exec() != QDialog::Accepted) {
-		obs_log(LOG_INFO, "Upload review canceled after transcript/GPT flow: %s",
-			paths.first().toUtf8().constData());
+		blog(LOG_INFO, "Upload review canceled after transcript/GPT flow: %s",
+		     paths.first().toUtf8().constData());
 		clear_pending_recording_paths();
 		return;
 	}
 
-	obs_log(LOG_INFO, "Upload review accepted. Opening Opus upload progress dialog: %s",
-		paths.first().toUtf8().constData());
+	blog(LOG_INFO, "Upload review accepted. Opening Opus upload progress dialog: %s",
+	     paths.first().toUtf8().constData());
 
 	const CurationSettings curationSettings = reviewDialog.curationSettings();
 
@@ -62,26 +62,26 @@ static void open_review_and_upload(QWidget *parent, const QStringList &paths, co
 	QObject::connect(progressDialog, &QDialog::finished, progressDialog, &QObject::deleteLater);
 
 	QVBoxLayout *progressMainLayout = new QVBoxLayout(progressDialog);
-	progressMainLayout->setContentsMargins(22, 16, 22, 16);
+	progressMainLayout->setContentsMargins(20, 14, 20, 16);
 	progressMainLayout->setSpacing(8);
 
 	auto *progressContainer = new QFrame(progressDialog);
 	progressContainer->setFrameShape(QFrame::NoFrame);
 
 	auto *progressLayout = new QVBoxLayout(progressContainer);
-	progressLayout->setContentsMargins(0, 8, 0, 8);
-	progressLayout->setSpacing(8);
+	progressLayout->setContentsMargins(0, 0, 0, 0);
+	progressLayout->setSpacing(6);
 
 	QLabel *uploadStatusLabel = new QLabel(QString(), progressContainer);
-	uploadStatusLabel->setWordWrap(true);
+	uploadStatusLabel->setWordWrap(false);
 	uploadStatusLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-	uploadStatusLabel->setMinimumHeight(22);
+	uploadStatusLabel->setMinimumHeight(20);
 
 	QProgressBar *progressBar = new QProgressBar(progressContainer);
 	progressBar->setRange(0, 100);
 	progressBar->setValue(0);
-	progressBar->setMinimumHeight(24);
-	progressBar->setTextVisible(true);
+	progressBar->setFixedHeight(22);
+	progressBar->setTextVisible(false);
 
 	progressLayout->addWidget(uploadStatusLabel);
 	progressLayout->addWidget(progressBar);
@@ -92,7 +92,7 @@ static void open_review_and_upload(QWidget *parent, const QStringList &paths, co
 	hiddenUploadButton->hide();
 	progressMainLayout->addWidget(cancelUploadButton);
 
-	progressDialog->setMinimumWidth(560);
+	progressDialog->setMinimumWidth(540);
 	progressDialog->adjustSize();
 
 	QTimer::singleShot(0, progressDialog,
@@ -112,14 +112,14 @@ void open_confirm_dialog_impl(void *private_data)
 	UNUSED_PARAMETER(private_data);
 
 	if (confirmDialogActive) {
-		obs_log(LOG_INFO, "Upload confirm dialog is already open. Ignoring duplicate request.");
+		blog(LOG_INFO, "Upload confirm dialog is already open. Ignoring duplicate request.");
 		return;
 	}
 
 	const QStringList paths = get_recording_paths_for_upload();
 
 	if (paths.isEmpty()) {
-		obs_log(LOG_INFO, "No pending recording paths. Upload confirm dialog will not be shown.");
+		blog(LOG_INFO, "No pending recording paths. Upload confirm dialog will not be shown.");
 		return;
 	}
 
@@ -161,7 +161,7 @@ void open_confirm_dialog_impl(void *private_data)
 	bool uploadRequested = false;
 
 	QObject::connect(btnCancel, &QPushButton::clicked, &confirmDialog, [&confirmDialog]() {
-		obs_log(LOG_INFO, "Fechando Dialog de Upload");
+		blog(LOG_INFO, "Fechando Dialog de Upload");
 		confirmDialog.reject();
 	});
 
@@ -191,6 +191,6 @@ void open_confirm_dialog_impl(void *private_data)
 		return;
 	}
 
-	obs_log(LOG_INFO, "OpenAI model is disabled. Skipping transcript wait and GPT prompt generation.");
+	blog(LOG_INFO, "OpenAI model is disabled. Skipping transcript wait and GPT prompt generation.");
 	open_review_and_upload(parent, paths, apiKey);
 }

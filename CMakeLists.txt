@@ -9,6 +9,7 @@ set(OBS_PLUGIN_NAME "${_name}")
 option(ENABLE_FRONTEND_API "Use obs-frontend-api for UI functionality" ON)
 option(ENABLE_QT "Use Qt functionality" ON)
 option(USE_FLATPAK_PATH "Use Flatpak OBS path" OFF)
+option(ENABLE_WHISPER_CUDA "Enable Whisper CUDA backend" OFF)
 
 if (UNIX AND NOT APPLE)
 	# whisper.cpp/ggml are built as static libraries and linked into the OBS plugin
@@ -338,8 +339,6 @@ set(WHISPER_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
 set(GGML_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
 set(GGML_NATIVE ON CACHE BOOL "" FORCE)
 
-option(ENABLE_WHISPER_CUDA "Enable Whisper CUDA backend" OFF)
-
 target_compile_definitions(${CMAKE_PROJECT_NAME}
 	PRIVATE
 	CLIP_CROPPER_WHISPER_CUDA_REQUESTED=$<IF:$<BOOL:${ENABLE_WHISPER_CUDA}>,1,0>
@@ -470,11 +469,15 @@ else()
 endif()
 
 
-install(TARGETS ${CMAKE_PROJECT_NAME}
-	RUNTIME DESTINATION "obs-plugins/64bit"
-	LIBRARY DESTINATION "obs-plugins/64bit"
-	ARCHIVE DESTINATION "obs-plugins/64bit"
-)
+if (WIN32)
+	# Windows packages use the OBS plugin layout under obs-plugins/64bit.
+	# Linux/macOS helpers already install the module to their platform-native OBS paths.
+	install(TARGETS ${CMAKE_PROJECT_NAME}
+		RUNTIME DESTINATION "obs-plugins/64bit"
+		LIBRARY DESTINATION "obs-plugins/64bit"
+		ARCHIVE DESTINATION "obs-plugins/64bit"
+	)
+endif ()
 
 if (WIN32 AND ENABLE_QT)
 	install(FILES ${QT_RUNTIME_DLLS}
@@ -530,12 +533,39 @@ if (CLIP_CROPPER_BUNDLED_FFMPEG_EXECUTABLE)
 	endif ()
 endif ()
 
-install(DIRECTORY data/
-	DESTINATION "data/obs-plugins/${OBS_PLUGIN_NAME}"
-)
-
-if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/models")
-	install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/models/"
-		DESTINATION "data/obs-plugins/${OBS_PLUGIN_NAME}/models"
+if (WIN32)
+	# Keep the Windows package aligned with OBS' data lookup:
+	# package/data/obs-plugins/clip-cropper/...
+	# Do not copy data/models here: local model binaries are large and must not be
+	# included in install/package output. The models directory is created below with
+	# only a .gitkeep placeholder.
+	install(DIRECTORY data/
+		DESTINATION "data/obs-plugins/${OBS_PLUGIN_NAME}"
+		PATTERN "models" EXCLUDE
 	)
 endif ()
+
+# Do not package Whisper/GGML model binaries. They are large, optional, and should be
+# provided by the user or release asset. Install only a placeholder so the expected
+# models directory exists in fresh packages.
+set(CLIP_CROPPER_MODELS_GITKEEP "${CMAKE_CURRENT_SOURCE_DIR}/data/models/.gitkeep")
+if (NOT EXISTS "${CLIP_CROPPER_MODELS_GITKEEP}")
+	set(CLIP_CROPPER_MODELS_GITKEEP "${CMAKE_CURRENT_SOURCE_DIR}/models/.gitkeep")
+endif ()
+if (NOT EXISTS "${CLIP_CROPPER_MODELS_GITKEEP}")
+	set(CLIP_CROPPER_MODELS_GITKEEP "${CMAKE_CURRENT_BINARY_DIR}/models/.gitkeep")
+	file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/models")
+	file(WRITE "${CLIP_CROPPER_MODELS_GITKEEP}" "")
+endif ()
+
+if (WIN32)
+	set(CLIP_CROPPER_MODELS_INSTALL_DEST "data/obs-plugins/${OBS_PLUGIN_NAME}/models")
+elseif (APPLE)
+	set(CLIP_CROPPER_MODELS_INSTALL_DEST "${OBS_PLUGIN_NAME}.plugin/Contents/Resources/models")
+else ()
+	set(CLIP_CROPPER_MODELS_INSTALL_DEST "${CMAKE_INSTALL_DATAROOTDIR}/obs/obs-plugins/${OBS_PLUGIN_NAME}/models")
+endif ()
+
+install(FILES "${CLIP_CROPPER_MODELS_GITKEEP}"
+	DESTINATION "${CLIP_CROPPER_MODELS_INSTALL_DEST}"
+)

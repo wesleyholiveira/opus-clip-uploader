@@ -18,6 +18,7 @@
 #include <QObject>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QSize>
 #include <QPointer>
 #include <QThread>
 #include <QVector>
@@ -29,17 +30,17 @@ static const QString &title = clipCropperTitle();
 
 static void resize_upload_dialog(QDialog *dialog, bool expanded)
 {
-	dialog->setMinimumWidth(560);
+	static constexpr int uploadDialogMinWidth = 540;
+	static constexpr int uploadDialogMinExpandedHeight = 138;
 
-	if (expanded) {
-		dialog->setMinimumHeight(240);
-		dialog->setMaximumHeight(QWIDGETSIZE_MAX);
-	} else {
-		dialog->setMinimumHeight(0);
-		dialog->setMaximumHeight(QWIDGETSIZE_MAX);
-	}
+	dialog->setMinimumWidth(uploadDialogMinWidth);
+	dialog->setMinimumHeight(expanded ? uploadDialogMinExpandedHeight : 0);
+	dialog->setMaximumHeight(QWIDGETSIZE_MAX);
 
 	dialog->adjustSize();
+	const QSize preferredSize = dialog->sizeHint();
+	dialog->resize(qMax(dialog->width(), uploadDialogMinWidth),
+		       qMax(preferredSize.height(), dialog->minimumHeight()));
 }
 
 void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCancel, QProgressBar *progressBar,
@@ -105,7 +106,7 @@ void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCance
 	progressBar->parentWidget()->show();
 	progressBar->show();
 	progressBar->setValue(0);
-	progressBar->setFormat(obsText("Status.ProgressPreparing"));
+	progressBar->setFormat(QStringLiteral("%p%"));
 
 	if (uploadStatusLabel) {
 		uploadStatusLabel->show();
@@ -137,7 +138,7 @@ void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCance
 						.arg(state->paths.size());
 		}
 
-		progressBar->setFormat(QString("%1 - %p%").arg(currentStatus));
+		progressBar->setFormat(QStringLiteral("%p%"));
 
 		if (uploadStatusLabel)
 			uploadStatusLabel->setText(currentStatus);
@@ -176,7 +177,7 @@ void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCance
 
 		state->canceled = true;
 		btnCancel->setEnabled(false);
-		progressBar->setFormat(obsText("Status.CancelingOperation"));
+		progressBar->setFormat(QStringLiteral("%p%"));
 		if (uploadStatusLabel)
 			uploadStatusLabel->setText(obsText("Status.CancelingOperation"));
 

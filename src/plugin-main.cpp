@@ -11,6 +11,7 @@ extern "C" {
 #endif
 
 #include <ui/ui.hpp>
+#include <ui/ui-common.hpp>
 #include <transcription/realtime-transcription-service.hpp>
 #include <utils/config.hpp>
 
@@ -54,34 +55,6 @@ static void add_clip_cropper_qt_plugin_path()
 	for (const QString &path : QCoreApplication::libraryPaths()) {
 		blog(LOG_INFO, "[clip-cropper] Qt library path: %s", path.toUtf8().constData());
 	}
-}
-
-static QString clip_cropper_plugin_dir()
-{
-	const QString appData = QString::fromLocal8Bit(qgetenv("APPDATA"));
-
-	if (!appData.trimmed().isEmpty()) {
-		return QDir::fromNativeSeparators(appData) + QStringLiteral("/obs-studio/plugins/clip-cropper");
-	}
-
-	return QDir::homePath() + QStringLiteral("/AppData/Roaming/obs-studio/plugins/clip-cropper");
-}
-
-static QString resolve_whisper_model_path()
-{
-	QString modelFile = PluginConfig::getValue("whisper_model_file", "ggml-base.bin").trimmed();
-
-	if (modelFile.isEmpty())
-		modelFile = QStringLiteral("ggml-base.bin");
-
-	const QString legacyModelPath = PluginConfig::getValue("whisper_model_path").trimmed();
-	if (!legacyModelPath.isEmpty() && QFileInfo::exists(legacyModelPath))
-		return legacyModelPath;
-
-	if (QFileInfo(modelFile).isAbsolute())
-		return modelFile;
-
-	return QDir(clip_cropper_plugin_dir() + QStringLiteral("/models")).filePath(modelFile);
 }
 
 static QString obs_current_recording_output_path()
@@ -198,7 +171,7 @@ static QWidget *main_window()
 
 static bool is_openai_model_enabled()
 {
-	const QString model = PluginConfig::getValue("openai_model", "disabled").trimmed();
+	const QString model = get_openai_model();
 	return !model.isEmpty() && model != QStringLiteral("disabled");
 }
 
@@ -326,6 +299,11 @@ static void show_missing_whisper_model_warning_on_ui_thread()
 	}
 
 	blog(LOG_ERROR, "[clip-cropper] Selected Whisper model was not found: %s", modelPath.toUtf8().constData());
+
+	const QStringList searchPaths = whisper_model_search_paths(displayModel);
+	for (const QString &path : searchPaths) {
+		blog(LOG_INFO, "[clip-cropper] Whisper model search path: %s", path.toUtf8().constData());
+	}
 
 	QWidget *parent = reinterpret_cast<QWidget *>(obs_frontend_get_main_window());
 	const QString title = QStringLiteral("Clip Cropper - ") + obs_text("Dialog.MissingWhisperModelTitle");

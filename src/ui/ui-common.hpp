@@ -36,6 +36,10 @@ QStringList get_recording_paths_for_upload();
 QString get_opus_api_key();
 QString get_openai_api_key();
 QString get_openai_model();
+QString resolve_whisper_model_path();
+QStringList whisper_model_search_paths(const QString &modelFile);
+bool whisper_model_exists(const QString &modelFile);
+bool configured_whisper_model_exists();
 
 void configure_background_progress_window(QWidget *window, bool allowClose);
 void bind_progress_window_cancel(QDialog *dialog, std::function<void()> cancelHandler);

@@ -1,0 +1,20 @@
+CompileFlags:
+  Add:
+    - -D_M_X64
+    - -D_WIN64
+    - -DWIN32
+    - -DNOMINMAX
+  Remove:
+    - /W*
+    - -W*
+    - /WX
+    - -Werror
+    - -fcolor-diagnostics
+    - -fansi-escape-codes
+
+Diagnostics:
+  Suppress:
+    - undeclared_var_use
+
+Index:
+  Background: Skip
