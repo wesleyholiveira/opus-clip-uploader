@@ -14,8 +14,6 @@
 #include <utils/config.hpp>
 
 #include <QCoreApplication>
-#include <QDir>
-#include <QFileInfo>
 #include <QMessageBox>
 #include <QMetaObject>
 #include <QObject>
@@ -28,34 +26,6 @@
 #include <utility>
 
 static const QString &title = clipCropperTitle();
-
-static QString clip_cropper_plugin_dir()
-{
-	const QString appData = QString::fromLocal8Bit(qgetenv("APPDATA"));
-
-	if (!appData.trimmed().isEmpty()) {
-		return QDir::fromNativeSeparators(appData) + QStringLiteral("/obs-studio/plugins/clip-cropper");
-	}
-
-	return QDir::homePath() + QStringLiteral("/AppData/Roaming/obs-studio/plugins/clip-cropper");
-}
-
-static QString resolve_whisper_model_path()
-{
-	QString modelFile = PluginConfig::getValue("whisper_model_file", "ggml-base.bin").trimmed();
-
-	if (modelFile.isEmpty())
-		modelFile = QStringLiteral("ggml-base.bin");
-
-	const QString legacyModelPath = PluginConfig::getValue("whisper_model_path").trimmed();
-	if (!legacyModelPath.isEmpty() && QFileInfo::exists(legacyModelPath))
-		return legacyModelPath;
-
-	if (QFileInfo(modelFile).isAbsolute())
-		return modelFile;
-
-	return QDir(clip_cropper_plugin_dir() + QStringLiteral("/models")).filePath(modelFile);
-}
 
 static QObject *async_context(QWidget *parent)
 {

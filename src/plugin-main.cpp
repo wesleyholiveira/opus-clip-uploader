@@ -82,7 +82,7 @@ static QString obs_last_recording_file()
 	if (info.isFile())
 		return info.absoluteFilePath();
 
-	obs_log(LOG_WARNING, "[clip-cropper] OBS last recording is not a valid file: %s", path.toUtf8().constData());
+	blog(LOG_WARNING, "[clip-cropper] OBS last recording is not a valid file: %s", path.toUtf8().constData());
 
 	return {};
 }
@@ -109,8 +109,8 @@ static QStringList video_files_modified_between(const QString &directoryPath, co
 	result.removeDuplicates();
 	result.sort();
 
-	obs_log(LOG_INFO, "[clip-cropper] Recording scan in %s found %d new file(s).",
-		directoryPath.toUtf8().constData(), result.size());
+	blog(LOG_INFO, "[clip-cropper] Recording scan in %s found %d new file(s).", directoryPath.toUtf8().constData(),
+	     result.size());
 
 	return result;
 }
@@ -178,13 +178,13 @@ static bool is_openai_model_enabled()
 static void log_on_demand_transcription_status()
 {
 	if (!is_openai_model_enabled()) {
-		obs_log(LOG_INFO,
-			"[clip-cropper] OpenAI model is disabled. Audio transcription will be skipped on review.");
+		blog(LOG_INFO,
+		     "[clip-cropper] OpenAI model is disabled. Audio transcription will be skipped on review.");
 		return;
 	}
 
-	obs_log(LOG_INFO,
-		"[clip-cropper] OpenAI model is enabled. Audio transcription will run from the video file via ffmpeg when the review flow starts.");
+	blog(LOG_INFO,
+	     "[clip-cropper] OpenAI model is enabled. Audio transcription will run from the video file via ffmpeg when the review flow starts.");
 }
 
 static void ensure_opus_api_key_on_ui_thread()
@@ -192,14 +192,14 @@ static void ensure_opus_api_key_on_ui_thread()
 	QWidget *parent = main_window();
 
 	if (!parent) {
-		obs_log(LOG_ERROR, "[clip-cropper] Main window is null. Cannot validate Opus Clip API key.");
+		blog(LOG_ERROR, "[clip-cropper] Main window is null. Cannot validate Opus Clip API key.");
 		return;
 	}
 
 	QMetaObject::invokeMethod(
 		parent,
 		[parent]() {
-			obs_log(LOG_INFO, "[clip-cropper] Checking Opus Clip API key on UI thread.");
+			blog(LOG_INFO, "[clip-cropper] Checking Opus Clip API key on UI thread.");
 			ensure_opus_api_key(parent);
 		},
 		Qt::QueuedConnection);
@@ -210,14 +210,14 @@ static void open_confirm_dialog_on_ui_thread()
 	QWidget *parent = main_window();
 
 	if (!parent) {
-		obs_log(LOG_ERROR, "[clip-cropper] Main window is null. Cannot open upload dialog.");
+		blog(LOG_ERROR, "[clip-cropper] Main window is null. Cannot open upload dialog.");
 		return;
 	}
 
 	QMetaObject::invokeMethod(
 		parent,
 		[]() {
-			obs_log(LOG_INFO, "[clip-cropper] Opening upload confirm dialog.");
+			blog(LOG_INFO, "[clip-cropper] Opening upload confirm dialog.");
 			open_confirm_dialog(nullptr);
 		},
 		Qt::QueuedConnection);
@@ -229,7 +229,7 @@ static void on_frontend_event(enum obs_frontend_event event, void *private_data)
 
 	switch (event) {
 	case OBS_FRONTEND_EVENT_RECORDING_STARTED:
-		obs_log(LOG_INFO, "[clip-cropper] Recording started.");
+		blog(LOG_INFO, "[clip-cropper] Recording started.");
 
 		reset_recording_state();
 		recordingStartedAt = QDateTime::currentDateTime().addSecs(-10);
@@ -239,15 +239,15 @@ static void on_frontend_event(enum obs_frontend_event event, void *private_data)
 		break;
 
 	case OBS_FRONTEND_EVENT_RECORDING_STOPPED: {
-		obs_log(LOG_INFO, "[clip-cropper] Recording stopped.");
+		blog(LOG_INFO, "[clip-cropper] Recording stopped.");
 
 		recordingStoppedAt = QDateTime::currentDateTime().addSecs(10);
 
 		const QStringList paths = resolve_recording_files_for_upload();
 
 		if (paths.isEmpty()) {
-			obs_log(LOG_WARNING,
-				"[clip-cropper] No valid recording files found. Upload confirm dialog will not be shown.");
+			blog(LOG_WARNING,
+			     "[clip-cropper] No valid recording files found. Upload confirm dialog will not be shown.");
 			break;
 		}
 
@@ -267,8 +267,7 @@ static void clip_cropper_vertical_recording_started(void *data, calldata_t *cd)
 	UNUSED_PARAMETER(data);
 	UNUSED_PARAMETER(cd);
 
-	obs_log(LOG_INFO,
-		"[clip-cropper] Vertical recording started. Ignoring to avoid duplicate normal recording flow.");
+	blog(LOG_INFO, "[clip-cropper] Vertical recording started. Ignoring to avoid duplicate normal recording flow.");
 }
 
 static void clip_cropper_vertical_recording_stopped(void *data, calldata_t *cd)
@@ -276,7 +275,7 @@ static void clip_cropper_vertical_recording_stopped(void *data, calldata_t *cd)
 	UNUSED_PARAMETER(data);
 	UNUSED_PARAMETER(cd);
 
-	obs_log(LOG_INFO, "[clip-cropper] Vertical recording stopped. Ignoring dialog open to avoid duplicate prompt.");
+	blog(LOG_INFO, "[clip-cropper] Vertical recording stopped. Ignoring dialog open to avoid duplicate prompt.");
 }
 
 static QString obs_text(const char *key)
@@ -350,7 +349,7 @@ static void add_clip_cropper_tools_submenu_on_ui_thread()
 	QMenu *toolsMenu = find_tools_menu(mainWindow);
 
 	if (!toolsMenu) {
-		obs_log(LOG_WARNING, "[clip-cropper] Tools menu not found. Falling back to flat Tools menu items.");
+		blog(LOG_WARNING, "[clip-cropper] Tools menu not found. Falling back to flat Tools menu items.");
 		obs_frontend_add_tools_menu_item("Clip Cropper - Settings", open_settings, nullptr);
 		obs_frontend_add_tools_menu_item("Clip Cropper - Video editor", open_video_editor, nullptr);
 		return;
@@ -401,7 +400,7 @@ bool obs_module_load(void)
 
 	obs_frontend_add_event_callback(on_frontend_event, nullptr);
 
-	obs_log(LOG_INFO, "plugin loaded (version %s)", PLUGIN_VERSION);
+	blog(LOG_INFO, "plugin loaded (version %s)", PLUGIN_VERSION);
 
 	return true;
 }
@@ -409,5 +408,5 @@ bool obs_module_load(void)
 void obs_module_unload(void)
 {
 	obs_frontend_remove_event_callback(on_frontend_event, nullptr);
-	obs_log(LOG_INFO, "plugin unloaded");
+	blog(LOG_INFO, "plugin unloaded");
 }
