@@ -15,16 +15,15 @@
 #include <functional>
 #include <utility>
 
-
-namespace
-{
+namespace {
 constexpr const char *PROGRESS_FINISHED_PROPERTY = "clipCropperProgressFinished";
 
-class ProgressWindowCancelFilter final : public QObject
-{
+class ProgressWindowCancelFilter final : public QObject {
 public:
 	ProgressWindowCancelFilter(QDialog *dialog, std::function<void()> cancelHandler)
-		: QObject(dialog), dialog_(dialog), cancelHandler_(std::move(cancelHandler))
+		: QObject(dialog),
+		  dialog_(dialog),
+		  cancelHandler_(std::move(cancelHandler))
 	{
 	}
 
@@ -64,7 +63,7 @@ private:
 	QPointer<QDialog> dialog_;
 	std::function<void()> cancelHandler_;
 };
-}
+} // namespace
 
 BackgroundProgressDialog::BackgroundProgressDialog(QWidget *parent) : QDialog(parent) {}
 
@@ -157,7 +156,7 @@ void configure_background_progress_window(QWidget *window, bool allowClose)
 	window->setWindowModality(Qt::NonModal);
 
 	Qt::WindowFlags flags = Qt::Window | Qt::WindowTitleHint | Qt::WindowSystemMenuHint |
-					Qt::WindowMinimizeButtonHint;
+				Qt::WindowMinimizeButtonHint;
 	if (allowClose)
 		flags |= Qt::WindowCloseButtonHint;
 

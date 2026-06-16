@@ -10,6 +10,14 @@ option(ENABLE_FRONTEND_API "Use obs-frontend-api for UI functionality" ON)
 option(ENABLE_QT "Use Qt functionality" ON)
 option(USE_FLATPAK_PATH "Use Flatpak OBS path" OFF)
 
+if (UNIX AND NOT APPLE)
+	# whisper.cpp/ggml are built as static libraries and linked into the OBS plugin
+	# shared module. Linux linkers require those static objects to be built with
+	# position-independent code, otherwise the final clip-cropper.so link fails
+	# with relocation errors such as R_X86_64_PC32.
+	set(CMAKE_POSITION_INDEPENDENT_CODE ON CACHE BOOL "Build static dependencies as PIC for Linux shared module linking" FORCE)
+endif ()
+
 include(compilerconfig)
 include(defaults)
 include(helpers)
@@ -341,6 +349,15 @@ if (ENABLE_WHISPER_CUDA)
 	message(STATUS "Whisper CUDA/GPU backend requested")
 	set(GGML_CUDA ON CACHE BOOL "" FORCE)
 
+	if (NOT CMAKE_CUDA_ARCHITECTURES)
+		# GitHub-hosted Ubuntu runners do not expose a real NVIDIA GPU, so CUDA's
+		# `native` architecture detection falls back with noisy nvcc warnings. Use
+		# a deterministic Ampere target by default; callers can still override this
+		# through -DCMAKE_CUDA_ARCHITECTURES=... when needed.
+		set(CMAKE_CUDA_ARCHITECTURES 86 CACHE STRING "CUDA architectures for whisper.cpp/ggml" FORCE)
+		message(STATUS "Defaulting CMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES}")
+	endif ()
+
 	if (MSVC)
 		# CUDA 12.8 does not officially recognize Visual Studio 18 / MSVC 14.50 yet.
 		# Keep this at the root level so local builds and CI use the same reproducible flags
@@ -400,7 +417,44 @@ if (CLANGD_LIGHT_MODE)
 		${CMAKE_CURRENT_SOURCE_DIR}/deps/whisper.cpp/ggml/include
 	)
 else()
+	if (UNIX AND NOT APPLE)
+		# Set this immediately before importing whisper.cpp as well because some
+		# third-party CMake projects read CMAKE_POSITION_INDEPENDENT_CODE while their
+		# targets are being created. The explicit -fPIC/-Xcompiler=-fPIC options below
+		# are intentionally redundant: they make the CI link failure impossible even if
+		# a dependency target ignores the target property.
+		set(CMAKE_POSITION_INDEPENDENT_CODE ON CACHE BOOL "Build static dependencies as PIC for Linux shared module linking" FORCE)
+		set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC")
+		set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
+		add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:-fPIC>)
+		if (ENABLE_WHISPER_CUDA)
+			set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler=-fPIC")
+			add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-fPIC>)
+		endif ()
+	endif ()
+
 	add_subdirectory(deps/whisper.cpp EXCLUDE_FROM_ALL)
+
+	if (UNIX AND NOT APPLE)
+		foreach (_clip_cropper_pic_target
+			whisper
+			ggml
+			ggml-base
+			ggml-cpu
+			ggml-cuda
+		)
+			if (TARGET ${_clip_cropper_pic_target})
+				set_target_properties(${_clip_cropper_pic_target} PROPERTIES
+					POSITION_INDEPENDENT_CODE ON
+					INTERFACE_POSITION_INDEPENDENT_CODE ON
+				)
+				target_compile_options(${_clip_cropper_pic_target} PRIVATE
+					$<$<COMPILE_LANGUAGE:C,CXX>:-fPIC>
+					$<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-fPIC>
+				)
+			endif ()
+		endforeach ()
+	endif ()
 
 	set_target_properties(whisper PROPERTIES
 		COMPILE_WARNING_AS_ERROR OFF

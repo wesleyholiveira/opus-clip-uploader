@@ -63,8 +63,7 @@ static QString formatTranscript(const RecordingTranscript &transcript)
 }
 
 static QString renderInputTemplate(QString templateText, const QString &videoPath,
-					   const RecordingTranscript &transcript,
-					   const CurationSettings &curationSettings)
+				   const RecordingTranscript &transcript, const CurationSettings &curationSettings)
 {
 	templateText.replace(QStringLiteral("{{video_file}}"), QFileInfo(videoPath).fileName());
 	templateText.replace(QStringLiteral("{{range_start_sec}}"),

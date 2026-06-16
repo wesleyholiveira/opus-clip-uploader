@@ -96,8 +96,8 @@ static void open_review_and_upload(QWidget *parent, const QStringList &paths, co
 	progressDialog->adjustSize();
 
 	QTimer::singleShot(0, progressDialog,
-			   [progressDialog, hiddenUploadButton, cancelUploadButton, progressBar, uploadStatusLabel, apiKey,
-			    curationSettings]() {
+			   [progressDialog, hiddenUploadButton, cancelUploadButton, progressBar, uploadStatusLabel,
+			    apiKey, curationSettings]() {
 				   start_upload(progressDialog, hiddenUploadButton, cancelUploadButton, progressBar,
 						uploadStatusLabel, apiKey, curationSettings);
 			   });
@@ -185,8 +185,9 @@ void open_confirm_dialog_impl(void *private_data)
 	}
 
 	if (is_openai_model_enabled()) {
-		generate_custom_prompt_before_review_async(parent, paths.first(), true,
-							   [parent, paths, apiKey]() { open_review_and_upload(parent, paths, apiKey); });
+		generate_custom_prompt_before_review_async(parent, paths.first(), true, [parent, paths, apiKey]() {
+			open_review_and_upload(parent, paths, apiKey);
+		});
 		return;
 	}
 

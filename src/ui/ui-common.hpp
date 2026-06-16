@@ -8,8 +8,7 @@
 
 class QCloseEvent;
 
-class BackgroundProgressDialog final : public QDialog
-{
+class BackgroundProgressDialog final : public QDialog {
 public:
 	explicit BackgroundProgressDialog(QWidget *parent = nullptr);
 

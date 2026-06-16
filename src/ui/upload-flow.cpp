@@ -43,7 +43,7 @@ static void resize_upload_dialog(QDialog *dialog, bool expanded)
 }
 
 void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCancel, QProgressBar *progressBar,
-			 QLabel *uploadStatusLabel, const QString &apiKey, const CurationSettings &curationSettings)
+		  QLabel *uploadStatusLabel, const QString &apiKey, const CurationSettings &curationSettings)
 {
 	const QStringList recordingPaths = get_recording_paths_for_upload();
 
@@ -205,7 +205,8 @@ void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCance
 		if (state->canceled)
 			return;
 
-		while (!state->canceled && state->running < MAX_PARALLEL_UPLOADS && state->nextIndex < state->paths.size()) {
+		while (!state->canceled && state->running < MAX_PARALLEL_UPLOADS &&
+		       state->nextIndex < state->paths.size()) {
 			const int index = state->nextIndex++;
 			const QString recordingPath = state->paths.at(index);
 			const QFileInfo qFileInfo(recordingPath);
@@ -280,7 +281,8 @@ void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCance
 					state->completed++;
 					state->failed++;
 					state->progress[index] = 100;
-					state->statusMessages[index] = state->canceled ? obsText("Message.UploadCanceled") : message;
+					state->statusMessages[index] =
+						state->canceled ? obsText("Message.UploadCanceled") : message;
 
 					updateProgress();
 
