@@ -14,33 +14,63 @@
 
 static constexpr const char *OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 
-static constexpr const char *CONFIG_GPT_INPUT_TEMPLATE = "gpt.input_text_template";
+static constexpr const char *CONFIG_GPT_INPUT_TEMPLATE_LEGACY = "gpt.input_text_template";
+static constexpr const char *CONFIG_GPT_INPUT_TEMPLATE_PREFIX = "gpt.input_text_template.";
+static constexpr const char *CONFIG_OPUS_SOURCE_LANGUAGE = "opus_source_lang";
 
-static QString formatSelectedRanges(const CurationSettings &curationSettings)
+static QString normalizePromptLanguage(QString sourceLanguage)
+{
+	sourceLanguage = sourceLanguage.trimmed().toLower();
+
+	if (sourceLanguage == QStringLiteral("pt") || sourceLanguage == QStringLiteral("pt-br") ||
+	    sourceLanguage == QStringLiteral("portuguese"))
+		return QStringLiteral("pt");
+
+	if (sourceLanguage == QStringLiteral("en") || sourceLanguage == QStringLiteral("en-us") ||
+	    sourceLanguage == QStringLiteral("english"))
+		return QStringLiteral("en");
+
+	return QStringLiteral("auto");
+}
+
+static bool usePortuguesePromptText(const QString &sourceLanguage)
+{
+	return normalizePromptLanguage(sourceLanguage) == QStringLiteral("pt");
+}
+
+static QString formatSelectedRanges(const CurationSettings &curationSettings, const QString &sourceLanguage)
 {
 	QString text;
+	const bool portuguese = usePortuguesePromptText(sourceLanguage);
 
 	if (!curationSettings.clipDurations.isEmpty()) {
-		text += QStringLiteral("Ranges/marcações escolhidos pelo usuário, em ordem de prioridade:\n");
+		text += portuguese
+				? QStringLiteral("Ranges/marcações escolhidos pelo usuário, em ordem de prioridade:\n")
+				: QStringLiteral("User-selected ranges/markers, in priority order:\n");
 		int index = 1;
 		for (const ClipDuration &range : curationSettings.clipDurations) {
-			text += QStringLiteral("%1. %2 até %3 segundos\n")
-					.arg(index++)
-					.arg(range.startSec, 0, 'f', 3)
-					.arg(range.endSec, 0, 'f', 3);
+			const QString rangeLine = portuguese ? QStringLiteral("%1. %2 até %3 segundos\n")
+							     : QStringLiteral("%1. %2 to %3 seconds\n");
+			text += rangeLine.arg(index++).arg(range.startSec, 0, 'f', 3).arg(range.endSec, 0, 'f', 3);
 		}
 	} else {
-		text += QStringLiteral(
-			"Não há ranges/marcações específicos escolhidos pelo usuário. Escolha os melhores trechos usando a transcrição.\n");
+		text += portuguese
+				? QStringLiteral(
+					  "Não há ranges/marcações específicos escolhidos pelo usuário. Escolha os melhores trechos usando a transcrição.\n")
+				: QStringLiteral(
+					  "There are no specific user-selected ranges/markers. Choose the best moments using the transcript.\n");
 	}
 
 	return text.trimmed();
 }
 
-static QString formatTopicKeywords(const CurationSettings &curationSettings)
+static QString formatTopicKeywords(const CurationSettings &curationSettings, const QString &sourceLanguage)
 {
-	if (curationSettings.topicKeywords.isEmpty())
-		return QStringLiteral("Nenhuma keyword/tema específico foi informado pelo usuário.");
+	if (curationSettings.topicKeywords.isEmpty()) {
+		return usePortuguesePromptText(sourceLanguage)
+			       ? QStringLiteral("Nenhuma keyword/tema específico foi informado pelo usuário.")
+			       : QStringLiteral("No specific keyword/topic was provided by the user.");
+	}
 
 	return curationSettings.topicKeywords.join(QStringLiteral(", ")).trimmed();
 }
@@ -63,26 +93,25 @@ static QString formatTranscript(const RecordingTranscript &transcript)
 }
 
 static QString renderInputTemplate(QString templateText, const QString &videoPath,
-				   const RecordingTranscript &transcript, const CurationSettings &curationSettings)
+				   const RecordingTranscript &transcript, const CurationSettings &curationSettings,
+				   const QString &sourceLanguage)
 {
 	templateText.replace(QStringLiteral("{{video_file}}"), QFileInfo(videoPath).fileName());
 	templateText.replace(QStringLiteral("{{range_start_sec}}"),
 			     QString::number(curationSettings.rangeStartSec, 'f', 3));
 	templateText.replace(QStringLiteral("{{range_end_sec}}"),
 			     QString::number(curationSettings.rangeEndSec, 'f', 3));
-	templateText.replace(QStringLiteral("{{selected_ranges}}"), formatSelectedRanges(curationSettings));
-	templateText.replace(QStringLiteral("{{topic_keywords}}"), formatTopicKeywords(curationSettings));
+	templateText.replace(QStringLiteral("{{selected_ranges}}"),
+			     formatSelectedRanges(curationSettings, sourceLanguage));
+	templateText.replace(QStringLiteral("{{topic_keywords}}"),
+			     formatTopicKeywords(curationSettings, sourceLanguage));
+	templateText.replace(QStringLiteral("{{source_language}}"), normalizePromptLanguage(sourceLanguage));
 	templateText.replace(QStringLiteral("{{transcript}}"), formatTranscript(transcript));
 
 	return templateText.trimmed();
 }
 
-QString GptPromptClient::inputTemplateConfigKey()
-{
-	return QString::fromLatin1(CONFIG_GPT_INPUT_TEMPLATE);
-}
-
-QString GptPromptClient::defaultInputTextTemplate()
+static QString defaultPortugueseInputTextTemplate()
 {
 	return QStringLiteral(
 		"Você é um estrategista sênior de cortes virais para vídeos curtos extraídos de lives.\n"
@@ -116,6 +145,7 @@ QString GptPromptClient::defaultInputTextTemplate()
 		"- manter fidelidade total ao que foi dito na transcrição.\n\n"
 
 		"Vídeo: {{video_file}}\n"
+		"Idioma de origem configurado: {{source_language}}\n"
 		"Faixa geral selecionada pelo usuário: {{range_start_sec}} até {{range_end_sec}} segundos\n\n"
 
 		"Ranges/marcações escolhidos pelo usuário:\n"
@@ -133,9 +163,112 @@ QString GptPromptClient::defaultInputTextTemplate()
 		"{{transcript}}\n");
 }
 
+static QString defaultEnglishInputTextTemplate(bool autoDetectLanguage)
+{
+	const QString languageInstruction =
+		autoDetectLanguage
+			? QStringLiteral(
+				  "Your task is NOT to create the clips directly. Your task is to generate a final prompt for Opus Clip as a custom prompt. Write the final Opus prompt in the same language detected in the transcript; if the language is ambiguous, use English.\n")
+			: QStringLiteral(
+				  "Your task is NOT to create the clips directly. Your task is to generate a final prompt, in English, for Opus Clip as a custom prompt.\n");
+
+	return QStringLiteral("You are a senior strategist for viral short-form clips extracted from livestreams.\n") +
+	       languageInstruction +
+	       QStringLiteral(
+		       "Opus Clip will use this prompt to decide which sections to cut, so the prompt must be objective, actionable, and based on timestamps.\n\n"
+
+		       "Mandatory rules for your response:\n"
+		       "- Return ONLY the final prompt for Opus Clip.\n"
+		       "- Do not use markdown.\n"
+		       "- Do not explain your reasoning.\n"
+		       "- Do not invent quotes, topics, promises, or events that do not appear in the transcript.\n"
+		       "- Preserve the important timestamps in the final prompt.\n"
+		       "- If user-selected markers/ranges exist, they are the highest priority.\n"
+		       "- The final prompt must tell Opus to prioritize clips inside the marked ranges.\n"
+		       "- Allow using a few seconds before/after the ranges only when it improves context, hook, or ending.\n"
+		       "- If there are no marked ranges, choose the best moments based on the transcript.\n"
+		       "- Each clip must focus on exactly one main subject. Do not mix two different subjects in the same clip.\n"
+		       "- Each clip must have a beginning, middle, and end: clear hook/opening, understandable development, and natural closing.\n"
+		       "- Reject clips that only work if the viewer has already watched many previous minutes of the livestream.\n\n"
+
+		       "The final Opus prompt should include instructions such as:\n"
+		       "- prioritize sections with a strong hook in the first seconds;\n"
+		       "- prioritize clear explanations, strong opinions, tension, surprise, humor, contrast, expectation breaks, or punchlines;\n"
+		       "- keep each clip focused on a single subject, without merging parallel topics or unrelated conversations;\n"
+		       "- avoid sections that depend too much on previous context;\n"
+		       "- remove pauses, repetitions, hesitations, and low-value parts;\n"
+		       "- cut out any part that does not directly belong to the main subject of the clip;\n"
+		       "- remove repetitive livestream meta sections, especially comments about delayed messages, delayed chat, reading messages, PIX, star comments, donations, super chat, or requests to pay so a message is read earlier, unless that is the main subject and has entertainment value;\n"
+		       "- look for clips with a clear beginning, short development, and satisfying ending;\n"
+		       "- prefer clips between 30 and 60 seconds, unless a shorter section is stronger;\n"
+		       "- stay fully faithful to what was said in the transcript.\n\n"
+
+		       "Video: {{video_file}}\n"
+		       "Configured source language: {{source_language}}\n"
+		       "General range selected by the user: {{range_start_sec}} to {{range_end_sec}} seconds\n\n"
+
+		       "User-selected ranges/markers:\n"
+		       "{{selected_ranges}}\n\n"
+
+		       "Desired keywords/topics from the user:\n"
+		       "{{topic_keywords}}\n\n"
+
+		       "Now analyze the transcript below and generate the final prompt for Opus Clip.\n"
+		       "The final prompt must explicitly cite the best timestamps/ranges and explain, in one short sentence, the expected type of clip for each one.\n"
+		       "When choosing or describing ranges, prioritize windows where the main subject starts and ends naturally.\n"
+		       "If a good section contains interruptions about delayed chat, PIX, stars, reading messages, or donations, instruct Opus to cut those parts out.\n"
+		       "Do not copy the full transcript. Summarize only the useful instructions for Opus.\n\n"
+		       "Transcript with timestamps:\n"
+		       "{{transcript}}\n");
+}
+
+QString GptPromptClient::inputTemplateConfigKey()
+{
+	return inputTemplateConfigKey(
+		PluginConfig::getValue(QString::fromLatin1(CONFIG_OPUS_SOURCE_LANGUAGE), QStringLiteral("auto")));
+}
+
+QString GptPromptClient::inputTemplateConfigKey(const QString &sourceLanguage)
+{
+	return QString::fromLatin1(CONFIG_GPT_INPUT_TEMPLATE_PREFIX) + normalizePromptLanguage(sourceLanguage);
+}
+
+QString GptPromptClient::defaultInputTextTemplate()
+{
+	return defaultInputTextTemplate(
+		PluginConfig::getValue(QString::fromLatin1(CONFIG_OPUS_SOURCE_LANGUAGE), QStringLiteral("auto")));
+}
+
+QString GptPromptClient::defaultInputTextTemplate(const QString &sourceLanguage)
+{
+	const QString normalizedLanguage = normalizePromptLanguage(sourceLanguage);
+
+	if (normalizedLanguage == QStringLiteral("pt"))
+		return defaultPortugueseInputTextTemplate();
+
+	return defaultEnglishInputTextTemplate(normalizedLanguage == QStringLiteral("auto"));
+}
+
 QString GptPromptClient::configuredInputTextTemplate()
 {
-	return PluginConfig::getValue(inputTemplateConfigKey(), defaultInputTextTemplate()).trimmed();
+	return configuredInputTextTemplate(
+		PluginConfig::getValue(QString::fromLatin1(CONFIG_OPUS_SOURCE_LANGUAGE), QStringLiteral("auto")));
+}
+
+QString GptPromptClient::configuredInputTextTemplate(const QString &sourceLanguage)
+{
+	const QString configuredTemplate = PluginConfig::getValue(inputTemplateConfigKey(sourceLanguage)).trimmed();
+	if (!configuredTemplate.isEmpty())
+		return configuredTemplate;
+
+	if (normalizePromptLanguage(sourceLanguage) == QStringLiteral("pt")) {
+		const QString legacyTemplate =
+			PluginConfig::getValue(QString::fromLatin1(CONFIG_GPT_INPUT_TEMPLATE_LEGACY)).trimmed();
+		if (!legacyTemplate.isEmpty())
+			return legacyTemplate;
+	}
+
+	return defaultInputTextTemplate(sourceLanguage).trimmed();
 }
 
 GptPromptClient::GptPromptClient(QString apiKey, QString model, QObject *parent)
@@ -157,7 +290,10 @@ void GptPromptClient::cancel()
 QString GptPromptClient::buildInputText(const QString &videoPath, const RecordingTranscript &transcript,
 					const CurationSettings &curationSettings) const
 {
-	return renderInputTemplate(configuredInputTextTemplate(), videoPath, transcript, curationSettings);
+	const QString sourceLanguage =
+		PluginConfig::getValue(QString::fromLatin1(CONFIG_OPUS_SOURCE_LANGUAGE), QStringLiteral("auto"));
+	return renderInputTemplate(configuredInputTextTemplate(sourceLanguage), videoPath, transcript, curationSettings,
+				   sourceLanguage);
 }
 
 void GptPromptClient::createOpusPromptAsync(const QString &videoPath, const RecordingTranscript &transcript,

@@ -15,8 +15,11 @@ class GptPromptClient : public QObject {
 public:
 	explicit GptPromptClient(QString apiKey, QString model = {}, QObject *parent = nullptr);
 	static QString inputTemplateConfigKey();
+	static QString inputTemplateConfigKey(const QString &sourceLanguage);
 	static QString defaultInputTextTemplate();
+	static QString defaultInputTextTemplate(const QString &sourceLanguage);
 	static QString configuredInputTextTemplate();
+	static QString configuredInputTextTemplate(const QString &sourceLanguage);
 	void cancel();
 	void createOpusPromptAsync(const QString &videoPath, const RecordingTranscript &transcript,
 				   const CurationSettings &curationSettings);

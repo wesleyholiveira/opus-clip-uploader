@@ -177,8 +177,14 @@ void open_settings_impl(void *private_data)
 	QPlainTextEdit *gptDefaultPromptInput = new QPlainTextEdit(treeWidget);
 	gptDefaultPromptInput->setMinimumHeight(170);
 	gptDefaultPromptInput->setPlaceholderText(obsText("Placeholder.GptInputTemplate"));
-	gptDefaultPromptInput->setPlainText(GptPromptClient::configuredInputTextTemplate());
+	gptDefaultPromptInput->setPlainText(GptPromptClient::configuredInputTextTemplate(savedSourceLang));
 	treeWidget->setItemWidget(gptDefaultPromptItem, 1, gptDefaultPromptInput);
+
+	QObject::connect(sourceLangInput, &QComboBox::currentTextChanged, &dialog,
+			 [gptDefaultPromptInput](const QString &sourceLanguage) {
+				 gptDefaultPromptInput->setPlainText(
+					 GptPromptClient::configuredInputTextTemplate(sourceLanguage));
+			 });
 
 	treeWidget->resizeColumnToContents(0);
 
@@ -218,11 +224,11 @@ void open_settings_impl(void *private_data)
 			}
 
 			PluginConfig::setValue("openai_model", openAiModel);
-			PluginConfig::setValue(GptPromptClient::inputTemplateConfigKey(),
-					       gptDefaultPromptInput->toPlainText().trimmed());
-
 			const QString sourceLang = sourceLangInput->currentText().trimmed();
-			PluginConfig::setValue("opus_source_lang", sourceLang.isEmpty() ? "auto" : sourceLang);
+			const QString normalizedSourceLang = sourceLang.isEmpty() ? QStringLiteral("auto") : sourceLang;
+			PluginConfig::setValue(GptPromptClient::inputTemplateConfigKey(normalizedSourceLang),
+					       gptDefaultPromptInput->toPlainText().trimmed());
+			PluginConfig::setValue("opus_source_lang", normalizedSourceLang);
 
 			obs_log(LOG_INFO, "Clip Cropper settings saved. Opus Clip settings updated.");
 
