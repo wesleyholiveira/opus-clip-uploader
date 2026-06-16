@@ -1,6 +1,6 @@
 # OBS Clip Cropper Plugin
 
-Plugin para **OBS Studio 30.1+** que facilita o envio de gravações/lives para o Opus Clip, com suporte a edição/revisão de trechos, transcrição local com Whisper.cpp/GGML, geração de contexto com OpenAI/GPT e upload com progresso em background.
+Plugin para **OBS Studio 30.1+** que facilita o envio de gravações e lives para o **Opus Clip**, com suporte a edição/revisão de trechos, transcrição local com **Whisper.cpp/GGML**, geração de contexto com **OpenAI/GPT** e upload com progresso em background.
 
 ## Índice
 
@@ -29,11 +29,7 @@ Plugin para **OBS Studio 30.1+** que facilita o envio de gravações/lives para 
 
 ## Versão suportada do OBS
 
-Este plugin foi desenvolvido e testado para:
-
-```txt
-OBS Studio 30.1+
-```
+Este plugin foi desenvolvido e testado para **OBS Studio 30.1+**.
 
 Versões anteriores do OBS podem não possuir APIs, layout de diretórios ou dependências compatíveis com o plugin.
 
@@ -55,7 +51,7 @@ Principais recursos:
 
 ### Review e marcação de trechos
 
-Antes do upload, o plugin permite revisar o vídeo e selecionar trechos que serão enviados ao Opus.
+Antes do upload, o plugin permite revisar o vídeo e selecionar os trechos que serão enviados ao Opus.
 
 Recursos principais:
 
@@ -74,17 +70,7 @@ Se nenhum trecho for selecionado, o plugin pode usar um range padrão inicial pa
 
 O plugin possui uma tela de edição/revisão para selecionar os trechos do vídeo que serão enviados ao Opus Clip.
 
-Essa etapa define se o Opus receberá:
-
-```txt
-um trecho fixo
-```
-
-ou:
-
-```txt
-uma janela maior de curadoria
-```
+Essa etapa define se o Opus receberá **um trecho fixo** ou **uma janela maior de curadoria**.
 
 Quando `Skip Curate` está desmarcado, o range selecionado funciona como uma área de busca para o Opus procurar bons cortes automaticamente.
 
@@ -111,7 +97,6 @@ A tela de edição/revisão possui:
 
 Fluxo recomendado:
 
-```txt
 1. Abra o vídeo no editor/review.
 2. Use a timeline para navegar até o ponto inicial.
 3. Marque o início do range.
@@ -119,26 +104,19 @@ Fluxo recomendado:
 5. Marque o fim do range.
 6. Revise o trecho selecionado.
 7. Confirme o envio para o Opus.
-```
 
 Exemplo:
 
-```txt
-Início: 10min
-Fim: 2h
-```
+- **Início:** `10min`
+- **Fim:** `2h`
 
 Com `Skip Curate` desmarcado, isso significa:
 
-```txt
-“Opus, procure cortes bons dentro do intervalo de 10min até 2h.”
-```
+> Opus, procure cortes bons dentro do intervalo de 10min até 2h.
 
 Com `Skip Curate` marcado, isso significa:
 
-```txt
-“Use exatamente o trecho de 10min até 2h como clipe fixo.”
-```
+> Use exatamente o trecho de 10min até 2h como clipe fixo.
 
 #### Atalhos e ações úteis no editor
 
@@ -185,51 +163,31 @@ review/upload continua
 
 O prompt gerado ajuda o Opus a entender quais cortes devem ser priorizados.
 
-O prompt padrão orienta que cada corte tenha:
-
-```txt
-começo, meio e fim
-```
-
-e que trate de:
-
-```txt
-exatamente um assunto principal
-```
+O prompt padrão orienta que cada corte tenha **começo, meio e fim** e trate de **exatamente um assunto principal**.
 
 Também orienta a remover partes fora do assunto, como comentários repetitivos sobre chat atrasado, PIX, estrelinha, doações ou leitura de mensagens, exceto quando esse for o assunto principal do corte.
 
 ### Curadoria automática pelo Opus
 
-O plugin diferencia dois modos principais: curadoria ativa e `Skip Curate`.
+O plugin diferencia dois modos principais: **curadoria ativa** e **Skip Curate**.
 
 #### Curadoria ativa
 
-Quando `Skip Curate` está desmarcado:
+Quando `Skip Curate` está desmarcado, o range selecionado é tratado como **janela de busca**.
 
-```txt
-range selecionado = janela de busca
-```
-
-O plugin envia o intervalo para o Opus como área de curadoria, e o Opus decide os melhores cortes dentro daquele trecho.
+Nesse modo, o plugin envia o intervalo para o Opus como área de curadoria, e o Opus decide os melhores cortes dentro daquele trecho.
 
 Nesse modo, o plugin não força:
 
-```txt
-clip_start
-clip_duration
-clipDurations
-```
+- `clip_start`
+- `clip_duration`
+- `clipDurations`
 
 #### Skip Curate
 
-Quando `Skip Curate` está marcado:
+Quando `Skip Curate` está marcado, o range selecionado é tratado como **clipe fixo**.
 
-```txt
-range selecionado = clipe fixo
-```
-
-O plugin envia início e duração exatos para o Opus.
+Nesse modo, o plugin envia início e duração exatos para o Opus.
 
 ### Transcrição local com Whisper.cpp/GGML
 
@@ -246,7 +204,7 @@ Recursos:
 - cancelamento durante transcrição;
 - progresso em janela não-modal/minimizável.
 
-O fluxo atual é:
+Fluxo atual:
 
 ```txt
 vídeo
@@ -304,10 +262,8 @@ Isso evita que o usuário pense que a geração GPT/transcrição está habilita
 
 O plugin possui arquivos de locale para:
 
-```txt
-pt-BR
-en-US
-```
+- `pt-BR`
+- `en-US`
 
 Arquivos:
 
@@ -360,62 +316,36 @@ openai_model = disabled
 
 Use exatamente um destes nomes:
 
-```txt
-ggml-tiny.bin
-ggml-base.bin
-ggml-small.bin
-ggml-medium.bin
-ggml-large-v3.bin
-```
+- `ggml-tiny.bin`
+- `ggml-base.bin`
+- `ggml-small.bin`
+- `ggml-medium.bin`
+- `ggml-large-v3.bin`
 
 Exemplo válido:
 
-```txt
-ggml-base.bin
-```
+- `ggml-base.bin`
 
 Exemplos inválidos:
 
-```txt
-base.bin
-whisper-base.bin
-ggml-base.en.bin
-ggml_base.bin
-ggml-large.bin
-large-v3.bin
-```
+- `base.bin`
+- `whisper-base.bin`
+- `ggml-base.en.bin`
+- `ggml_base.bin`
+- `ggml-large.bin`
+- `large-v3.bin`
 
 O plugin procura o arquivo pelo nome exato.
 
-Então, se nas configurações estiver selecionado `tiny`, o arquivo esperado será:
+Se nas configurações estiver selecionado `tiny`, o arquivo esperado será `ggml-tiny.bin`.
 
-```txt
-ggml-tiny.bin
-```
+Se nas configurações estiver selecionado `base`, o arquivo esperado será `ggml-base.bin`.
 
-Se estiver selecionado `base`, o arquivo esperado será:
+Se nas configurações estiver selecionado `small`, o arquivo esperado será `ggml-small.bin`.
 
-```txt
-ggml-base.bin
-```
+Se nas configurações estiver selecionado `medium`, o arquivo esperado será `ggml-medium.bin`.
 
-Se estiver selecionado `small`, o arquivo esperado será:
-
-```txt
-ggml-small.bin
-```
-
-Se estiver selecionado `medium`, o arquivo esperado será:
-
-```txt
-ggml-medium.bin
-```
-
-Se estiver selecionado `large-v3`, o arquivo esperado será:
-
-```txt
-ggml-large-v3.bin
-```
+Se nas configurações estiver selecionado `large-v3`, o arquivo esperado será `ggml-large-v3.bin`.
 
 ### Onde colocar os modelos
 
@@ -847,13 +777,7 @@ dir "%CD%\package\data\obs-plugins\clip-cropper\ffmpeg\ffmpeg.exe"
 dir "%CD%\package\data\obs-plugins\clip-cropper\models"
 ```
 
-A pasta `models` deve conter apenas:
-
-```txt
-.gitkeep
-```
-
-até você copiar manualmente o modelo GGML.
+A pasta `models` deve conter apenas `.gitkeep` até você copiar manualmente o modelo GGML.
 
 ## Como instalar manualmente no OBS no Windows
 
@@ -900,11 +824,7 @@ cmake --build build_x86_64 --target package
 
 ### Observação sobre CUDA no Linux
 
-Quando o Whisper CUDA está habilitado, o plugin pode depender de bibliotecas do driver NVIDIA, como:
-
-```txt
-libcuda.so.1
-```
+Quando o Whisper CUDA está habilitado, o plugin pode depender de bibliotecas do driver NVIDIA, como `libcuda.so.1`.
 
 Essa biblioteca vem do driver NVIDIA da máquina final, não necessariamente do CUDA Toolkit instalado no runner de CI.
 
@@ -959,13 +879,11 @@ openai_model = disabled
 
 Verifique se o `.bin` está usando um dos nomes exatos aceitos:
 
-```txt
-ggml-tiny.bin
-ggml-base.bin
-ggml-small.bin
-ggml-medium.bin
-ggml-large-v3.bin
-```
+- `ggml-tiny.bin`
+- `ggml-base.bin`
+- `ggml-small.bin`
+- `ggml-medium.bin`
+- `ggml-large-v3.bin`
 
 E se está dentro da pasta:
 
@@ -1038,20 +956,8 @@ Para builds CUDA, o projeto desativa a geração automática de dependências vi
 
 ```bat
 node .github\scripts\prepare-ffmpeg-runtime.mjs
-```
-
-```bat
 set "CLIP_CROPPER_FFMPEG_RUNTIME_DIR=%CD%\.ffmpeg-runtime"
-```
-
-```bat
 cmake --preset windows-ninja-cuda-x64 -DCLIP_CROPPER_FFMPEG_RUNTIME_DIR="%CLIP_CROPPER_FFMPEG_RUNTIME_DIR%"
-```
-
-```bat
 cmake --build --preset windows-ninja-cuda-x64 --parallel
-```
-
-```bat
 cmake --install build_cuda --prefix "%CD%\package"
 ```
