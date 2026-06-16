@@ -327,7 +327,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: 'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8'
-          key: ${{ runner.os }}-cuda-12.8.0-v2
+          key: ${{ runner.os }}-cuda-12.8.0-v3
           restore-keys: |
             ${{ runner.os }}-cuda-12.8.0-
 
@@ -347,19 +347,11 @@ jobs:
         with:
           cuda: '12.8.0'
           method: network
-          sub-packages: '["nvcc", "cudart", "cudart-dev", "nvrtc", "nvrtc-dev", "libraries-dev"]'
 
       - name: Export CUDA env 🟩
         run: |
           "CUDA_PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8" >> $env:GITHUB_ENV
           "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\bin" >> $env:GITHUB_PATH
-
-      - name: Save CUDA cache 🟩
-        if: steps.cuda-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: 'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8'
-          key: ${{ runner.os }}-cuda-12.8.0-v2
 
       - name: Setup MSVC 🪟
         uses: ilammy/msvc-dev-cmd@v1
@@ -368,6 +360,13 @@ jobs:
         
       - name: Check CUDA 🔎
         run: nvcc --version
+
+      - name: Save CUDA cache 🟩
+        if: steps.cuda-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: 'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8'
+          key: ${{ runner.os }}-cuda-12.8.0-v3
 
       - name: Prepare FFmpeg Runtime 🎞️
         run: node .github/scripts/prepare-ffmpeg-runtime.mjs
