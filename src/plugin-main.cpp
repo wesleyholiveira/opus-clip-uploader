@@ -109,8 +109,8 @@ static QStringList video_files_modified_between(const QString &directoryPath, co
 	result.removeDuplicates();
 	result.sort();
 
-	blog(LOG_INFO, "[clip-cropper] Recording scan in %s found %d new file(s).", directoryPath.toUtf8().constData(),
-	     result.size());
+	blog(LOG_INFO, "[clip-cropper] Recording scan in %s found %lld new file(s).",
+	     directoryPath.toUtf8().constData(), static_cast<long long>(result.size()));
 
 	return result;
 }
