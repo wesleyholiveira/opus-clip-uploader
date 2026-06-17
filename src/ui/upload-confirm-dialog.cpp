@@ -32,30 +32,9 @@ static bool is_openai_model_enabled()
 	return !model.isEmpty() && model != OPENAI_MODEL_DISABLED;
 }
 
-static void open_review_and_upload(QWidget *parent, const QStringList &paths, const QString &apiKey)
+static void start_reviewed_upload(QWidget *parent, const QStringList &paths, const QString &apiKey,
+				  const CurationSettings &curationSettings)
 {
-	if (paths.isEmpty()) {
-		clear_pending_recording_paths();
-		return;
-	}
-
-	blog(LOG_INFO, "Opening upload review dialog after transcript/GPT flow: %s",
-	     paths.first().toUtf8().constData());
-
-	UploadReviewDialog reviewDialog(paths.first(), parent);
-
-	if (reviewDialog.exec() != QDialog::Accepted) {
-		blog(LOG_INFO, "Upload review canceled after transcript/GPT flow: %s",
-		     paths.first().toUtf8().constData());
-		clear_pending_recording_paths();
-		return;
-	}
-
-	blog(LOG_INFO, "Upload review accepted. Opening Opus upload progress dialog: %s",
-	     paths.first().toUtf8().constData());
-
-	const CurationSettings curationSettings = reviewDialog.curationSettings();
-
 	auto *progressDialog = new BackgroundProgressDialog(parent);
 	progressDialog->setWindowTitle(title);
 	configure_background_progress_window(progressDialog, true);
@@ -106,20 +85,91 @@ static void open_review_and_upload(QWidget *parent, const QStringList &paths, co
 	progressDialog->raise();
 }
 
+static void generate_prompt_and_upload(QWidget *parent, const QStringList &paths, const QString &apiKey,
+				       const CurationSettings &curationSettings)
+{
+	if (paths.isEmpty()) {
+		clear_pending_recording_paths();
+		return;
+	}
+
+	auto startUpload = [parent, paths, apiKey, curationSettings](const QString &generatedPrompt) mutable {
+		CurationSettings finalSettings = curationSettings;
+		const bool promptWasGenerated = finalSettings.aiPrompt.trimmed().isEmpty() &&
+						!generatedPrompt.trimmed().isEmpty();
+
+		if (promptWasGenerated)
+			finalSettings.aiPrompt = generatedPrompt.trimmed();
+
+		if (promptWasGenerated) {
+			obs_log(LOG_INFO, "Opening GPT-generated Opus prompt confirmation dialog before upload: %s",
+				paths.first().toUtf8().constData());
+
+			UploadReviewDialog promptReviewDialog(paths.first(), finalSettings, true, parent);
+			if (promptReviewDialog.exec() != QDialog::Accepted) {
+				obs_log(LOG_INFO, "GPT-generated Opus prompt confirmation canceled before upload: %s",
+					paths.first().toUtf8().constData());
+				clear_pending_recording_paths();
+				return;
+			}
+
+			finalSettings = promptReviewDialog.curationSettings();
+		}
+
+		obs_log(LOG_INFO, "Opening Opus upload progress dialog after review/GPT flow: %s",
+			paths.first().toUtf8().constData());
+		start_reviewed_upload(parent, paths, apiKey, finalSettings);
+	};
+
+	if (!is_openai_model_enabled() || !curationSettings.aiPrompt.trimmed().isEmpty()) {
+		if (!is_openai_model_enabled())
+			obs_log(LOG_INFO, "OpenAI model is disabled. Skipping GPT prompt generation after review.");
+		startUpload(curationSettings.aiPrompt);
+		return;
+	}
+
+	generate_custom_prompt_for_curation_async(parent, paths.first(), curationSettings, true, startUpload);
+}
+
+static void open_review_and_upload(QWidget *parent, const QStringList &paths, const QString &apiKey)
+{
+	if (paths.isEmpty()) {
+		clear_pending_recording_paths();
+		return;
+	}
+
+	obs_log(LOG_INFO, "Opening upload review dialog before GPT/Opus upload flow: %s",
+		paths.first().toUtf8().constData());
+
+	UploadReviewDialog reviewDialog(paths.first(), parent);
+
+	if (reviewDialog.exec() != QDialog::Accepted) {
+		obs_log(LOG_INFO, "Upload review canceled before GPT/Opus upload flow: %s",
+			paths.first().toUtf8().constData());
+		clear_pending_recording_paths();
+		return;
+	}
+
+	const CurationSettings curationSettings = reviewDialog.curationSettings();
+	obs_log(LOG_INFO, "Upload review accepted. Generating GPT prompt after review ranges were confirmed: %s",
+		paths.first().toUtf8().constData());
+	generate_prompt_and_upload(parent, paths, apiKey, curationSettings);
+}
+
 void open_confirm_dialog_impl(void *private_data)
 {
 
 	UNUSED_PARAMETER(private_data);
 
 	if (confirmDialogActive) {
-		blog(LOG_INFO, "Upload confirm dialog is already open. Ignoring duplicate request.");
+		obs_log(LOG_INFO, "Upload confirm dialog is already open. Ignoring duplicate request.");
 		return;
 	}
 
 	const QStringList paths = get_recording_paths_for_upload();
 
 	if (paths.isEmpty()) {
-		blog(LOG_INFO, "No pending recording paths. Upload confirm dialog will not be shown.");
+		obs_log(LOG_INFO, "No pending recording paths. Upload confirm dialog will not be shown.");
 		return;
 	}
 
@@ -156,12 +206,12 @@ void open_confirm_dialog_impl(void *private_data)
 
 	confirmDialog.setMinimumWidth(520);
 	confirmDialog.adjustSize();
-	confirmDialog.setFixedSize(confirmDialog.sizeHint());
+	confirmDialog.resize(confirmDialog.sizeHint());
 
 	bool uploadRequested = false;
 
 	QObject::connect(btnCancel, &QPushButton::clicked, &confirmDialog, [&confirmDialog]() {
-		blog(LOG_INFO, "Fechando Dialog de Upload");
+		obs_log(LOG_INFO, "Fechando Dialog de Upload");
 		confirmDialog.reject();
 	});
 
@@ -184,13 +234,5 @@ void open_confirm_dialog_impl(void *private_data)
 		return;
 	}
 
-	if (is_openai_model_enabled()) {
-		generate_custom_prompt_before_review_async(parent, paths.first(), true, [parent, paths, apiKey]() {
-			open_review_and_upload(parent, paths, apiKey);
-		});
-		return;
-	}
-
-	blog(LOG_INFO, "OpenAI model is disabled. Skipping transcript wait and GPT prompt generation.");
 	open_review_and_upload(parent, paths, apiKey);
 }

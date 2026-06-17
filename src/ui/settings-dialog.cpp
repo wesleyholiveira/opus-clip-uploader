@@ -182,8 +182,7 @@ void open_settings_impl(void *private_data)
 
 	QObject::connect(sourceLangInput, &QComboBox::currentTextChanged, &dialog,
 			 [gptDefaultPromptInput](const QString &sourceLanguage) {
-				 gptDefaultPromptInput->setPlainText(
-					 GptPromptClient::configuredInputTextTemplate(sourceLanguage));
+				 gptDefaultPromptInput->setPlainText(GptPromptClient::configuredInputTextTemplate(sourceLanguage));
 			 });
 
 	treeWidget->resizeColumnToContents(0);

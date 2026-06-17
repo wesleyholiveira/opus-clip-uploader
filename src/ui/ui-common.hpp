@@ -37,6 +37,8 @@ QString get_opus_api_key();
 QString get_openai_api_key();
 QString get_openai_model();
 QString resolve_whisper_model_path();
+QString format_duration_seconds(double durationSeconds);
+int estimate_opus_credits(double durationSeconds);
 QStringList whisper_model_search_paths(const QString &modelFile);
 bool whisper_model_exists(const QString &modelFile);
 bool configured_whisper_model_exists();

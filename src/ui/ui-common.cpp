@@ -14,6 +14,7 @@
 #include <QPointer>
 #include <QWidget>
 
+#include <cmath>
 #include <memory>
 #include <functional>
 #include <utility>
@@ -147,6 +148,30 @@ const QString &clipCropperTitle()
 	return title;
 }
 
+QString format_duration_seconds(double durationSeconds)
+{
+	if (!std::isfinite(durationSeconds) || durationSeconds <= 0.0)
+		durationSeconds = 0.0;
+
+	const qint64 totalSeconds = static_cast<qint64>(std::round(durationSeconds));
+	const qint64 hours = totalSeconds / 3600;
+	const qint64 minutes = (totalSeconds % 3600) / 60;
+	const qint64 seconds = totalSeconds % 60;
+
+	return QStringLiteral("%1:%2:%3")
+		.arg(hours, 2, 10, QChar('0'))
+		.arg(minutes, 2, 10, QChar('0'))
+		.arg(seconds, 2, 10, QChar('0'));
+}
+
+int estimate_opus_credits(double durationSeconds)
+{
+	if (!std::isfinite(durationSeconds) || durationSeconds <= 0.0)
+		return 0;
+
+	return static_cast<int>(std::ceil(durationSeconds / 60.0));
+}
+
 QString get_opus_api_key()
 {
 	return PluginConfig::getValue("opus_api_key").trimmed();
@@ -258,6 +283,18 @@ void configure_background_progress_window(QWidget *window, bool allowClose)
 	if (!window)
 		return;
 
+	/*
+	 * Progress windows must behave like real top-level windows.
+	 *
+	 * Keeping OBS as the native/Qt parent makes Windows treat the dialog as an owned
+	 * child window. Owned windows can be minimized without getting their own taskbar
+	 * entry, so the user has no obvious way to restore the progress dialog while the
+	 * background operation is still running.
+	 *
+	 * Detaching the QWidget parent here keeps the QObject lifetime explicit
+	 * (callers already close/deleteLater these dialogs) and gives the window its own
+	 * taskbar/Alt+Tab entry on desktop window managers that support it.
+	 */
 	window->setParent(nullptr);
 	window->setAttribute(Qt::WA_QuitOnClose, false);
 	window->setWindowModality(Qt::NonModal);

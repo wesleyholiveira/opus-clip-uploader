@@ -10,6 +10,7 @@
 #include <obs-frontend-api.h>
 #include <obs-module.h>
 
+#include <QCoreApplication>
 #include <QDialog>
 #include <QFileDialog>
 #include <QFrame>
@@ -94,6 +95,64 @@ static void upload_reviewed_video(QWidget *parent, const QString &videoPath, con
 	uploadDialog->raise();
 }
 
+static void generate_prompt_and_upload_reviewed_video(QWidget *parent, const QString &videoPath,
+						      const CurationSettings &curationSettings)
+{
+	auto startUpload = [parent, videoPath, curationSettings](const QString &generatedPrompt) mutable {
+		CurationSettings finalSettings = curationSettings;
+		const bool gptGeneratedPrompt = finalSettings.aiPrompt.trimmed().isEmpty() &&
+						!generatedPrompt.trimmed().isEmpty();
+
+		if (gptGeneratedPrompt)
+			finalSettings.aiPrompt = generatedPrompt.trimmed();
+
+		if (!gptGeneratedPrompt) {
+			upload_reviewed_video(parent, videoPath, finalSettings);
+			return;
+		}
+
+		QPointer<QWidget> safeParent(parent);
+		QObject *context = parent ? static_cast<QObject *>(parent) : QCoreApplication::instance();
+		if (!context) {
+			blog(LOG_WARNING,
+			     "Could not open GPT-generated prompt confirmation because no Qt context is available: %s",
+			     videoPath.toUtf8().constData());
+			return;
+		}
+
+		blog(LOG_INFO,
+		     "Scheduling GPT-generated Opus prompt confirmation after video editor review/GPT flow: %s",
+		     videoPath.toUtf8().constData());
+
+		QTimer::singleShot(0, context, [safeParent, videoPath, finalSettings]() mutable {
+			QWidget *dialogParent = safeParent
+							? safeParent.data()
+							: reinterpret_cast<QWidget *>(obs_frontend_get_main_window());
+
+			blog(LOG_INFO, "Opening GPT-generated Opus prompt confirmation from video editor flow: %s",
+			     videoPath.toUtf8().constData());
+
+			if (!review_generated_prompt_before_upload(dialogParent, videoPath, finalSettings)) {
+				blog(LOG_INFO,
+				     "GPT-generated Opus prompt confirmation canceled before video editor upload: %s",
+				     videoPath.toUtf8().constData());
+				return;
+			}
+
+			upload_reviewed_video(dialogParent, videoPath, finalSettings);
+		});
+	};
+
+	if (!is_openai_model_enabled() || !curationSettings.aiPrompt.trimmed().isEmpty()) {
+		if (!is_openai_model_enabled())
+			blog(LOG_INFO, "OpenAI model is disabled. Skipping GPT prompt generation after review.");
+		startUpload(curationSettings.aiPrompt);
+		return;
+	}
+
+	generate_custom_prompt_for_curation_async(parent, videoPath, curationSettings, true, startUpload);
+}
+
 void open_video_editor_impl(void *private_data)
 {
 	UNUSED_PARAMETER(private_data);
@@ -130,17 +189,18 @@ void open_video_editor_impl(void *private_data)
 							? reviewParent.data()
 							: reinterpret_cast<QWidget *>(obs_frontend_get_main_window());
 
-			blog(LOG_INFO, "Opening upload review dialog after transcript/GPT flow: %s",
+			blog(LOG_INFO, "Opening upload review dialog before GPT/Opus upload flow: %s",
 			     videoPath.toUtf8().constData());
 
 			UploadReviewDialog reviewDialog(videoPath, parentWidget);
 			if (reviewDialog.exec() == QDialog::Accepted) {
-				blog(LOG_INFO, "Upload review accepted. Opening Opus upload progress dialog: %s",
+				blog(LOG_INFO,
+				     "Upload review accepted. Generating GPT prompt after review ranges were confirmed: %s",
 				     videoPath.toUtf8().constData());
 				const CurationSettings curationSettings = reviewDialog.curationSettings();
-				upload_reviewed_video(parentWidget, videoPath, curationSettings);
+				generate_prompt_and_upload_reviewed_video(parentWidget, videoPath, curationSettings);
 			} else {
-				blog(LOG_INFO, "Upload review canceled after transcript/GPT flow: %s",
+				blog(LOG_INFO, "Upload review canceled before GPT/Opus upload flow: %s",
 				     videoPath.toUtf8().constData());
 			}
 
@@ -148,12 +208,6 @@ void open_video_editor_impl(void *private_data)
 				editorDialog->accept();
 		};
 
-		if (is_openai_model_enabled()) {
-			generate_custom_prompt_before_review_async(reviewParent, videoPath, true, openReview);
-			return;
-		}
-
-		blog(LOG_INFO, "OpenAI model is disabled. Skipping transcript wait and GPT prompt generation.");
 		openReview();
 	});
 

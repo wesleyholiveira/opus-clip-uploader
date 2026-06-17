@@ -9,8 +9,8 @@ extern "C" {
 #endif
 
 #include "ui/advanced-settings-tree.hpp"
+#include "ui/ui-common.hpp"
 #include "ui/video-marker-editor.hpp"
-#include "gpt/gpt-prompt-store.hpp"
 #include "utils/config.hpp"
 
 #include <QAbstractItemView>
@@ -22,6 +22,7 @@ extern "C" {
 #include <QLabel>
 #include <QLineEdit>
 #include <QPlainTextEdit>
+#include <QPushButton>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QVBoxLayout>
@@ -33,11 +34,6 @@ static constexpr const char *CONFIG_REVIEW_GENRE = "review.genre";
 static constexpr const char *CONFIG_REVIEW_MODEL = "review.model";
 static constexpr const char *CONFIG_REVIEW_SKIP_CURATE = "review.skip_curate";
 
-static QString obsText(const char *key)
-{
-	return QString::fromUtf8(obs_module_text(key));
-}
-
 static void setComboCurrentTextIfExists(QComboBox *combo, const QString &value)
 {
 	if (!combo || value.trimmed().isEmpty())
@@ -48,44 +44,70 @@ static void setComboCurrentTextIfExists(QComboBox *combo, const QString &value)
 		combo->setCurrentIndex(index);
 }
 
-UploadReviewDialog::UploadReviewDialog(const QString &videoPath, QWidget *parent)
-	: QDialog(parent),
-	  videoPath(videoPath)
+static double totalRangeDurationSeconds(const QVector<ClipDuration> &ranges)
 {
-	setWindowTitle(QString("Clip Cropper - %1").arg(obsText("Dialog.ReviewVideoTitle")));
-	resize(920, 720);
+	double totalSeconds = 0.0;
+	for (const ClipDuration &range : ranges)
+		totalSeconds += std::max(0.0, range.endSec - range.startSec);
+
+	return totalSeconds;
+}
+
+UploadReviewDialog::UploadReviewDialog(const QString &videoPath, QWidget *parent)
+	: UploadReviewDialog(videoPath, CurationSettings{}, false, parent)
+{
+}
+
+UploadReviewDialog::UploadReviewDialog(const QString &videoPath, const CurationSettings &initialCurationSettings,
+				       bool showAdvancedSettingsOnly, QWidget *parent)
+	: QDialog(parent),
+	  videoPath(videoPath),
+	  initialSettings(initialCurationSettings),
+	  advancedSettingsOnly(showAdvancedSettingsOnly)
+{
+	setWindowTitle(QString("Clip Cropper - %1")
+			       .arg(advancedSettingsOnly ? obsText("Dialog.ReviewGeneratedPromptTitle")
+							 : obsText("Dialog.ReviewVideoTitle")));
+	resize(advancedSettingsOnly ? 780 : 920, advancedSettingsOnly ? 560 : 720);
 
 	auto *mainLayout = new QVBoxLayout(this);
 	mainLayout->setContentsMargins(14, 14, 14, 12);
 	mainLayout->setSpacing(8);
 
-	videoEditor = new VideoMarkerEditor(videoPath, this);
+	if (!advancedSettingsOnly) {
+		videoEditor = new VideoMarkerEditor(videoPath, this);
 
-	clipTable = new QTableWidget(this);
-	clipTable->setColumnCount(3);
-	clipTable->setHorizontalHeaderLabels(
-		{obsText("Table.Marker"), obsText("Table.StartSec"), obsText("Table.EndSec")});
-	clipTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
-	clipTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-	clipTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-	clipTable->setMinimumHeight(145);
-	clipTable->setSelectionBehavior(QAbstractItemView::SelectRows);
-	clipTable->setSelectionMode(QAbstractItemView::SingleSelection);
-	clipTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-	clipTable->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-	clipTable->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+		clipTable = new QTableWidget(this);
+		clipTable->setColumnCount(3);
+		clipTable->setHorizontalHeaderLabels(
+			{obsText("Table.Marker"), obsText("Table.StartSec"), obsText("Table.EndSec")});
+		clipTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+		clipTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+		clipTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+		clipTable->setMinimumHeight(145);
+		clipTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+		clipTable->setSelectionMode(QAbstractItemView::SingleSelection);
+		clipTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+		clipTable->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+		clipTable->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
 
-	connect(videoEditor, &VideoMarkerEditor::rangesChanged, this, &UploadReviewDialog::refreshClipTable);
-	connect(clipTable, &QTableWidget::currentCellChanged, this,
-		[this](int currentRow, int, int, int) { videoEditor->selectRange(currentRow); });
-	connect(clipTable, &QTableWidget::cellClicked, this, [this](int row, int) {
-		videoEditor->selectRange(row);
-		videoEditor->goToSelectedRange();
-	});
-	connect(clipTable, &QTableWidget::cellDoubleClicked, this, [this](int row, int) {
-		videoEditor->selectRange(row);
-		videoEditor->goToSelectedRange();
-	});
+		creditEstimateLabel = new QLabel(this);
+		creditEstimateLabel->setWordWrap(true);
+		creditEstimateLabel->setToolTip(obsText("Tooltip.OpusCreditsSelectedEstimate"));
+		updateCreditEstimate(videoEditor->clipRanges());
+
+		connect(videoEditor, &VideoMarkerEditor::rangesChanged, this, &UploadReviewDialog::refreshClipTable);
+		connect(clipTable, &QTableWidget::currentCellChanged, this,
+			[this](int currentRow, int, int, int) { videoEditor->selectRange(currentRow); });
+		connect(clipTable, &QTableWidget::cellClicked, this, [this](int row, int) {
+			videoEditor->selectRange(row);
+			videoEditor->goToSelectedRange();
+		});
+		connect(clipTable, &QTableWidget::cellDoubleClicked, this, [this](int row, int) {
+			videoEditor->selectRange(row);
+			videoEditor->goToSelectedRange();
+		});
+	}
 
 	topicKeywordsInput = new QLineEdit(this);
 	topicKeywordsInput->setPlaceholderText(obsText("Placeholder.TopicKeywords"));
@@ -101,7 +123,7 @@ UploadReviewDialog::UploadReviewDialog(const QString &videoPath, QWidget *parent
 	skipCurateInput = new QCheckBox(obsText("Label.SkipCurate"), this);
 
 	customPromptInput = new QPlainTextEdit(this);
-	customPromptInput->setMinimumHeight(110);
+	customPromptInput->setMinimumHeight(advancedSettingsOnly ? 280 : 110);
 	customPromptInput->setPlaceholderText(obsText("Placeholder.CustomPrompt"));
 
 	auto *advancedTree = new AdvancedSettingsTree(this);
@@ -111,22 +133,41 @@ UploadReviewDialog::UploadReviewDialog(const QString &videoPath, QWidget *parent
 	advancedTree->addField(obsText("Settings.SkipCurate"), skipCurateInput);
 	advancedTree->addField(obsText("Settings.CustomPrompt"), customPromptInput);
 
-	loadSavedCurationOptions();
+	if (advancedSettingsOnly) {
+		applyCurationSettings(initialSettings);
+		if (advancedTree->rootItem())
+			advancedTree->rootItem()->setExpanded(true);
+		advancedTree->setMinimumHeight(360);
+	} else {
+		loadSavedCurationOptions();
+	}
 
 	auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
-	connect(buttons, &QDialogButtonBox::accepted, this, [this, videoPath]() {
+	if (advancedSettingsOnly) {
+		if (auto *okButton = buttons->button(QDialogButtonBox::Ok))
+			okButton->setText(obsText("Button.ConfirmAndUpload"));
+	}
+	connect(buttons, &QDialogButtonBox::accepted, this, [this]() {
 		saveCurationOptions();
-		if (customPromptInput)
-			GptPromptStore::saveForVideoPath(videoPath, customPromptInput->toPlainText());
 		accept();
 	});
 	connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
 	mainLayout->addWidget(new QLabel(QFileInfo(videoPath).fileName(), this));
-	mainLayout->addWidget(videoEditor, 1);
-	mainLayout->addWidget(new QLabel(obsText("Label.Markers"), this));
-	mainLayout->addWidget(clipTable);
-	mainLayout->addWidget(advancedTree);
+
+	if (advancedSettingsOnly) {
+		auto *promptReviewLabel = new QLabel(obsText("Message.ReviewGeneratedPromptBeforeUpload"), this);
+		promptReviewLabel->setWordWrap(true);
+		mainLayout->addWidget(promptReviewLabel);
+		mainLayout->addWidget(advancedTree, 1);
+	} else {
+		mainLayout->addWidget(videoEditor, 1);
+		mainLayout->addWidget(new QLabel(obsText("Label.Markers"), this));
+		mainLayout->addWidget(clipTable);
+		mainLayout->addWidget(creditEstimateLabel);
+		mainLayout->addWidget(advancedTree);
+	}
+
 	mainLayout->addWidget(buttons);
 }
 
@@ -153,12 +194,47 @@ void UploadReviewDialog::refreshClipTable(const QVector<ClipDuration> &ranges)
 		clipTable->setItem(row, 2, new QTableWidgetItem(QString::number(range.endSec, 'f', 2)));
 	}
 
+	updateCreditEstimate(ranges);
+
 	if (clipTable->rowCount() <= 0)
 		return;
 
 	const int rowToSelect = std::clamp(previousRow, 0, clipTable->rowCount() - 1);
 	clipTable->selectRow(rowToSelect);
 	videoEditor->selectRange(rowToSelect);
+}
+
+void UploadReviewDialog::applyCurationSettings(const CurationSettings &settings)
+{
+	if (topicKeywordsInput)
+		topicKeywordsInput->setText(settings.topicKeywords.join(QStringLiteral(", ")));
+
+	setComboCurrentTextIfExists(genreInput, settings.genre);
+	setComboCurrentTextIfExists(modelInput, settings.model);
+
+	if (skipCurateInput)
+		skipCurateInput->setChecked(settings.skipCurate);
+
+	if (customPromptInput)
+		customPromptInput->setPlainText(settings.aiPrompt.trimmed());
+}
+
+void UploadReviewDialog::updateCreditEstimate(const QVector<ClipDuration> &ranges)
+{
+	if (!creditEstimateLabel)
+		return;
+
+	const double totalSeconds = totalRangeDurationSeconds(ranges);
+	const int estimatedCredits = estimate_opus_credits(totalSeconds);
+
+	if (estimatedCredits <= 0) {
+		creditEstimateLabel->setText(obsText("Label.OpusCreditsNoSelection"));
+		return;
+	}
+
+	creditEstimateLabel->setText(obsText("Label.OpusCreditsSelectedEstimate")
+					     .arg(estimatedCredits)
+					     .arg(format_duration_seconds(totalSeconds)));
 }
 
 void UploadReviewDialog::loadSavedCurationOptions()
@@ -174,10 +250,6 @@ void UploadReviewDialog::loadSavedCurationOptions()
 	if (!savedSkipCurate.isEmpty())
 		skipCurateInput->setChecked(savedSkipCurate == "true" || savedSkipCurate == "1" ||
 					    savedSkipCurate == "yes");
-
-	const QString cachedPrompt = GptPromptStore::loadForVideoPath(videoPath);
-	if (!cachedPrompt.isEmpty())
-		customPromptInput->setPlainText(cachedPrompt);
 }
 
 void UploadReviewDialog::saveCurationOptions() const
@@ -190,23 +262,27 @@ void UploadReviewDialog::saveCurationOptions() const
 
 CurationSettings UploadReviewDialog::curationSettings() const
 {
-	CurationSettings settings;
+	CurationSettings settings = advancedSettingsOnly ? initialSettings : CurationSettings{};
 
-	const QVector<ClipDuration> ranges = videoEditor ? videoEditor->clipRanges() : QVector<ClipDuration>{};
+	const QVector<ClipDuration> ranges =
+		advancedSettingsOnly ? initialSettings.clipDurations
+				     : (videoEditor ? videoEditor->clipRanges() : QVector<ClipDuration>{});
 
-	settings.rangeStartSec = ranges.isEmpty() ? 0 : ranges.first().startSec;
-	settings.rangeEndSec = ranges.isEmpty() ? 0 : ranges.last().endSec;
+	settings.rangeStartSec = ranges.isEmpty() ? settings.rangeStartSec : ranges.first().startSec;
+	settings.rangeEndSec = ranges.isEmpty() ? settings.rangeEndSec : ranges.last().endSec;
+	settings.clipDurations.clear();
+	for (const auto &range : ranges)
+		settings.clipDurations.append(range);
+
 	settings.genre = genreInput->currentText();
 	settings.skipCurate = skipCurateInput->isChecked();
 	settings.model = modelInput->currentText();
 	settings.aiPrompt = customPromptInput ? customPromptInput->toPlainText().trimmed() : QString{};
 
+	settings.topicKeywords.clear();
 	const QStringList keywords = topicKeywordsInput->text().split(",", Qt::SkipEmptyParts);
 	for (QString keyword : keywords)
 		settings.topicKeywords.append(keyword.trimmed());
-
-	for (const auto &range : ranges)
-		settings.clipDurations.append(range);
 
 	return settings;
 }
