@@ -115,6 +115,9 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 	src/models/curation-settings.hpp
 	src/models/transcript.hpp
 
+	src/curation/curation-preset.cpp
+	src/curation/curation-preset.hpp
+
 	src/transcription/transcript-store.cpp
 	src/transcription/transcript-store.hpp
 	src/transcription/realtime-transcription-service.cpp

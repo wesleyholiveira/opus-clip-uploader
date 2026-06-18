@@ -34,6 +34,7 @@ private:
 	QLabel *creditEstimateLabel = nullptr;
 	QLineEdit *topicKeywordsInput = nullptr;
 	QComboBox *genreInput = nullptr;
+	QComboBox *curationPresetInput = nullptr;
 	QComboBox *modelInput = nullptr;
 	QComboBox *clipLengthInput = nullptr;
 	QComboBox *sourceLanguageInput = nullptr;

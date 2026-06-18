@@ -299,8 +299,8 @@ void open_settings_impl(void *private_data)
 
 			if (!selectedWhisperModelExists) {
 				openAiModel = QStringLiteral("disabled");
-				obs_log(LOG_WARNING,
-					"[clip-cropper] Selected Whisper model was not found. Saving OpenAI model as disabled.");
+				blog(LOG_WARNING,
+				     "[clip-cropper] Selected Whisper model was not found. Saving OpenAI model as disabled.");
 			}
 
 			PluginConfig::setValue("openai_model", openAiModel);
@@ -311,7 +311,7 @@ void open_settings_impl(void *private_data)
 			PluginConfig::setValue(QString::fromLatin1(CONFIG_GPT_TRANSCRIPT_CONTEXT_PADDING_SEC),
 					       QString::number(gptContextPaddingInput->value(), 'f', 0));
 
-			obs_log(LOG_INFO, "Clip Cropper settings saved. Opus Clip settings updated.");
+			blog(LOG_INFO, "Clip Cropper settings saved. Opus Clip settings updated.");
 
 			dialog.accept();
 		});
@@ -324,7 +324,7 @@ void ensure_opus_api_key_impl(QWidget *parent)
 	const QString apiKey = get_opus_api_key();
 
 	if (!apiKey.isEmpty()) {
-		obs_log(LOG_INFO, "Opus Clip API key already configured");
+		blog(LOG_INFO, "Opus Clip API key already configured");
 		return;
 	}
 

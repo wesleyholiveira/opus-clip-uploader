@@ -1,5 +1,7 @@
 #include "opus/opus-clip-client.hpp"
 
+#include "curation/curation-preset.hpp"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -26,50 +28,6 @@ static constexpr const char *OPUS_API_BASE_URL = "https://api.opus.pro";
 static QString obsText(const char *key)
 {
 	return QString::fromUtf8(obs_module_text(key));
-}
-
-static QString normalizedClipLengthPreset(QString preset)
-{
-	preset = preset.trimmed().toLower();
-
-	if (preset == QStringLiteral("short"))
-		return QStringLiteral("Short");
-
-	if (preset == QStringLiteral("long"))
-		return QStringLiteral("Long");
-
-	if (preset == QStringLiteral("medium") || preset == QStringLiteral("recommended") ||
-	    preset == QStringLiteral("complete"))
-		return QStringLiteral("Medium");
-
-	return QStringLiteral("Auto");
-}
-
-static bool clipLengthBoundsForPreset(const QString &preset, double &minSec, double &maxSec)
-{
-	const QString normalizedPreset = normalizedClipLengthPreset(preset);
-
-	if (normalizedPreset == QStringLiteral("Short")) {
-		minSec = 30.0;
-		maxSec = 60.0;
-		return true;
-	}
-
-	if (normalizedPreset == QStringLiteral("Medium")) {
-		minSec = 60.0;
-		maxSec = 120.0;
-		return true;
-	}
-
-	if (normalizedPreset == QStringLiteral("Long")) {
-		minSec = 120.0;
-		maxSec = 180.0;
-		return true;
-	}
-
-	minSec = 0.0;
-	maxSec = 0.0;
-	return false;
 }
 
 static QJsonArray clipDurationsForBounds(double minSec, double maxSec)
@@ -307,7 +265,7 @@ void OpusClipClient::uploadFileToResumableLocation(const QString &filePath, cons
 		if (bytesTotal <= 0)
 			return;
 
-		const int uploadProgress = static_cast<long long>((bytesSent * 50) / bytesTotal);
+		const int uploadProgress = static_cast<int>((bytesSent * 50) / bytesTotal);
 		emit progressChanged(qBound(0, uploadProgress, 50), obsText("Status.UploadingVideo"));
 	});
 
@@ -397,7 +355,7 @@ void OpusClipClient::createNextClipProject(const QString &uploadId, int projectI
 void OpusClipClient::createClipProject(const QString &uploadId, const ClipDuration &rangeValue, int projectIndex,
 				       int totalProjects)
 {
-	emit progressChanged(50 + static_cast<long long>((projectIndex * 50.0) / std::max(1, totalProjects)),
+	emit progressChanged(50 + static_cast<int>((projectIndex * 50.0) / std::max(1, totalProjects)),
 			     obsText("Status.CreatingClipProject").arg(projectIndex + 1).arg(totalProjects));
 
 	QNetworkRequest request{QUrl(QString("%1/api/clip-projects").arg(OPUS_API_BASE_URL))};
@@ -424,12 +382,9 @@ void OpusClipClient::createClipProject(const QString &uploadId, const ClipDurati
 
 	const double rangeDurationSec = std::max(0.0, rangeValue.endSec - rangeValue.startSec);
 	const bool createFixedClip = curationSettings.skipCurate;
-	const QString clipLengthPreset = normalizedClipLengthPreset(curationSettings.clipLengthPreset);
-	double preferredClipMinSec = 0.0;
-	double preferredClipMaxSec = 0.0;
-	const bool hasPreferredClipLength =
-		!createFixedClip &&
-		clipLengthBoundsForPreset(clipLengthPreset, preferredClipMinSec, preferredClipMaxSec);
+	const CurationPreset::ClipLengthBounds clipLengthBounds =
+		CurationPreset::clipLengthBoundsForSettings(curationSettings);
+	const bool hasPreferredClipLength = !createFixedClip && clipLengthBounds.enabled;
 
 	if (createFixedClip) {
 		QJsonArray clipDurations;
@@ -447,7 +402,8 @@ void OpusClipClient::createClipProject(const QString &uploadId, const ClipDurati
 		clipDurationSeconds.append(rangeDurationSec);
 		curationPref.insert("clip_duration", clipDurationSeconds);
 	} else if (hasPreferredClipLength) {
-		curationPref.insert("clipDurations", clipDurationsForBounds(preferredClipMinSec, preferredClipMaxSec));
+		curationPref.insert("clipDurations",
+				    clipDurationsForBounds(clipLengthBounds.minSec, clipLengthBounds.maxSec));
 	}
 
 	QJsonArray topicKeywords;
@@ -465,17 +421,19 @@ void OpusClipClient::createClipProject(const QString &uploadId, const ClipDurati
 		curationPref.insert("userPrompt", curationSettings.aiPrompt.trimmed());
 	}
 
-	const QString clipLengthBoundsLog =
-		hasPreferredClipLength
-			? QStringLiteral("%1-%2").arg(preferredClipMinSec, 0, 'f', 0).arg(preferredClipMaxSec, 0, 'f', 0)
-			: QStringLiteral("auto");
+	const QString clipLengthBoundsLog = hasPreferredClipLength ? QStringLiteral("%1-%2")
+									     .arg(clipLengthBounds.minSec, 0, 'f', 0)
+									     .arg(clipLengthBounds.maxSec, 0, 'f', 0)
+								   : QStringLiteral("auto");
+	const QString effectivePresetId = CurationPreset::resolveId(curationSettings, curationSettings.aiPrompt);
 
 	blog(LOG_INFO,
 	     "[clip-cropper] Creating Opus Clip project %d/%d. mode=%s startSec=%.2f endSec=%.2f durationSec=%.2f "
-	     "skipCurate=%s clipLengthPreset=%s clipLengthBounds=%s",
+	     "skipCurate=%s clipLengthPreset=%s curationPreset=%s clipLengthBounds=%s clipLengthBoundsSource=%s",
 	     projectIndex + 1, totalProjects, createFixedClip ? "fixed-clip" : "curation-window", rangeValue.startSec,
 	     rangeValue.endSec, rangeDurationSec, curationSettings.skipCurate ? "true" : "false",
-	     clipLengthPreset.toUtf8().constData(), clipLengthBoundsLog.toUtf8().constData());
+	     curationSettings.clipLengthPreset.toUtf8().constData(), effectivePresetId.toUtf8().constData(),
+	     clipLengthBoundsLog.toUtf8().constData(), clipLengthBounds.source.toUtf8().constData());
 
 	payload.insert("curationPref", curationPref);
 
@@ -517,9 +475,8 @@ void OpusClipClient::createClipProject(const QString &uploadId, const ClipDurati
 		const QString projectId = extractProjectId(response, uploadId);
 		createdProjectIds.append(projectId);
 
-		emit progressChanged(
-			50 + static_cast<long long>(((projectIndex + 1) * 50.0) / std::max(1, totalProjects)),
-			obsText("Status.CreatedClipProject").arg(projectIndex + 1).arg(totalProjects));
+		emit progressChanged(50 + static_cast<int>(((projectIndex + 1) * 50.0) / std::max(1, totalProjects)),
+				     obsText("Status.CreatedClipProject").arg(projectIndex + 1).arg(totalProjects));
 
 		createNextClipProject(uploadId, projectIndex + 1);
 	});

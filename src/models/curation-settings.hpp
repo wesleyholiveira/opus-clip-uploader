@@ -16,6 +16,7 @@ struct CurationSettings {
 	QVector<ClipDuration> clipDurations;
 	QStringList topicKeywords;
 	QString genre = "Auto";
+	QString curationPreset = "auto";
 	bool skipCurate = false;
 	QString model = "ClipAnything";
 	QString clipLengthPreset = "Medium";

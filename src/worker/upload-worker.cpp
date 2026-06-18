@@ -23,6 +23,7 @@ extern "C" {
 #include <QJsonObject>
 #include <QMetaObject>
 #include <QProcess>
+#include <QPointer>
 #include <QTextStream>
 #include <QtGlobal>
 
@@ -331,6 +332,7 @@ void saveReviewSettingsForVideoPath(const QString &videoPath, CurationSettings &
 	}
 	root.insert(QStringLiteral("topicKeywords"), topicKeywords);
 	root.insert(QStringLiteral("genre"), settings.genre);
+	root.insert(QStringLiteral("curationPreset"), settings.curationPreset);
 	root.insert(QStringLiteral("model"), settings.model);
 	root.insert(QStringLiteral("clipLengthPreset"), settings.clipLengthPreset);
 	root.insert(QStringLiteral("skipCurate"), settings.skipCurate);
@@ -695,9 +697,11 @@ void UploadWorker::startOpusUpload(const QString &uploadFilePath, const QString 
 	Q_UNUSED(uploadFileName);
 	Q_UNUSED(uploadMimeType);
 
-	client = new OpusClipClient(apiKey, brandTemplateId, sourceLang, settings, this);
+	auto *opusClient = new OpusClipClient(apiKey, brandTemplateId, sourceLang, settings, this);
+	client = opusClient;
+	const QPointer<OpusClipClient> safeClient(opusClient);
 
-	connect(client, &OpusClipClient::progressChanged, this,
+	connect(opusClient, &OpusClipClient::progressChanged, this,
 		[this, hasResamplePhase](int progress, const QString &message) {
 			if (hasResamplePhase) {
 				emit progressChanged(50 + qBound(0, progress, 100) / 2,
@@ -708,21 +712,25 @@ void UploadWorker::startOpusUpload(const QString &uploadFilePath, const QString 
 			emit progressChanged(progress, message);
 		});
 
-	connect(client, &OpusClipClient::uploadFinished, this, [this](const OpusUploadResult &result) {
+	connect(opusClient, &OpusClipClient::uploadFinished, this, [this, safeClient](const OpusUploadResult &result) {
 		emit finished(QString::fromStdString(result.projectId));
-		client->deleteLater();
-		client = nullptr;
+		if (client == safeClient.data())
+			client = nullptr;
+		if (safeClient)
+			safeClient->deleteLater();
 	});
 
-	connect(client, &OpusClipClient::uploadFailed, this, [this](const OpusUploadResult &result) {
+	connect(opusClient, &OpusClipClient::uploadFailed, this, [this, safeClient](const OpusUploadResult &result) {
 		QString message = QString::fromUtf8(result.error.message.c_str());
 		if (result.httpStatus > 0)
 			message += QString(" (HTTP %1)").arg(result.httpStatus);
 
 		emit failed(message);
-		client->deleteLater();
-		client = nullptr;
+		if (client == safeClient.data())
+			client = nullptr;
+		if (safeClient)
+			safeClient->deleteLater();
 	});
 
-	client->uploadFileResumableAndCreateProjectAsync(uploadFilePath, uploadFileName, uploadMimeType);
+	opusClient->uploadFileResumableAndCreateProjectAsync(uploadFilePath, uploadFileName, uploadMimeType);
 }

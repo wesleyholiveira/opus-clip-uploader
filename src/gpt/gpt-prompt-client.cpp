@@ -23,6 +23,7 @@
 #include <utility>
 
 #include "gpt/gpt-prompt-store.hpp"
+#include "curation/curation-preset.hpp"
 #include "utils/config.hpp"
 
 static constexpr const char *OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions";
@@ -30,7 +31,7 @@ static constexpr const char *SEMANTIC_GATE_FAILURE_PREFIX = "NO_STRONG_CLIP_FOUN
 static constexpr const char *OPUS_PROMPT_PREFIX = "OPUS_PROMPT:";
 static constexpr const char *REPAIR_TEMPLATE_SECTION = "repair_opus_prompt";
 
-static constexpr const char *CONFIG_GPT_INPUT_TEMPLATE_PREFIX = "gpt.input_text_template.v33.";
+static constexpr const char *CONFIG_GPT_INPUT_TEMPLATE_PREFIX = "gpt.input_text_template.v46.";
 static constexpr const char *CONFIG_OPUS_SOURCE_LANGUAGE = "opus_source_lang";
 static constexpr const char *CONFIG_GPT_PROMPT_REPAIR_MODE = "gpt.prompt_repair_mode";
 static constexpr const char *CONFIG_GPT_TRANSCRIPT_CONTEXT_PADDING_SEC = "gpt_transcript_context_padding_sec";
@@ -95,8 +96,8 @@ static QString curationScopeForDuration(double durationSec)
 	if (durationSec >= 2400.0)
 		return QStringLiteral("large_range_multiple_clips");
 
-	if (durationSec >= 600.0)
-		return QStringLiteral("medium_range_one_or_more_clips");
+	if (durationSec >= 180.0)
+		return QStringLiteral("medium_range_multiple_independent_clips");
 
 	return QStringLiteral("short_range_best_moment");
 }
@@ -136,6 +137,60 @@ static bool containsAnyPhrase(const QString &text, const QStringList &phrases)
 			return true;
 	}
 	return false;
+}
+
+static QString joinedTranscriptText(const RecordingTranscript &transcript)
+{
+	QString text;
+	for (const TranscriptSegment &segment : transcript.segments) {
+		const QString segmentText = segment.text.trimmed();
+		if (segmentText.isEmpty())
+			continue;
+
+		if (!text.isEmpty())
+			text += QLatin1Char(' ');
+		text += segmentText;
+	}
+	return text.simplified();
+}
+
+static bool textHasViewerExchangeSignals(const QString &text)
+{
+	const QString lower = text.toLower();
+	const bool phraseSignal = containsAnyPhrase(
+		lower, {QStringLiteral("viewer"), QStringLiteral("listener"), QStringLiteral("chat"),
+			QStringLiteral("comment"), QStringLiteral("question"), QStringLiteral("answer"),
+			QStringLiteral("q&a"), QStringLiteral("advice"), QStringLiteral("relationship advice"),
+			QStringLiteral("pergunta"), QStringLiteral("comentário"), QStringLiteral("comentario"),
+			QStringLiteral("resposta"), QStringLiteral("conselho"), QStringLiteral("espectador"),
+			QStringLiteral("relacionamento"), QStringLiteral("desabafo")});
+
+	const QRegularExpression speakerLabelPattern(
+		QStringLiteral("(?:^|[\\s\\n])([\\p{L}0-9_][\\p{L}0-9_ .-]{1,28})\\s*[:：]"),
+		QRegularExpression::UseUnicodePropertiesOption);
+	return phraseSignal || speakerLabelPattern.match(text).hasMatch();
+}
+
+static bool curationLooksLikeViewerExchange(const RecordingTranscript &transcript,
+					    const CurationSettings &curationSettings,
+					    const QString &generatedPrompt = QString())
+{
+	QString metadata =
+		curationSettings.genre + QLatin1Char(' ') + curationSettings.topicKeywords.join(QLatin1Char(' '));
+	metadata += QLatin1Char(' ') + generatedPrompt;
+	return textHasViewerExchangeSignals(metadata) || textHasViewerExchangeSignals(joinedTranscriptText(transcript));
+}
+
+static bool promptConstrainsSingleExchange(const QString &lowerPrompt)
+{
+	return containsAnyPhrase(lowerPrompt,
+				 {QStringLiteral("one viewer"), QStringLiteral("one listener"),
+				  QStringLiteral("one question"), QStringLiteral("one comment"),
+				  QStringLiteral("one exchange"), QStringLiteral("one chat"),
+				  QStringLiteral("one specific"), QStringLiteral("one complete answer"),
+				  QStringLiteral("one complete response"), QStringLiteral("single question"),
+				  QStringLiteral("single comment"), QStringLiteral("single exchange"),
+				  QStringLiteral("one problem"), QStringLiteral("one piece of advice")});
 }
 
 static void applyDeterministicSampling(QJsonObject &payload);
@@ -206,6 +261,26 @@ static QStringList generatedPromptQualityIssues(const QString &prompt,
 
 	if (substringCount(normalized, QStringLiteral(",")) >= 7)
 		issues << QStringLiteral("looks like a topic catalog");
+
+	const bool chatExchangeContext =
+		curationLooksLikeViewerExchange(selectedRangeTranscript, curationSettings, normalized);
+	const bool multiTopicChatTarget = containsAnyPhrase(
+		lower, {QStringLiteral("various interactions"), QStringLiteral("diverse interactions"),
+			QStringLiteral("multiple interactions"), QStringLiteral("several interactions"),
+			QStringLiteral("multiple viewer comments"), QStringLiteral("several viewer comments"),
+			QStringLiteral("different viewer comments"), QStringLiteral("different chat messages"),
+			QStringLiteral("unrelated chat messages"), QStringLiteral("rapid topic switches"),
+			QStringLiteral("casual discussions"), QStringLiteral("casual conversations"),
+			QStringLiteral("comments and advice"), QStringLiteral("viewer comments and")});
+	if (multiTopicChatTarget)
+		issues << QStringLiteral("targets multiple unrelated chat/comment topics");
+
+	if (chatExchangeContext && !promptConstrainsSingleExchange(lower) &&
+	    containsAnyPhrase(lower,
+			      {QStringLiteral("viewer"), QStringLiteral("chat"), QStringLiteral("comment"),
+			       QStringLiteral("question"), QStringLiteral("advice"), QStringLiteral("relationship"),
+			       QStringLiteral("interactions"), QStringLiteral("conversations")}))
+		issues << QStringLiteral("does not constrain chat/Q&A content to one complete exchange");
 
 	const bool mentionsMethodOrRoutine = containsAnyPhrase(
 		lower, {QStringLiteral("method"), QStringLiteral("routine"), QStringLiteral("daily loop"),
@@ -303,6 +378,11 @@ static QString renderFallbackRubricTemplate(QString templateText, const Curation
 		topic = QStringLiteral("the strongest topics in the selected range");
 
 	templateText.replace(QStringLiteral("{{topic_keywords}}"), topic);
+	templateText.replace(
+		QStringLiteral("{{curation_preset}}"),
+		CurationPreset::labelForId(CurationPreset::resolveId(curationSettings, curationSettings.aiPrompt)));
+	templateText.replace(QStringLiteral("{{preset_opus_prompt}}"),
+			     CurationPreset::fallbackOpusPrompt(curationSettings, true));
 	return templateText.trimmed();
 }
 
@@ -313,15 +393,7 @@ static QString fallbackRubricOpusPrompt(const CurationSettings &curationSettings
 	if (!runtimeTemplate.trimmed().isEmpty())
 		return renderFallbackRubricTemplate(runtimeTemplate, curationSettings);
 
-	QString topic = curationSettings.topicKeywords.join(QStringLiteral(", ")).trimmed();
-	if (topic.isEmpty())
-		topic = QStringLiteral("the strongest topics in the selected range");
-
-	return QStringLiteral(
-		       "Find self-contained clips within the selected range from one dominant sub-arc about %1. "
-		       "Prefer complete arcs with a natural start, focused development, clear payoff, and natural ending. "
-		       "Avoid isolated fragments, housekeeping, timestamps, visual effects, and duration requests.")
-		.arg(topic);
+	return CurationPreset::fallbackOpusPrompt(curationSettings, true);
 }
 
 static QString jsonStringValue(const QJsonObject &object, const QString &key)
@@ -375,11 +447,10 @@ static QString scopeFindPhrase(const RecordingTranscript &selectedRangeTranscrip
 			       const CurationSettings &curationSettings)
 {
 	const QString scope = curationScopeForDuration(selectedDurationSec(selectedRangeTranscript, curationSettings));
-	if (scope == QStringLiteral("large_range_multiple_clips"))
-		return QStringLiteral("Find multiple strong self-contained clips where");
-	if (scope == QStringLiteral("short_range_best_moment"))
-		return QStringLiteral("Find the strongest self-contained moment where");
-	return QStringLiteral("Find one or more strong self-contained clips where");
+	if (scope == QStringLiteral("large_range_multiple_clips") ||
+	    scope == QStringLiteral("medium_range_multiple_independent_clips"))
+		return QStringLiteral("Find strong self-contained clips where");
+	return QStringLiteral("Find the strongest self-contained clip where");
 }
 
 static QJsonObject extractJsonObjectFromText(const QString &rawOutput)
@@ -431,6 +502,7 @@ static QString renderStructuredPlanToOpusPrompt(const QJsonObject &plan,
 	QString contextPhrase = cleanPlanPhrase(jsonStringValue(plan, QStringLiteral("context_phrase")));
 	QString opening = cleanPlanPhrase(jsonStringValue(plan, QStringLiteral("opening_criteria")));
 	QString development = cleanPlanPhrase(jsonStringValue(plan, QStringLiteral("development_criteria")));
+	QString continuity = cleanPlanPhrase(jsonStringValue(plan, QStringLiteral("continuity_criteria")));
 	QString ending = cleanPlanPhrase(jsonStringValue(plan, QStringLiteral("ending_criteria")));
 	QString boundary = cleanPlanPhrase(jsonStringValue(plan, QStringLiteral("boundary_criteria")));
 
@@ -441,6 +513,8 @@ static QString renderStructuredPlanToOpusPrompt(const QJsonObject &plan,
 			"introduce the idea with enough local context for the first sentence to stand alone");
 	if (development.isEmpty())
 		development = QStringLiteral("develop one continuous local explanation or answer");
+	if (continuity.isEmpty())
+		continuity = QStringLiteral("continuous spoken development with minimal dead air or silent reading");
 	if (ending.isEmpty())
 		ending = QStringLiteral("end after the local point is resolved");
 	if (boundary.isEmpty())
@@ -453,13 +527,31 @@ static QString renderStructuredPlanToOpusPrompt(const QJsonObject &plan,
 	    !contextPhrase.startsWith(QStringLiteral("about"), Qt::CaseInsensitive))
 		contextPhrase = QStringLiteral("with context from %1").arg(contextPhrase);
 
-	const QString sentence1 =
-		QStringLiteral("%1 the speaker %2 %3%4.")
-			.arg(scopeFindPhrase(selectedRangeTranscript, curationSettings), arcVerbForType(arcType),
-			     target, contextPhrase.isEmpty() ? QString() : QStringLiteral(" ") + contextPhrase);
-	const QString sentence2 = QStringLiteral("Prioritize moments that %1, then %2.").arg(opening, development);
-	const QString sentence3 = QStringLiteral("Prefer clips that %1, with clean natural boundaries and without %2.")
-					  .arg(ending, boundary);
+	const bool viewerExchangeArc = arcType == QStringLiteral("advice_answer") ||
+				       arcType == QStringLiteral("qa_answer") ||
+				       curationLooksLikeViewerExchange(selectedRangeTranscript, curationSettings);
+
+	QString sentence1;
+	QString sentence2;
+	QString sentence3;
+	if (viewerExchangeArc && !transcriptHasReferenceBackedUnlockMethod(selectedRangeTranscript)) {
+		const QString scope =
+			curationScopeForDuration(selectedDurationSec(selectedRangeTranscript, curationSettings));
+		const bool multipleClips = scope == QStringLiteral("large_range_multiple_clips") ||
+					   scope == QStringLiteral("medium_range_multiple_independent_clips");
+		const QString presetId =
+			CurationPreset::resolveId(curationSettings, QStringLiteral("viewer message same message"));
+		return CurationPreset::opusPromptForId(presetId, multipleClips);
+	} else {
+		sentence1 = QStringLiteral("%1 the speaker %2 %3%4.")
+				    .arg(scopeFindPhrase(selectedRangeTranscript, curationSettings),
+					 arcVerbForType(arcType), target,
+					 contextPhrase.isEmpty() ? QString() : QStringLiteral(" ") + contextPhrase);
+		sentence2 = QStringLiteral("Prioritize moments that %1, then %2, keeping %3.")
+				    .arg(opening, development, continuity);
+		sentence3 = QStringLiteral("Prefer clips that %1, with clean natural boundaries and without %2.")
+				    .arg(ending, boundary);
+	}
 
 	return QStringLiteral("%1 %2 %3").arg(sentence1, sentence2, sentence3).simplified();
 }
@@ -1013,9 +1105,16 @@ static QString deterministicOpusPromptFallback(const QString &generatedPrompt,
 	const bool needsNamedReference = transcriptHasPronounDependentNamedReference(selectedRangeTranscript) &&
 					 !namedReferences.isEmpty();
 	const bool hasReferenceBackedUnlockMethod = transcriptHasReferenceBackedUnlockMethod(selectedRangeTranscript);
+	const bool viewerExchange =
+		curationLooksLikeViewerExchange(selectedRangeTranscript, curationSettings, generatedPrompt) &&
+		!hasReferenceBackedUnlockMethod;
 
 	QString sentence1;
-	if (scope == QStringLiteral("large_range_multiple_clips"))
+	if (viewerExchange) {
+		const bool multipleClips = scope == QStringLiteral("large_range_multiple_clips") ||
+					   scope == QStringLiteral("medium_range_multiple_independent_clips");
+		return CurationPreset::opusPromptForId(CurationPreset::viewerMessageResponsePresetId(), multipleClips);
+	} else if (scope == QStringLiteral("large_range_multiple_clips"))
 		sentence1 = QStringLiteral("Find multiple strong self-contained clips where the speaker explains %1.")
 				    .arg(target);
 	else if (scope == QStringLiteral("short_range_best_moment"))
@@ -1026,26 +1125,33 @@ static QString deterministicOpusPromptFallback(const QString &generatedPrompt,
 			QStringLiteral("Find one clear self-contained clip where the speaker explains %1.").arg(target);
 
 	QString sentence2;
-	if (hasReferenceBackedUnlockMethod) {
+	if (viewerExchange) {
+		sentence2 = QStringLiteral(
+			"Prioritize emotionally consequential and clearly useful exchanges over casual banter, starting with only enough setup from that message and following one continuous response.");
+	} else if (hasReferenceBackedUnlockMethod) {
 		sentence2 =
 			QStringLiteral(
-				"Prioritize moments that introduce %1 or the key/unlock metaphor before later pronouns, then show how one piece of language logic becomes easier to understand.")
+				"Prioritize moments that introduce %1 or the key/unlock metaphor before later pronouns, then show how one piece of language logic becomes easier to understand with continuous spoken development and minimal dead air.")
 				.arg(namedReferences.first());
 	} else if (needsNamedReference) {
 		sentence2 =
 			QStringLiteral(
-				"Prioritize moments that introduce %1 or the target idea before later pronouns and indirect references, then develop one continuous local explanation.")
+				"Prioritize moments that introduce %1 or the target idea before later pronouns and indirect references, then develop one continuous local explanation with minimal dead air.")
 				.arg(namedReferences.first());
 	} else if (scope == QStringLiteral("short_range_best_moment")) {
 		sentence2 = QStringLiteral(
-			"Prioritize moments that introduce the idea with enough local context and complete one resolved part of the explanation.");
+			"Prioritize moments that introduce the idea with enough local context and complete one resolved part of the explanation with minimal dead air.");
 	} else {
 		sentence2 = QStringLiteral(
-			"Prioritize moments that introduce the idea with enough local context and develop the same continuous explanation.");
+			"Prioritize moments that introduce the idea with enough local context and develop the same continuous explanation with minimal dead air.");
 	}
 
-	const QString sentence3 = QStringLiteral(
-		"Prefer clips that end after the local point is resolved, with clean natural boundaries and without unfinished setup, list items, and mid-thought transitions.");
+	const QString sentence3 =
+		viewerExchange
+			? QStringLiteral(
+				  "Choose clips that stop at the first resolved response; do not continue just to make the clip longer, and avoid clips that continue into the next viewer message, stream housekeeping, or another topic.")
+			: QStringLiteral(
+				  "Prefer clips that end after the local point is resolved, with clean natural boundaries and without unfinished setup, list items, long pauses, or mid-thought transitions.");
 
 	return QStringLiteral("%1 %2 %3").arg(sentence1, sentence2, sentence3).trimmed();
 }
@@ -1196,6 +1302,10 @@ static QString renderInputTemplate(QString templateText, const QString &videoPat
 	templateText.replace(QStringLiteral("{{genre}}"), curationSettings.genre.trimmed().isEmpty()
 								  ? QStringLiteral("Auto")
 								  : curationSettings.genre.trimmed());
+	const QString resolvedPresetId = CurationPreset::resolveId(curationSettings);
+	templateText.replace(QStringLiteral("{{curation_preset}}"), CurationPreset::labelForId(resolvedPresetId));
+	templateText.replace(QStringLiteral("{{curation_preset_context}}"),
+			     CurationPreset::gptContextForId(resolvedPresetId));
 	templateText.replace(QStringLiteral("{{named_references}}"),
 			     formatImportantNamedReferences(selectedRangeTranscript));
 	templateText.replace(QStringLiteral("{{source_language}}"), normalizePromptLanguage(sourceLanguage));
@@ -1371,8 +1481,9 @@ static QString fallbackPortugueseInputTextTemplate()
 		"Use os campos: no_strong_clip_found, reason, arc_type, main_target, context_phrase, opening_criteria, "
 		"development_criteria, ending_criteria, boundary_criteria. "
 		"Escolha um único arco discursivo dominante usando gênero e tópicos apenas como sinais fracos, sem catálogo. "
+		"Para chat, Q&A ou conselho, escolha uma troca completa em vez de montagem de comentários sem relação. "
 		"Campos textuais devem ser concisos e em inglês.\n\n"
-		"Scope: {{curation_scope}}\nGenre: {{genre}}\nRanges: {{selected_ranges}}\nTopics: {{topic_keywords}}\n"
+		"Scope: {{curation_scope}}\nGenre: {{genre}}\nPreset: {{curation_preset}}\nPreset context: {{curation_preset_context}}\nRanges: {{selected_ranges}}\nTopics: {{topic_keywords}}\n"
 		"Named references: {{named_references}}\nSelected transcript:\n{{selected_range_transcript}}\n");
 }
 
@@ -1384,8 +1495,9 @@ static QString fallbackEnglishInputTextTemplate()
 		"Use these fields: no_strong_clip_found, reason, arc_type, main_target, context_phrase, opening_criteria, "
 		"development_criteria, ending_criteria, boundary_criteria. "
 		"Choose one dominant discourse arc, using genre and topics only as weak priors and never as a catalog. "
+		"For chat, Q&A, or advice, choose one complete exchange instead of a montage of unrelated comments. "
 		"All text fields must be concise and in English.\n\n"
-		"Scope: {{curation_scope}}\nGenre: {{genre}}\nRanges: {{selected_ranges}}\nTopics: {{topic_keywords}}\n"
+		"Scope: {{curation_scope}}\nGenre: {{genre}}\nPreset: {{curation_preset}}\nPreset context: {{curation_preset_context}}\nRanges: {{selected_ranges}}\nTopics: {{topic_keywords}}\n"
 		"Named references: {{named_references}}\nSelected transcript:\n{{selected_range_transcript}}\n");
 }
 
