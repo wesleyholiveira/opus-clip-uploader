@@ -81,9 +81,10 @@ QString normalizeId(QString presetId)
 	if (presetId.isEmpty() || presetId == QStringLiteral("auto"))
 		return autoPresetId();
 
-	if (presetId == QStringLiteral("viewer") || presetId == QStringLiteral("chat") ||
-	    presetId == QStringLiteral("q&a") || presetId == QStringLiteral("qa") ||
-	    presetId == QStringLiteral("viewer_response") || presetId == QStringLiteral("viewer_message"))
+	if (presetId == viewerMessageResponsePresetId() || presetId == QStringLiteral("viewer") ||
+	    presetId == QStringLiteral("chat") || presetId == QStringLiteral("q&a") ||
+	    presetId == QStringLiteral("qa") || presetId == QStringLiteral("viewer_response") ||
+	    presetId == QStringLiteral("viewer_message") || presetId == QStringLiteral("viewer_message_response"))
 		return viewerMessageResponsePresetId();
 
 	if (presetId == QStringLiteral("advice") || presetId == QStringLiteral("advice_answer"))
@@ -152,15 +153,20 @@ QString resolveId(const CurationSettings &settings, const QString &prompt)
 				  QLatin1Char(' ') + prompt + QLatin1Char(' ') + settings.aiPrompt)
 					 .toLower();
 
+	const bool liveOrViewerMetadata =
+		metadata.contains(QStringLiteral("chat")) || metadata.contains(QStringLiteral("q&a")) ||
+		metadata.contains(QStringLiteral("viewer")) || metadata.contains(QStringLiteral("comment")) ||
+		metadata.contains(QStringLiteral("message")) || metadata.contains(QStringLiteral("live")) ||
+		metadata.contains(QStringLiteral("stream")) || metadata.contains(QStringLiteral("espectador")) ||
+		metadata.contains(QStringLiteral("comentário")) || metadata.contains(QStringLiteral("comentario")) ||
+		metadata.contains(QStringLiteral("mensagem")) || metadata.contains(QStringLiteral("pergunta"));
+
+	if (liveOrViewerMetadata)
+		return viewerMessageResponsePresetId();
+
 	if (metadata.contains(QStringLiteral("advice")) || metadata.contains(QStringLiteral("conselho")) ||
 	    metadata.contains(QStringLiteral("relationship")) || metadata.contains(QStringLiteral("relacionamento")))
 		return QStringLiteral("advice_answer");
-
-	if (metadata.contains(QStringLiteral("chat")) || metadata.contains(QStringLiteral("q&a")) ||
-	    metadata.contains(QStringLiteral("viewer")) || metadata.contains(QStringLiteral("comment")) ||
-	    metadata.contains(QStringLiteral("espectador")) || metadata.contains(QStringLiteral("comentário")) ||
-	    metadata.contains(QStringLiteral("comentario")))
-		return viewerMessageResponsePresetId();
 
 	return autoPresetId();
 }
@@ -201,9 +207,12 @@ QString opusPromptForId(const QString &presetId, bool multipleClips)
 						 : QStringLiteral("Find the strongest self-contained clip");
 
 	if (id == viewerMessageResponsePresetId()) {
+		const QString eachClip = multipleClips ? QStringLiteral("each clip") : QStringLiteral("the clip");
+		const QString chooseClips = multipleClips ? QStringLiteral("Choose clips") : QStringLiteral("Choose a clip");
+
 		return QStringLiteral(
-			       "%1 built from the longest coherent response to a single viewer message. Prioritize emotionally consequential and clearly useful messages over casual banter; each %2 should include only enough of that one message for context, then follow the speaker's direct response while it stays on the same message. Choose %2 that stop at the first natural resolution; if no clean longer response exists, choose a shorter complete reaction instead of continuing into another viewer message, stream housekeeping, or a different topic.")
-			.arg(findPrefix, clipNoun)
+			       "%1 built from the longest coherent response to a single viewer message. Prioritize emotionally consequential and clearly useful messages over casual banter; %2 should include only enough of that one message for context, then follow the speaker's direct response while it stays on that same message. %3 that stop at the first natural resolution; if no clean longer response exists, choose a shorter complete reaction instead of continuing into another viewer message, stream housekeeping, or a different topic.")
+			.arg(findPrefix, eachClip, chooseClips)
 			.simplified();
 	}
 
