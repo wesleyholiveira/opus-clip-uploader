@@ -11,7 +11,9 @@
 #include <utils/config.hpp>
 
 #include <QComboBox>
+#include <QDir>
 #include <QDialog>
+#include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QFrame>
 #include <QLabel>
@@ -21,13 +23,48 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QSignalBlocker>
-#include <QStringList>
+#include <QStandardPaths>
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
 #include <QVBoxLayout>
 #include <QWidget>
 
 static const QString &title = clipCropperTitle();
+static constexpr const char *CONFIG_UPLOAD_RESAMPLE_THRESHOLD_PERCENT = "upload_resample_threshold_percent";
+static constexpr const char *CONFIG_GPT_TRANSCRIPT_CONTEXT_PADDING_SEC = "gpt_transcript_context_padding_sec";
+
+static QString transcription_cache_directory_path()
+{
+	QString baseDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+	if (baseDir.trimmed().isEmpty())
+		baseDir = QDir::tempPath() + QStringLiteral("/clip-cropper");
+
+	return QDir(baseDir).filePath(QStringLiteral("transcription-cache"));
+}
+
+static bool purge_transcription_cache_directory()
+{
+	QDir dir(transcription_cache_directory_path());
+	if (!dir.exists())
+		return true;
+
+	const bool removed = dir.removeRecursively();
+	QDir().mkpath(dir.absolutePath());
+	return removed;
+}
+
+static int purge_plugin_cache_config_keys()
+{
+	return PluginConfig::removeValuesWithPrefixes(QStringList{
+		QStringLiteral("video_markers."),
+		QStringLiteral("review.settings."),
+		QStringLiteral("video_transcript."),
+		QStringLiteral("video_transcript_range."),
+		QStringLiteral("gpt_prompt."),
+		QStringLiteral("gpt_prompt_input."),
+		QStringLiteral("gpt_prompt_pending."),
+	});
+}
 static void set_combo_current_data(QComboBox *combo, const QString &value, int fallbackIndex = 0)
 {
 	const int index = combo->findData(value);
@@ -112,17 +149,66 @@ void open_settings_impl(void *private_data)
 	brandTemplateIdInput->setText(PluginConfig::getValue("opus_brand_template_id"));
 	treeWidget->setItemWidget(brandItem, 1, brandTemplateIdInput);
 
-	auto *sourceLangItem = new QTreeWidgetItem(advancedItem);
-	sourceLangItem->setText(0, obsText("Settings.SourceLanguage"));
+	auto *resampleThresholdItem = new QTreeWidgetItem(advancedItem);
+	resampleThresholdItem->setText(0, obsText("Settings.UploadResampleThresholdPercent"));
 
-	QComboBox *sourceLangInput = new QComboBox(treeWidget);
-	sourceLangInput->addItems(QStringList{"auto", "pt", "en"});
+	QDoubleSpinBox *resampleThresholdInput = new QDoubleSpinBox(treeWidget);
+	resampleThresholdInput->setRange(0.0, 100.0);
+	resampleThresholdInput->setDecimals(0);
+	resampleThresholdInput->setSingleStep(5.0);
+	resampleThresholdInput->setSuffix(QStringLiteral(" %"));
+	bool resampleThresholdOk = false;
+	const double savedResampleThreshold =
+		PluginConfig::getValue(QString::fromLatin1(CONFIG_UPLOAD_RESAMPLE_THRESHOLD_PERCENT),
+				       QStringLiteral("60"))
+			.toDouble(&resampleThresholdOk);
+	resampleThresholdInput->setValue(resampleThresholdOk ? savedResampleThreshold : 60.0);
+	resampleThresholdInput->setToolTip(obsText("Tooltip.UploadResampleThresholdPercent"));
+	treeWidget->setItemWidget(resampleThresholdItem, 1, resampleThresholdInput);
 
-	const QString savedSourceLang = PluginConfig::getValue("opus_source_lang", "auto");
-	const int savedSourceLangIndex = sourceLangInput->findText(savedSourceLang);
-	sourceLangInput->setCurrentIndex(savedSourceLangIndex >= 0 ? savedSourceLangIndex : 0);
+	auto *gptContextPaddingItem = new QTreeWidgetItem(advancedItem);
+	gptContextPaddingItem->setText(0, obsText("Settings.GptTranscriptContextPaddingSec"));
 
-	treeWidget->setItemWidget(sourceLangItem, 1, sourceLangInput);
+	QDoubleSpinBox *gptContextPaddingInput = new QDoubleSpinBox(treeWidget);
+	gptContextPaddingInput->setRange(0.0, 600.0);
+	gptContextPaddingInput->setDecimals(0);
+	gptContextPaddingInput->setSingleStep(15.0);
+	gptContextPaddingInput->setSuffix(QStringLiteral(" s"));
+	bool gptContextPaddingOk = false;
+	const double savedGptContextPadding =
+		PluginConfig::getValue(QString::fromLatin1(CONFIG_GPT_TRANSCRIPT_CONTEXT_PADDING_SEC),
+				       QStringLiteral("60"))
+			.toDouble(&gptContextPaddingOk);
+	gptContextPaddingInput->setValue(gptContextPaddingOk ? savedGptContextPadding : 60.0);
+	gptContextPaddingInput->setToolTip(obsText("Tooltip.GptTranscriptContextPaddingSec"));
+	treeWidget->setItemWidget(gptContextPaddingItem, 1, gptContextPaddingInput);
+
+	auto *purgeCachesItem = new QTreeWidgetItem(advancedItem);
+	purgeCachesItem->setText(0, obsText("Settings.PurgePluginCaches"));
+
+	QPushButton *purgeCachesButton = new QPushButton(obsText("Button.PurgePluginCaches"), treeWidget);
+	purgeCachesButton->setToolTip(obsText("Tooltip.PurgePluginCaches"));
+	treeWidget->setItemWidget(purgeCachesItem, 1, purgeCachesButton);
+
+	QObject::connect(purgeCachesButton, &QPushButton::clicked, &dialog, [&dialog]() {
+		const QMessageBox::StandardButton answer =
+			QMessageBox::question(&dialog, title, obsText("Message.PurgePluginCachesConfirm"),
+					      QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+
+		if (answer != QMessageBox::Yes)
+			return;
+
+		const int removedKeys = purge_plugin_cache_config_keys();
+		const bool removedTempFiles = purge_transcription_cache_directory();
+
+		if (!removedTempFiles) {
+			QMessageBox::warning(&dialog, title,
+					     obsText("Message.PurgePluginCachesPartialFailure").arg(removedKeys));
+			return;
+		}
+
+		QMessageBox::information(&dialog, title, obsText("Message.PurgePluginCachesDone").arg(removedKeys));
+	});
 
 	auto *openAiModelItem = new QTreeWidgetItem(advancedItem);
 	openAiModelItem->setText(0, obsText("Settings.OpenAiModel"));
@@ -177,14 +263,8 @@ void open_settings_impl(void *private_data)
 	QPlainTextEdit *gptDefaultPromptInput = new QPlainTextEdit(treeWidget);
 	gptDefaultPromptInput->setMinimumHeight(170);
 	gptDefaultPromptInput->setPlaceholderText(obsText("Placeholder.GptInputTemplate"));
-	gptDefaultPromptInput->setPlainText(GptPromptClient::configuredInputTextTemplate(savedSourceLang));
+	gptDefaultPromptInput->setPlainText(GptPromptClient::configuredInputTextTemplate(QStringLiteral("auto")));
 	treeWidget->setItemWidget(gptDefaultPromptItem, 1, gptDefaultPromptInput);
-
-	QObject::connect(sourceLangInput, &QComboBox::currentTextChanged, &dialog,
-			 [gptDefaultPromptInput](const QString &sourceLanguage) {
-				 gptDefaultPromptInput->setPlainText(
-					 GptPromptClient::configuredInputTextTemplate(sourceLanguage));
-			 });
 
 	treeWidget->resizeColumnToContents(0);
 
@@ -204,8 +284,8 @@ void open_settings_impl(void *private_data)
 
 	QObject::connect(
 		btn, &QPushButton::clicked,
-		[&dialog, apiKeyInput, openAiApiKeyInput, whisperModelInput, brandTemplateIdInput, sourceLangInput,
-		 openAiModelInput, gptDefaultPromptInput]() {
+		[&dialog, apiKeyInput, openAiApiKeyInput, whisperModelInput, brandTemplateIdInput,
+		 resampleThresholdInput, gptContextPaddingInput, openAiModelInput, gptDefaultPromptInput]() {
 			PluginConfig::setValue("opus_api_key", apiKeyInput->text().trimmed());
 			PluginConfig::setValue("opus_brand_template_id", brandTemplateIdInput->text().trimmed());
 			PluginConfig::setValue("openai_api_key", openAiApiKeyInput->text().trimmed());
@@ -224,11 +304,12 @@ void open_settings_impl(void *private_data)
 			}
 
 			PluginConfig::setValue("openai_model", openAiModel);
-			const QString sourceLang = sourceLangInput->currentText().trimmed();
-			const QString normalizedSourceLang = sourceLang.isEmpty() ? QStringLiteral("auto") : sourceLang;
-			PluginConfig::setValue(GptPromptClient::inputTemplateConfigKey(normalizedSourceLang),
+			PluginConfig::setValue(GptPromptClient::inputTemplateConfigKey(QStringLiteral("auto")),
 					       gptDefaultPromptInput->toPlainText().trimmed());
-			PluginConfig::setValue("opus_source_lang", normalizedSourceLang);
+			PluginConfig::setValue(QString::fromLatin1(CONFIG_UPLOAD_RESAMPLE_THRESHOLD_PERCENT),
+					       QString::number(resampleThresholdInput->value(), 'f', 0));
+			PluginConfig::setValue(QString::fromLatin1(CONFIG_GPT_TRANSCRIPT_CONTEXT_PADDING_SEC),
+					       QString::number(gptContextPaddingInput->value(), 'f', 0));
 
 			obs_log(LOG_INFO, "Clip Cropper settings saved. Opus Clip settings updated.");
 

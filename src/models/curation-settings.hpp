@@ -12,10 +12,15 @@ struct ClipDuration {
 struct CurationSettings {
 	double rangeStartSec = 0;
 	double rangeEndSec = 0;
+	double originalVideoDurationSec = 0;
 	QVector<ClipDuration> clipDurations;
 	QStringList topicKeywords;
 	QString genre = "Auto";
 	bool skipCurate = false;
 	QString model = "ClipAnything";
+	QString clipLengthPreset = "Medium";
+	QString sourceLanguage = "auto";
+	QString transcriptionLanguage = "auto";
 	QString aiPrompt;
+	QString reviewSettingsKey;
 };

@@ -129,8 +129,6 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 	src/utils/config.hpp
 	src/utils/file.cpp
 	src/utils/file.hpp
-	src/utils/request.cpp
-	src/utils/request.hpp
 
 	src/opus/opus-clip-client.cpp
 	src/opus/opus-clip-client.hpp
@@ -536,6 +534,11 @@ if (WIN32)
 	# only a .gitkeep placeholder.
 	install(DIRECTORY data/
 		DESTINATION "data/obs-plugins/${OBS_PLUGIN_NAME}"
+		PATTERN "models" EXCLUDE
+	)
+elseif (NOT APPLE)
+	install(DIRECTORY data/
+		DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/obs/obs-plugins/${OBS_PLUGIN_NAME}"
 		PATTERN "models" EXCLUDE
 	)
 endif ()

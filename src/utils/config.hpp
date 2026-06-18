@@ -2,6 +2,7 @@
 
 #include <obs-data.h>
 #include <QString>
+#include <QStringList>
 
 class PluginConfig {
 public:
@@ -9,6 +10,7 @@ public:
 	static QString getValue(const QString &key, const QString &defaultValue = {});
 
 	static void removeValue(const QString &key);
+	static int removeValuesWithPrefixes(const QStringList &prefixes);
 
 private:
 	static char *getConfigPath();

@@ -14,14 +14,14 @@ void set_pending_recording_paths(const QStringList &paths)
 	pendingRecordingPaths = paths;
 
 	for (const QString &path : pendingRecordingPaths) {
-		obs_log(LOG_INFO, "Pending recording path set: %s", path.toUtf8().constData());
+		blog(LOG_INFO, "Pending recording path set: %s", path.toUtf8().constData());
 	}
 }
 
 void clear_pending_recording_paths()
 {
 	pendingRecordingPaths.clear();
-	obs_log(LOG_INFO, "Pending recording paths cleared");
+	blog(LOG_INFO, "Pending recording paths cleared");
 }
 
 QStringList get_recording_paths_for_upload()
@@ -35,7 +35,7 @@ QStringList take_recording_paths_for_upload()
 	pendingRecordingPaths.clear();
 
 	if (!paths.isEmpty())
-		obs_log(LOG_INFO, "Pending recording paths consumed");
+		blog(LOG_INFO, "Pending recording paths consumed");
 
 	return paths;
 }

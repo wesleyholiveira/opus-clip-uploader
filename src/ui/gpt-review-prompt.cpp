@@ -21,15 +21,106 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <memory>
 #include <utility>
 
 static const QString &title = clipCropperTitle();
+static constexpr const char *CONFIG_GPT_TRANSCRIPT_CONTEXT_PADDING_SEC = "gpt_transcript_context_padding_sec";
+static constexpr double DEFAULT_GPT_TRANSCRIPT_CONTEXT_PADDING_SEC = 60.0;
+
+static double configured_gpt_transcript_context_padding_seconds()
+{
+	bool ok = false;
+	const double value = PluginConfig::getValue(QString::fromLatin1(CONFIG_GPT_TRANSCRIPT_CONTEXT_PADDING_SEC),
+						     QString::number(DEFAULT_GPT_TRANSCRIPT_CONTEXT_PADDING_SEC, 'f', 0))
+			       .toDouble(&ok);
+
+	if (!ok || !std::isfinite(value))
+		return DEFAULT_GPT_TRANSCRIPT_CONTEXT_PADDING_SEC;
+
+	return std::clamp(value, 0.0, 600.0);
+}
+
+static QVector<ClipDuration> expanded_context_ranges_for_transcription(const QVector<ClipDuration> &ranges, double paddingSec)
+{
+	QVector<ClipDuration> expanded;
+	if (ranges.isEmpty())
+		return expanded;
+
+	for (const ClipDuration &range : ranges) {
+		const double startSec = std::max(0.0, range.startSec);
+		const double endSec = std::max(startSec, range.endSec);
+		if (endSec <= startSec)
+			continue;
+
+		expanded.append({std::max(0.0, startSec - paddingSec), endSec + paddingSec});
+	}
+
+	std::sort(expanded.begin(), expanded.end(), [](const ClipDuration &left, const ClipDuration &right) {
+		return left.startSec < right.startSec;
+	});
+
+	QVector<ClipDuration> merged;
+	for (const ClipDuration &range : expanded) {
+		if (merged.isEmpty() || range.startSec > merged.last().endSec) {
+			merged.append(range);
+			continue;
+		}
+
+		merged.last().endSec = std::max(merged.last().endSec, range.endSec);
+	}
+
+	return merged;
+}
+
+static QString curation_ranges_log_string(const CurationSettings &settings)
+{
+	QStringList parts;
+	double totalSec = 0.0;
+
+	if (!settings.clipDurations.isEmpty()) {
+		for (const ClipDuration &range : settings.clipDurations) {
+			const double startSec = std::max(0.0, range.startSec);
+			const double endSec = std::max(startSec, range.endSec);
+			totalSec += std::max(0.0, endSec - startSec);
+			parts << QStringLiteral("%1-%2")
+					 .arg(startSec, 0, 'f', 2)
+					 .arg(endSec, 0, 'f', 2);
+		}
+	} else {
+		const double startSec = std::max(0.0, settings.rangeStartSec);
+		const double endSec = std::max(startSec, settings.rangeEndSec);
+		totalSec = std::max(0.0, endSec - startSec);
+		parts << QStringLiteral("%1-%2")
+				 .arg(startSec, 0, 'f', 2)
+				 .arg(endSec, 0, 'f', 2);
+	}
+
+	return QStringLiteral("ranges=%1 totalSelectedSec=%2")
+		.arg(parts.join(QStringLiteral(",")))
+		.arg(totalSec, 0, 'f', 2);
+}
 
 static bool is_openai_model_enabled()
 {
 	const QString model = get_openai_model().trimmed();
 	return !model.isEmpty() && model != OPENAI_MODEL_DISABLED;
+}
+
+static QString normalize_transcription_language(QString language)
+{
+	language = language.trimmed().toLower();
+	if (language.isEmpty() || language == QStringLiteral("auto"))
+		return QStringLiteral("auto");
+
+	if (language == QStringLiteral("pt-br") || language == QStringLiteral("portuguese"))
+		return QStringLiteral("pt");
+
+	if (language == QStringLiteral("en-us") || language == QStringLiteral("english"))
+		return QStringLiteral("en");
+
+	return language;
 }
 
 static QObject *async_context(QWidget *parent)
@@ -62,8 +153,7 @@ static void invoke_finished(QWidget *parent, std::function<void()> finishedCallb
 		context,
 		[safeContext, finishedCallback = std::move(finishedCallback)]() mutable {
 			if (!safeContext || !finishedCallback) {
-				obs_log(LOG_WARNING,
-					"Could not continue review flow because the Qt async context was destroyed.");
+				obs_log(LOG_WARNING, "Could not continue review flow because the Qt async context was destroyed.");
 				return;
 			}
 
@@ -129,26 +219,62 @@ static RecordingTranscript transcript_for_curation_ranges(const RecordingTranscr
 		}
 	}
 
-	obs_log(LOG_INFO,
-		"Filtered transcript for GPT curation prompt. originalSegments=%d filteredSegments=%d ranges=%d",
+	obs_log(LOG_INFO, "Filtered transcript for GPT curation prompt. originalSegments=%d filteredSegments=%d ranges=%d",
 		transcript.segments.size(), filtered.segments.size(), ranges.size());
 
 	return filtered;
 }
 
 static void transcribe_video_with_progress_dialog_async(QWidget *parent, const QString &videoPath,
-							std::function<void(RecordingTranscript, bool)> finishedCallback)
+					       const QString &transcriptionLanguage, const CurationSettings &curationSettings,
+					       std::function<void(RecordingTranscript, bool)> finishedCallback)
 {
-	RecordingTranscript cached = TranscriptStore::loadForVideoPath(videoPath);
+	const QString normalizedLanguage = normalize_transcription_language(transcriptionLanguage);
+	RecordingTranscript cached = TranscriptStore::loadForVideoPath(videoPath, normalizedLanguage);
 	if (!cached.segments.isEmpty()) {
-		obs_log(LOG_INFO, "Transcript cache hit before GPT curation prompt: %s",
-			videoPath.toUtf8().constData());
+		obs_log(LOG_INFO,
+			"Transcript cache hit before GPT curation prompt. Skipping Whisper/GPU transcription. video=%s segments=%d language=%s cacheKey=%s",
+			videoPath.toUtf8().constData(), static_cast<int>(cached.segments.size()),
+			normalizedLanguage.toUtf8().constData(),
+			TranscriptStore::keyForVideoPath(videoPath, normalizedLanguage).toUtf8().constData());
 		if (finishedCallback)
 			invoke_finished(parent, [cached, finishedCallback = std::move(finishedCallback)]() mutable {
 				finishedCallback(cached, false);
 			});
 		return;
 	}
+
+	const QVector<ClipDuration> ranges = valid_prompt_ranges(curationSettings);
+	const double contextPaddingSec = configured_gpt_transcript_context_padding_seconds();
+	const QVector<ClipDuration> transcriptionRanges =
+		expanded_context_ranges_for_transcription(ranges, contextPaddingSec);
+
+	if (!transcriptionRanges.isEmpty()) {
+		const RecordingTranscript rangeCached =
+			TranscriptStore::loadForVideoRanges(videoPath, normalizedLanguage, transcriptionRanges);
+		if (!rangeCached.segments.isEmpty()) {
+			obs_log(LOG_INFO,
+				"Context-range transcript cache hit before GPT curation prompt. Skipping Whisper/GPU transcription. video=%s segments=%d language=%s paddingSec=%.0f cacheKey=%s",
+				videoPath.toUtf8().constData(), static_cast<int>(rangeCached.segments.size()),
+				normalizedLanguage.toUtf8().constData(), contextPaddingSec,
+				TranscriptStore::keyForVideoRanges(videoPath, normalizedLanguage, transcriptionRanges).toUtf8().constData());
+			if (finishedCallback)
+				invoke_finished(parent, [rangeCached, finishedCallback = std::move(finishedCallback)]() mutable {
+					finishedCallback(rangeCached, false);
+				});
+			return;
+		}
+	}
+
+	const QString contextRangeCacheKey = transcriptionRanges.isEmpty()
+							  ? QStringLiteral("<none>")
+							  : TranscriptStore::keyForVideoRanges(videoPath, normalizedLanguage, transcriptionRanges);
+	obs_log(LOG_INFO,
+		"Transcript cache miss before GPT curation prompt. Starting Whisper/GPU transcription if available. video=%s language=%s cacheKey=%s contextRangeCacheKey=%s selectedRanges=%d contextRanges=%d paddingSec=%.0f",
+		videoPath.toUtf8().constData(), normalizedLanguage.toUtf8().constData(),
+		TranscriptStore::keyForVideoPath(videoPath, normalizedLanguage).toUtf8().constData(),
+		contextRangeCacheKey.toUtf8().constData(), static_cast<int>(ranges.size()),
+		static_cast<int>(transcriptionRanges.size()), contextPaddingSec);
 
 	QObject *context = async_context(parent);
 	if (!context) {
@@ -159,8 +285,8 @@ static void transcribe_video_with_progress_dialog_async(QWidget *parent, const Q
 
 	QPointer<QObject> safeContext(context);
 
-	auto *progressDialog =
-		new QProgressDialog(obsText("Status.PreparingTranscription"), obsText("Button.Cancel"), 0, 100, parent);
+	auto *progressDialog = new QProgressDialog(obsText("Status.PreparingTranscription"), obsText("Button.Cancel"), 0,
+						    100, parent);
 	QPointer<QProgressDialog> safeProgress(progressDialog);
 	progressDialog->setWindowTitle(obsText("Dialog.TranscribingAudioTitle"));
 	configure_background_progress_window(progressDialog, true);
@@ -192,13 +318,19 @@ static void transcribe_video_with_progress_dialog_async(QWidget *parent, const Q
 			Qt::QueuedConnection);
 	};
 
-	auto *thread = QThread::create([videoPath, modelPath, cancelRequested, transcriptResult, reportProgress]() {
+	auto *thread = QThread::create([videoPath, modelPath, normalizedLanguage, transcriptionRanges, cancelRequested, transcriptResult, reportProgress]() {
 		reportProgress(0, obsText("Status.PreparingTranscription"));
 
 		if (transcriptResult) {
-			*transcriptResult = global_realtime_transcription_service()->transcribeVideoFile(
-				videoPath, modelPath, reportProgress,
-				[cancelRequested]() { return cancelRequested && cancelRequested->load(); });
+			if (!transcriptionRanges.isEmpty()) {
+				*transcriptResult = global_realtime_transcription_service()->transcribeVideoRanges(
+					videoPath, modelPath, normalizedLanguage, transcriptionRanges, reportProgress,
+					[cancelRequested]() { return cancelRequested && cancelRequested->load(); });
+			} else {
+				*transcriptResult = global_realtime_transcription_service()->transcribeVideoFile(
+					videoPath, modelPath, normalizedLanguage, reportProgress,
+					[cancelRequested]() { return cancelRequested && cancelRequested->load(); });
+			}
 		}
 	});
 	thread->setObjectName(QStringLiteral("ClipCropperTranscriptionThread"));
@@ -216,21 +348,21 @@ static void transcribe_video_with_progress_dialog_async(QWidget *parent, const Q
 
 	QObject::connect(progressDialog, &QProgressDialog::canceled, progressDialog, requestTranscriptionCancel);
 	bind_progress_window_cancel(progressDialog, requestTranscriptionCancel);
-	QObject::connect(progressDialog, &QObject::destroyed, progressDialog, [cancelRequested, operationFinished]() {
-		if (!operationFinished || !operationFinished->load())
-			cancelRequested->store(true);
-	});
+	QObject::connect(progressDialog, &QObject::destroyed, progressDialog,
+			 [cancelRequested, operationFinished]() {
+				 if (!operationFinished || !operationFinished->load())
+					 cancelRequested->store(true);
+			 });
 
 	QObject::connect(thread, &QThread::finished, thread, &QObject::deleteLater);
 	QObject::connect(thread, &QThread::finished, context,
-			 [safeContext, safeProgress, transcriptResult, cancelRequested, operationFinished,
-			  finishedCallback = std::move(finishedCallback)]() mutable {
+			 [safeContext, safeProgress, transcriptResult, cancelRequested, operationFinished, videoPath,
+			  normalizedLanguage, transcriptionRanges, finishedCallback = std::move(finishedCallback)]() mutable {
 				 if (!safeContext)
 					 return;
 
 				 const bool canceled = cancelRequested && cancelRequested->load();
-				 const RecordingTranscript transcript = transcriptResult ? *transcriptResult
-											 : RecordingTranscript{};
+				 const RecordingTranscript transcript = transcriptResult ? *transcriptResult : RecordingTranscript{};
 
 				 if (operationFinished)
 					 operationFinished->store(true);
@@ -241,6 +373,15 @@ static void transcribe_video_with_progress_dialog_async(QWidget *parent, const Q
 					 safeProgress->deleteLater();
 				 }
 
+				 if (!canceled && !transcriptionRanges.isEmpty() && !transcript.segments.isEmpty()) {
+					 TranscriptStore::saveForVideoRanges(videoPath, normalizedLanguage, transcriptionRanges, transcript);
+					 obs_log(LOG_INFO,
+						 "Context-range transcript saved after on-demand transcription. video=%s segments=%d language=%s cacheKey=%s",
+						 videoPath.toUtf8().constData(), static_cast<int>(transcript.segments.size()),
+						 normalizedLanguage.toUtf8().constData(),
+						 TranscriptStore::keyForVideoRanges(videoPath, normalizedLanguage, transcriptionRanges).toUtf8().constData());
+				 }
+
 				 if (finishedCallback)
 					 finishedCallback(transcript, canceled);
 			 });
@@ -249,11 +390,16 @@ static void transcribe_video_with_progress_dialog_async(QWidget *parent, const Q
 }
 
 static void generate_gpt_prompt_with_progress_dialog_async(QWidget *parent, const QString &videoPath,
-							   const RecordingTranscript &transcript,
-							   const CurationSettings &curationSettings,
-							   std::function<void(QString)> finishedCallback)
+						  const RecordingTranscript &transcript,
+						  const CurationSettings &curationSettings,
+						  std::function<void(QString)> finishedCallback)
 {
 	const RecordingTranscript promptTranscript = transcript_for_curation_ranges(transcript, curationSettings);
+	const QString rangeLog = curation_ranges_log_string(curationSettings);
+	obs_log(LOG_INFO,
+		"Preparing GPT curation transcript. video=%s originalSegments=%d selectedSegments=%d %s",
+		videoPath.toUtf8().constData(), transcript.segments.size(), promptTranscript.segments.size(),
+		rangeLog.toUtf8().constData());
 	if (promptTranscript.segments.isEmpty()) {
 		obs_log(LOG_WARNING,
 			"No transcript segments inside the selected curation ranges for %s. Skipping GPT prompt generation.",
@@ -263,8 +409,8 @@ static void generate_gpt_prompt_with_progress_dialog_async(QWidget *parent, cons
 		return;
 	}
 
-	auto *progress =
-		new QProgressDialog(obsText("Status.GeneratingGptPrompt"), obsText("Button.Cancel"), 0, 0, parent);
+	auto *progress = new QProgressDialog(obsText("Status.GeneratingGptPrompt"), obsText("Button.Cancel"), 0, 0,
+					       parent);
 	QPointer<QProgressDialog> safeProgress(progress);
 	progress->setWindowTitle(obsText("Dialog.GeneratingGptPromptTitle"));
 	configure_background_progress_window(progress, true);
@@ -319,15 +465,15 @@ static void generate_gpt_prompt_with_progress_dialog_async(QWidget *parent, cons
 			 });
 
 	obs_log(LOG_INFO,
-		"Sending range-filtered transcript to GPT after review. video=%s originalSegments=%d promptSegments=%d model=%s",
+		"Sending transcript context to GPT after review. video=%s fullSegments=%d selectedSegments=%d model=%s",
 		videoPath.toUtf8().constData(), transcript.segments.size(), promptTranscript.segments.size(),
 		get_openai_model().toUtf8().constData());
-	client->createOpusPromptAsync(videoPath, promptTranscript, curationSettings);
+	client->createOpusPromptAsync(videoPath, transcript, promptTranscript, curationSettings);
 }
 
 void generate_custom_prompt_for_curation_async(QWidget *parent, const QString &videoPath,
-					       const CurationSettings &curationSettings, bool transcribeOnDemand,
-					       std::function<void(QString)> finishedCallback)
+					      const CurationSettings &curationSettings, bool transcribeOnDemand,
+					      std::function<void(QString)> finishedCallback)
 {
 	auto callback = std::make_shared<std::function<void(QString)>>(std::move(finishedCallback));
 	auto finish = [parent, callback](QString prompt) mutable {
@@ -340,8 +486,7 @@ void generate_custom_prompt_for_curation_async(QWidget *parent, const QString &v
 	};
 
 	if (!curationSettings.aiPrompt.trimmed().isEmpty()) {
-		obs_log(LOG_INFO, "Using custom Opus prompt provided in review dialog: %s",
-			videoPath.toUtf8().constData());
+		obs_log(LOG_INFO, "Using custom Opus prompt provided in review dialog: %s", videoPath.toUtf8().constData());
 		finish(curationSettings.aiPrompt.trimmed());
 		return;
 	}
@@ -359,12 +504,10 @@ void generate_custom_prompt_for_curation_async(QWidget *parent, const QString &v
 		return;
 	}
 
-	auto continueWithTranscript = [parent, videoPath, curationSettings,
-				       finish](const RecordingTranscript &transcript,
-					       bool transcriptionCanceled) mutable {
+	auto continueWithTranscript = [parent, videoPath, curationSettings, finish](
+				      const RecordingTranscript &transcript, bool transcriptionCanceled) mutable {
 		if (transcriptionCanceled) {
-			obs_log(LOG_INFO,
-				"GPT curation prompt generation skipped because transcription was canceled: %s",
+			obs_log(LOG_INFO, "GPT curation prompt generation skipped because transcription was canceled: %s",
 				videoPath.toUtf8().constData());
 			finish({});
 			return;
@@ -383,11 +526,22 @@ void generate_custom_prompt_for_curation_async(QWidget *parent, const QString &v
 
 	obs_log(LOG_INFO, "Loading transcript after review before GPT curation prompt generation: %s",
 		videoPath.toUtf8().constData());
-	const RecordingTranscript transcript = TranscriptStore::loadForVideoPath(videoPath);
+	const QString transcriptionLanguage = normalize_transcription_language(curationSettings.transcriptionLanguage);
+	const RecordingTranscript transcript = TranscriptStore::loadForVideoPath(videoPath, transcriptionLanguage);
 	if (!transcript.segments.isEmpty()) {
+		obs_log(LOG_INFO,
+			"Transcript cache hit after review. Skipping on-demand Whisper/GPU transcription. video=%s segments=%d language=%s cacheKey=%s",
+			videoPath.toUtf8().constData(), static_cast<int>(transcript.segments.size()),
+			transcriptionLanguage.toUtf8().constData(),
+			TranscriptStore::keyForVideoPath(videoPath, transcriptionLanguage).toUtf8().constData());
 		continueWithTranscript(transcript, false);
 		return;
 	}
+
+	obs_log(LOG_INFO,
+		"Transcript cache miss after review. On-demand transcription is required. video=%s language=%s cacheKey=%s",
+		videoPath.toUtf8().constData(), transcriptionLanguage.toUtf8().constData(),
+		TranscriptStore::keyForVideoPath(videoPath, transcriptionLanguage).toUtf8().constData());
 
 	if (!transcribeOnDemand) {
 		obs_log(LOG_WARNING, "No cached transcript available for %s. Skipping GPT curation prompt generation.",
@@ -399,15 +553,15 @@ void generate_custom_prompt_for_curation_async(QWidget *parent, const QString &v
 
 	obs_log(LOG_INFO, "No cached transcript found. Starting on-demand transcription after review: %s",
 		videoPath.toUtf8().constData());
-	transcribe_video_with_progress_dialog_async(parent, videoPath, std::move(continueWithTranscript));
+	transcribe_video_with_progress_dialog_async(parent, videoPath, transcriptionLanguage, curationSettings, std::move(continueWithTranscript));
 }
 
+
 void generate_custom_prompt_before_review_async(QWidget *parent, const QString &videoPath, bool transcribeOnDemand,
-						std::function<void()> finishedCallback)
+				       std::function<void()> finishedCallback)
 {
 	Q_UNUSED(videoPath);
 	Q_UNUSED(transcribeOnDemand);
-	obs_log(LOG_INFO,
-		"Legacy pre-review GPT flow was skipped. GPT prompt is now generated after review ranges are confirmed.");
+	obs_log(LOG_INFO, "Legacy pre-review GPT flow was skipped. GPT prompt is now generated after review ranges are confirmed.");
 	invoke_finished(parent, std::move(finishedCallback));
 }

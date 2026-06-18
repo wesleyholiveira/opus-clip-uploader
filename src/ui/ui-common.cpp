@@ -169,7 +169,7 @@ int estimate_opus_credits(double durationSeconds)
 	if (!std::isfinite(durationSeconds) || durationSeconds <= 0.0)
 		return 0;
 
-	return static_cast<int>(std::ceil(durationSeconds / 60.0));
+	return static_cast<long long>(std::ceil(durationSeconds / 60.0));
 }
 
 QString get_opus_api_key()

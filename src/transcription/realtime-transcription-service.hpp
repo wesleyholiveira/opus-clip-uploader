@@ -1,6 +1,7 @@
 #pragma once
 
 #include "models/transcript.hpp"
+#include "models/curation-settings.hpp"
 
 #include <functional>
 
@@ -19,6 +20,15 @@ public:
 	RecordingTranscript transcribeVideoFile(const QString &videoPath, const QString &whisperModelPath,
 						TranscriptionProgressCallback progressCallback = {},
 						TranscriptionCancelCallback cancelCallback = {});
+	RecordingTranscript transcribeVideoFile(const QString &videoPath, const QString &whisperModelPath,
+						const QString &transcriptionLanguage,
+						TranscriptionProgressCallback progressCallback = {},
+						TranscriptionCancelCallback cancelCallback = {});
+	RecordingTranscript transcribeVideoRanges(const QString &videoPath, const QString &whisperModelPath,
+						  const QString &transcriptionLanguage,
+						  const QVector<ClipDuration> &ranges,
+						  TranscriptionProgressCallback progressCallback = {},
+						  TranscriptionCancelCallback cancelCallback = {});
 };
 
 RealtimeTranscriptionService *global_realtime_transcription_service();

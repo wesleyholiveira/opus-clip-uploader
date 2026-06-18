@@ -7,6 +7,8 @@
 #include "ui/upload-review-dialog.hpp"
 #include "ui/video-marker-editor.hpp"
 
+#include <gpt/gpt-prompt-client.hpp>
+
 #include <obs-frontend-api.h>
 #include <obs-module.h>
 
@@ -31,6 +33,20 @@ static bool is_openai_model_enabled()
 {
 	const QString model = get_openai_model().trimmed();
 	return !model.isEmpty() && model != OPENAI_MODEL_DISABLED;
+}
+
+static bool show_semantic_gate_failure_if_needed(QWidget *parent, const QString &videoPath,
+						 const QString &generatedPrompt)
+{
+	if (!GptPromptClient::isSemanticGateFailurePrompt(generatedPrompt))
+		return false;
+
+	const QString reason = GptPromptClient::semanticGateFailureReason(generatedPrompt);
+	blog(LOG_WARNING, "Semantic gate blocked Opus upload from video editor for %s: %s",
+	     videoPath.toUtf8().constData(), reason.toUtf8().constData());
+	QMessageBox::warning(parent, obsText("Dialog.SemanticGateFailedTitle"),
+			     obsText("Message.SemanticGateFailed").arg(reason));
+	return true;
 }
 
 static void upload_reviewed_video(QWidget *parent, const QString &videoPath, const CurationSettings &curationSettings)
@@ -99,6 +115,9 @@ static void generate_prompt_and_upload_reviewed_video(QWidget *parent, const QSt
 						      const CurationSettings &curationSettings)
 {
 	auto startUpload = [parent, videoPath, curationSettings](const QString &generatedPrompt) mutable {
+		if (show_semantic_gate_failure_if_needed(parent, videoPath, generatedPrompt))
+			return;
+
 		CurationSettings finalSettings = curationSettings;
 		const bool gptGeneratedPrompt = finalSettings.aiPrompt.trimmed().isEmpty() &&
 						!generatedPrompt.trimmed().isEmpty();

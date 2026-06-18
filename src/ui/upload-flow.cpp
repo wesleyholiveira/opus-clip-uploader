@@ -14,7 +14,6 @@
 #include <QFileInfo>
 #include <QLabel>
 #include <QMessageBox>
-#include <QMetaObject>
 #include <QObject>
 #include <QProgressBar>
 #include <QPushButton>
@@ -63,7 +62,7 @@ void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCance
 	}
 
 	if (recordingPaths.isEmpty()) {
-		obs_log(LOG_ERROR, "No recording path found for upload.");
+		blog(LOG_ERROR, "No recording path found for upload.");
 
 		QMessageBox::critical(dialog, title, obsText("Message.NoValidRecordingFile"));
 
@@ -190,7 +189,7 @@ void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCance
 
 		for (const QPointer<UploadWorker> &worker : state->workers) {
 			if (worker)
-				QMetaObject::invokeMethod(worker, "cancel", Qt::QueuedConnection);
+				worker->cancel();
 		}
 
 		if (state->running == 0)
@@ -213,8 +212,8 @@ void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCance
 			const QFileInfo qFileInfo(recordingPath);
 
 			if (!qFileInfo.exists() || !qFileInfo.isFile()) {
-				obs_log(LOG_ERROR, "Invalid upload path. Expected file, got: %s",
-					recordingPath.toUtf8().constData());
+				blog(LOG_ERROR, "Invalid upload path. Expected file, got: %s",
+				     recordingPath.toUtf8().constData());
 
 				state->progress[index] = 100;
 				state->completed++;
@@ -233,13 +232,15 @@ void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCance
 			FileInfo fInfo(recordingPath.toStdString());
 			fInfo.parseFile();
 
-			obs_log(LOG_INFO, "Uploading part %d/%d to Opus Clip - Path: %s, Name: %s, Mime: %s", index + 1,
-				state->paths.size(), fInfo.filePath.c_str(), fInfo.fileName.c_str(),
-				fInfo.mimeType.c_str());
+			blog(LOG_INFO, "Uploading part %d/%d to Opus Clip - Path: %s, Name: %s, Mime: %s", index + 1,
+			     state->paths.size(), fInfo.filePath.c_str(), fInfo.fileName.c_str(),
+			     fInfo.mimeType.c_str());
 
 			auto *thread = new QThread(dialog);
 			const QString brandTemplateId = PluginConfig::getValue("opus_brand_template_id").trimmed();
-			const QString sourceLang = PluginConfig::getValue("opus_source_lang", "auto").trimmed();
+			QString sourceLang = curationSettings.sourceLanguage.trimmed();
+			if (sourceLang.isEmpty())
+				sourceLang = QStringLiteral("auto");
 
 			const QString openAiApiKey = get_openai_api_key();
 			const QString openAiModel = get_openai_model();
@@ -276,7 +277,7 @@ void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCance
 			QObject::connect(
 				worker, &UploadWorker::failed, dialog,
 				[=](const QString &message) mutable {
-					obs_log(LOG_ERROR, "Upload failed: %s", message.toUtf8().constData());
+					blog(LOG_ERROR, "Upload failed: %s", message.toUtf8().constData());
 
 					state->running--;
 					state->completed++;
@@ -299,8 +300,7 @@ void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCance
 			QObject::connect(
 				worker, &UploadWorker::finished, dialog,
 				[=](const QString &projectId) mutable {
-					obs_log(LOG_INFO, "Opus Clip project created: %s",
-						projectId.toUtf8().constData());
+					blog(LOG_INFO, "Opus Clip project created: %s", projectId.toUtf8().constData());
 
 					state->running--;
 					state->completed++;

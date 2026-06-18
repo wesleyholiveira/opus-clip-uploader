@@ -974,7 +974,7 @@ void VideoMarkerEditor::removeClipRangeAtIndex(int index)
 
 	rebuildClipRanges();
 
-	const int rangeCount = static_cast<int>(clipRanges().size());
+	const int rangeCount = static_cast<long long>(clipRanges().size());
 	selectedRangeIndex = rangeCount > 0 ? std::min(index, rangeCount - 1) : -1;
 	updateSelectedClipPreview(positionMilliseconds() / 1000.0);
 }

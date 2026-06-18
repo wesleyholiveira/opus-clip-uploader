@@ -35,6 +35,9 @@ private:
 	QLineEdit *topicKeywordsInput = nullptr;
 	QComboBox *genreInput = nullptr;
 	QComboBox *modelInput = nullptr;
+	QComboBox *clipLengthInput = nullptr;
+	QComboBox *sourceLanguageInput = nullptr;
+	QComboBox *transcriptionLanguageInput = nullptr;
 	QCheckBox *skipCurateInput = nullptr;
 	QPlainTextEdit *customPromptInput = nullptr;
 
@@ -43,6 +46,7 @@ private:
 	void updateCreditEstimate(const QVector<ClipDuration> &ranges);
 	void loadSavedCurationOptions();
 	void saveCurationOptions() const;
+	QString currentReviewSettingsKey() const;
 };
 
 inline bool review_generated_prompt_before_upload(QWidget *parent, const QString &videoPath, CurationSettings &settings)

@@ -14,11 +14,16 @@ extern "C" {
 #include "utils/config.hpp"
 
 #include <QAbstractItemView>
+#include <QByteArray>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QFileInfo>
 #include <QHeaderView>
+#include <QHBoxLayout>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPlainTextEdit>
@@ -28,11 +33,93 @@ extern "C" {
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <cmath>
 
-static constexpr const char *CONFIG_REVIEW_TOPIC_KEYWORDS = "review.topic_keywords";
-static constexpr const char *CONFIG_REVIEW_GENRE = "review.genre";
-static constexpr const char *CONFIG_REVIEW_MODEL = "review.model";
-static constexpr const char *CONFIG_REVIEW_SKIP_CURATE = "review.skip_curate";
+static constexpr const char *CONFIG_REVIEW_SETTINGS_PREFIX = "review.settings";
+static constexpr const char *CONFIG_OPUS_SOURCE_LANGUAGE = "opus_source_lang";
+static constexpr const char *LANGUAGE_AUTO = "auto";
+
+static QString normalizeLanguageSetting(QString value)
+{
+	value = value.trimmed().toLower();
+	if (value.isEmpty())
+		return QString::fromLatin1(LANGUAGE_AUTO);
+
+	if (value == QStringLiteral("pt-br") || value == QStringLiteral("portuguese"))
+		return QStringLiteral("pt");
+
+	if (value == QStringLiteral("en-us") || value == QStringLiteral("english"))
+		return QStringLiteral("en");
+
+	return value;
+}
+
+static void addLanguageOptions(QComboBox *combo)
+{
+	combo->addItem(QStringLiteral("auto"), QStringLiteral("auto"));
+	combo->addItem(QStringLiteral("pt"), QStringLiteral("pt"));
+	combo->addItem(QStringLiteral("en"), QStringLiteral("en"));
+}
+
+static QString safeReviewFileKey(const QString &videoPath)
+{
+	QString fileName = QFileInfo(videoPath).fileName().trimmed();
+	if (fileName.isEmpty())
+		fileName = videoPath.trimmed();
+
+	if (fileName.isEmpty())
+		return QStringLiteral("unknown");
+
+	return QString::fromLatin1(
+		fileName.toUtf8().toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals));
+}
+
+static QString formatReviewTimeToken(double seconds)
+{
+	const qint64 milliseconds = static_cast<qint64>(std::max(0.0, std::round(seconds * 1000.0)));
+	return QString::number(milliseconds);
+}
+
+static QString reviewRangeKeyFromMarkers(QVector<double> markers)
+{
+	std::sort(markers.begin(), markers.end());
+
+	if (markers.isEmpty())
+		return QStringLiteral("no_markers");
+
+	QStringList values;
+	values.reserve(markers.size());
+	for (double marker : markers) {
+		if (std::isfinite(marker))
+			values.append(formatReviewTimeToken(marker));
+	}
+
+	return values.isEmpty() ? QStringLiteral("no_markers") : values.join(QStringLiteral("_"));
+}
+
+static QString reviewRangeKeyFromRanges(const QVector<ClipDuration> &ranges)
+{
+	if (ranges.isEmpty())
+		return QStringLiteral("no_markers");
+
+	QStringList values;
+	values.reserve(ranges.size());
+	for (const ClipDuration &range : ranges) {
+		if (!std::isfinite(range.startSec) || !std::isfinite(range.endSec))
+			continue;
+
+		values.append(QStringLiteral("%1-%2").arg(formatReviewTimeToken(range.startSec),
+							  formatReviewTimeToken(range.endSec)));
+	}
+
+	return values.isEmpty() ? QStringLiteral("no_markers") : values.join(QStringLiteral("_"));
+}
+
+static QString reviewSettingsConfigKey(const QString &videoPath, const QString &rangeKey)
+{
+	return QStringLiteral("%1.%2.%3")
+		.arg(QString::fromLatin1(CONFIG_REVIEW_SETTINGS_PREFIX), safeReviewFileKey(videoPath), rangeKey);
+}
 
 static void setComboCurrentTextIfExists(QComboBox *combo, const QString &value)
 {
@@ -42,6 +129,20 @@ static void setComboCurrentTextIfExists(QComboBox *combo, const QString &value)
 	const int index = combo->findText(value, Qt::MatchFixedString);
 	if (index >= 0)
 		combo->setCurrentIndex(index);
+}
+
+static void setComboCurrentDataIfExists(QComboBox *combo, const QString &value)
+{
+	if (!combo || value.trimmed().isEmpty())
+		return;
+
+	const int index = combo->findData(value.trimmed(), Qt::UserRole, Qt::MatchFixedString);
+	if (index >= 0) {
+		combo->setCurrentIndex(index);
+		return;
+	}
+
+	setComboCurrentTextIfExists(combo, value);
 }
 
 static double totalRangeDurationSeconds(const QVector<ClipDuration> &ranges)
@@ -115,6 +216,23 @@ UploadReviewDialog::UploadReviewDialog(const QString &videoPath, const CurationS
 	modelInput = new QComboBox(this);
 	modelInput->addItems(QStringList{"ClipBasic", "ClipAnything"});
 
+	clipLengthInput = new QComboBox(this);
+	clipLengthInput->addItem(obsText("Option.ClipLengthAuto"), QStringLiteral("Auto"));
+	clipLengthInput->addItem(obsText("Option.ClipLengthShort"), QStringLiteral("Short"));
+	clipLengthInput->addItem(obsText("Option.ClipLengthMedium"), QStringLiteral("Medium"));
+	clipLengthInput->addItem(obsText("Option.ClipLengthLong"), QStringLiteral("Long"));
+	setComboCurrentDataIfExists(clipLengthInput, QStringLiteral("Medium"));
+
+	sourceLanguageInput = new QComboBox(this);
+	addLanguageOptions(sourceLanguageInput);
+	setComboCurrentDataIfExists(sourceLanguageInput, normalizeLanguageSetting(PluginConfig::getValue(
+								 QString::fromLatin1(CONFIG_OPUS_SOURCE_LANGUAGE),
+								 QString::fromLatin1(LANGUAGE_AUTO))));
+
+	transcriptionLanguageInput = new QComboBox(this);
+	addLanguageOptions(transcriptionLanguageInput);
+	setComboCurrentDataIfExists(transcriptionLanguageInput, QString::fromLatin1(LANGUAGE_AUTO));
+
 	genreInput = new QComboBox(this);
 	genreInput->addItems(QStringList{"Auto", "Q&A", "Commentary", "Marketing", "Webinar", "Motivational speech",
 					 "Podcast", "Academic", "Listicle", "Product reviews", "How-to", "Comedy",
@@ -126,8 +244,26 @@ UploadReviewDialog::UploadReviewDialog(const QString &videoPath, const CurationS
 	customPromptInput->setMinimumHeight(advancedSettingsOnly ? 280 : 110);
 	customPromptInput->setPlaceholderText(obsText("Placeholder.CustomPrompt"));
 
+	QHBoxLayout *languageRow = nullptr;
+	if (!advancedSettingsOnly) {
+		languageRow = new QHBoxLayout();
+		languageRow->setContentsMargins(0, 0, 0, 0);
+		languageRow->setSpacing(8);
+		languageRow->addWidget(new QLabel(obsText("Settings.SourceLanguage"), this));
+		languageRow->addWidget(sourceLanguageInput);
+		languageRow->addSpacing(16);
+		languageRow->addWidget(new QLabel(obsText("Settings.TranscriptionLanguage"), this));
+		languageRow->addWidget(transcriptionLanguageInput);
+		languageRow->addStretch();
+	}
+
 	auto *advancedTree = new AdvancedSettingsTree(this);
+	if (advancedSettingsOnly) {
+		advancedTree->addField(obsText("Settings.SourceLanguage"), sourceLanguageInput);
+		advancedTree->addField(obsText("Settings.TranscriptionLanguage"), transcriptionLanguageInput);
+	}
 	advancedTree->addField(obsText("Settings.Model"), modelInput);
+	advancedTree->addField(obsText("Settings.ClipLength"), clipLengthInput);
 	advancedTree->addField(obsText("Settings.TopicKeywords"), topicKeywordsInput);
 	advancedTree->addField(obsText("Settings.Genre"), genreInput);
 	advancedTree->addField(obsText("Settings.SkipCurate"), skipCurateInput);
@@ -154,6 +290,8 @@ UploadReviewDialog::UploadReviewDialog(const QString &videoPath, const CurationS
 	connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
 	mainLayout->addWidget(new QLabel(QFileInfo(videoPath).fileName(), this));
+	if (languageRow)
+		mainLayout->addLayout(languageRow);
 
 	if (advancedSettingsOnly) {
 		auto *promptReviewLabel = new QLabel(obsText("Message.ReviewGeneratedPromptBeforeUpload"), this);
@@ -211,6 +349,10 @@ void UploadReviewDialog::applyCurationSettings(const CurationSettings &settings)
 
 	setComboCurrentTextIfExists(genreInput, settings.genre);
 	setComboCurrentTextIfExists(modelInput, settings.model);
+	setComboCurrentDataIfExists(clipLengthInput, settings.clipLengthPreset);
+	setComboCurrentDataIfExists(sourceLanguageInput, normalizeLanguageSetting(settings.sourceLanguage));
+	setComboCurrentDataIfExists(transcriptionLanguageInput,
+				    normalizeLanguageSetting(settings.transcriptionLanguage));
 
 	if (skipCurateInput)
 		skipCurateInput->setChecked(settings.skipCurate);
@@ -239,25 +381,127 @@ void UploadReviewDialog::updateCreditEstimate(const QVector<ClipDuration> &range
 
 void UploadReviewDialog::loadSavedCurationOptions()
 {
-	const QString savedTopicKeywords = PluginConfig::getValue(CONFIG_REVIEW_TOPIC_KEYWORDS).trimmed();
-	if (!savedTopicKeywords.isEmpty())
-		topicKeywordsInput->setText(savedTopicKeywords);
+	const QString key = currentReviewSettingsKey();
+	if (key.isEmpty())
+		return;
 
-	setComboCurrentTextIfExists(genreInput, PluginConfig::getValue(CONFIG_REVIEW_GENRE));
-	setComboCurrentTextIfExists(modelInput, PluginConfig::getValue(CONFIG_REVIEW_MODEL));
+	const QString raw = PluginConfig::getValue(key).trimmed();
+	if (raw.isEmpty())
+		return;
 
-	const QString savedSkipCurate = PluginConfig::getValue(CONFIG_REVIEW_SKIP_CURATE).trimmed().toLower();
-	if (!savedSkipCurate.isEmpty())
-		skipCurateInput->setChecked(savedSkipCurate == "true" || savedSkipCurate == "1" ||
-					    savedSkipCurate == "yes");
+	const QJsonDocument document = QJsonDocument::fromJson(raw.toUtf8());
+	if (!document.isObject())
+		return;
+
+	const QJsonObject root = document.object();
+
+	if (topicKeywordsInput && root.contains(QStringLiteral("topicKeywords"))) {
+		QStringList keywords;
+		const QJsonValue value = root.value(QStringLiteral("topicKeywords"));
+		if (value.isArray()) {
+			const QJsonArray array = value.toArray();
+			for (const QJsonValue &item : array) {
+				const QString keyword = item.toString().trimmed();
+				if (!keyword.isEmpty())
+					keywords.append(keyword);
+			}
+		} else {
+			const QString rawKeywords = value.toString().trimmed();
+			if (!rawKeywords.isEmpty())
+				keywords = rawKeywords.split(QStringLiteral(","), Qt::SkipEmptyParts);
+		}
+
+		for (QString &keyword : keywords)
+			keyword = keyword.trimmed();
+
+		topicKeywordsInput->setText(keywords.join(QStringLiteral(", ")));
+	}
+
+	setComboCurrentTextIfExists(genreInput, root.value(QStringLiteral("genre")).toString());
+	setComboCurrentTextIfExists(modelInput, root.value(QStringLiteral("model")).toString());
+	setComboCurrentDataIfExists(clipLengthInput,
+				    root.value(QStringLiteral("clipLengthPreset")).toString(QStringLiteral("Medium")));
+	setComboCurrentDataIfExists(
+		sourceLanguageInput,
+		normalizeLanguageSetting(
+			root.value(QStringLiteral("sourceLanguage"))
+				.toString(PluginConfig::getValue(QString::fromLatin1(CONFIG_OPUS_SOURCE_LANGUAGE),
+								 QString::fromLatin1(LANGUAGE_AUTO)))));
+	setComboCurrentDataIfExists(transcriptionLanguageInput,
+				    normalizeLanguageSetting(root.value(QStringLiteral("transcriptionLanguage"))
+								     .toString(QString::fromLatin1(LANGUAGE_AUTO))));
+
+	if (skipCurateInput && root.contains(QStringLiteral("skipCurate")))
+		skipCurateInput->setChecked(root.value(QStringLiteral("skipCurate")).toBool(false));
+
+	if (customPromptInput && root.contains(QStringLiteral("aiPrompt")))
+		customPromptInput->setPlainText(root.value(QStringLiteral("aiPrompt")).toString().trimmed());
 }
 
 void UploadReviewDialog::saveCurationOptions() const
 {
-	PluginConfig::setValue(CONFIG_REVIEW_TOPIC_KEYWORDS, topicKeywordsInput->text().trimmed());
-	PluginConfig::setValue(CONFIG_REVIEW_GENRE, genreInput->currentText());
-	PluginConfig::setValue(CONFIG_REVIEW_MODEL, modelInput->currentText());
-	PluginConfig::setValue(CONFIG_REVIEW_SKIP_CURATE, skipCurateInput->isChecked() ? "true" : "false");
+	const QString key = currentReviewSettingsKey();
+	if (key.isEmpty())
+		return;
+
+	QJsonObject root;
+	root.insert(QStringLiteral("videoFileName"), QFileInfo(videoPath).fileName());
+	root.insert(QStringLiteral("videoPath"), videoPath);
+	root.insert(QStringLiteral("reviewSettingsKey"), key);
+	root.insert(QStringLiteral("originalVideoDurationSec"),
+		    advancedSettingsOnly ? initialSettings.originalVideoDurationSec
+					 : (videoEditor ? videoEditor->durationMilliseconds() / 1000.0 : 0.0));
+
+	QJsonArray ranges;
+	const QVector<ClipDuration> currentRanges =
+		advancedSettingsOnly ? initialSettings.clipDurations
+				     : (videoEditor ? videoEditor->clipRanges() : QVector<ClipDuration>{});
+	for (const ClipDuration &range : currentRanges) {
+		QJsonObject item;
+		item.insert(QStringLiteral("start"), range.startSec);
+		item.insert(QStringLiteral("end"), range.endSec);
+		ranges.append(item);
+	}
+	root.insert(QStringLiteral("clipDurations"), ranges);
+
+	QJsonArray topicKeywords;
+	if (topicKeywordsInput) {
+		const QStringList keywords = topicKeywordsInput->text().split(QStringLiteral(","), Qt::SkipEmptyParts);
+		for (QString keyword : keywords) {
+			keyword = keyword.trimmed();
+			if (!keyword.isEmpty())
+				topicKeywords.append(keyword);
+		}
+	}
+	root.insert(QStringLiteral("topicKeywords"), topicKeywords);
+	root.insert(QStringLiteral("genre"), genreInput ? genreInput->currentText() : QStringLiteral("Auto"));
+	root.insert(QStringLiteral("model"), modelInput ? modelInput->currentText() : QStringLiteral("ClipAnything"));
+	root.insert(QStringLiteral("clipLengthPreset"),
+		    clipLengthInput ? clipLengthInput->currentData().toString() : QStringLiteral("Medium"));
+	root.insert(QStringLiteral("skipCurate"), skipCurateInput ? skipCurateInput->isChecked() : false);
+	root.insert(QStringLiteral("sourceLanguage"),
+		    sourceLanguageInput ? normalizeLanguageSetting(sourceLanguageInput->currentData().toString())
+					: QString::fromLatin1(LANGUAGE_AUTO));
+	root.insert(QStringLiteral("transcriptionLanguage"),
+		    transcriptionLanguageInput
+			    ? normalizeLanguageSetting(transcriptionLanguageInput->currentData().toString())
+			    : QString::fromLatin1(LANGUAGE_AUTO));
+	root.insert(QStringLiteral("aiPrompt"),
+		    customPromptInput ? customPromptInput->toPlainText().trimmed() : QString{});
+
+	PluginConfig::setValue(key, QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact)));
+}
+
+QString UploadReviewDialog::currentReviewSettingsKey() const
+{
+	if (advancedSettingsOnly && !initialSettings.reviewSettingsKey.trimmed().isEmpty())
+		return initialSettings.reviewSettingsKey;
+
+	const QString rangeKey =
+		advancedSettingsOnly
+			? reviewRangeKeyFromRanges(initialSettings.clipDurations)
+			: reviewRangeKeyFromMarkers(videoEditor ? videoEditor->markerPositions() : QVector<double>{});
+	return reviewSettingsConfigKey(videoPath, rangeKey);
 }
 
 CurationSettings UploadReviewDialog::curationSettings() const
@@ -268,6 +512,10 @@ CurationSettings UploadReviewDialog::curationSettings() const
 		advancedSettingsOnly ? initialSettings.clipDurations
 				     : (videoEditor ? videoEditor->clipRanges() : QVector<ClipDuration>{});
 
+	settings.reviewSettingsKey = currentReviewSettingsKey();
+	settings.originalVideoDurationSec =
+		advancedSettingsOnly ? initialSettings.originalVideoDurationSec
+				     : (videoEditor ? videoEditor->durationMilliseconds() / 1000.0 : 0.0);
 	settings.rangeStartSec = ranges.isEmpty() ? settings.rangeStartSec : ranges.first().startSec;
 	settings.rangeEndSec = ranges.isEmpty() ? settings.rangeEndSec : ranges.last().endSec;
 	settings.clipDurations.clear();
@@ -277,6 +525,15 @@ CurationSettings UploadReviewDialog::curationSettings() const
 	settings.genre = genreInput->currentText();
 	settings.skipCurate = skipCurateInput->isChecked();
 	settings.model = modelInput->currentText();
+	settings.clipLengthPreset = clipLengthInput ? clipLengthInput->currentData().toString()
+						    : QStringLiteral("Medium");
+	settings.sourceLanguage = sourceLanguageInput
+					  ? normalizeLanguageSetting(sourceLanguageInput->currentData().toString())
+					  : QString::fromLatin1(LANGUAGE_AUTO);
+	settings.transcriptionLanguage =
+		transcriptionLanguageInput
+			? normalizeLanguageSetting(transcriptionLanguageInput->currentData().toString())
+			: QString::fromLatin1(LANGUAGE_AUTO);
 	settings.aiPrompt = customPromptInput ? customPromptInput->toPlainText().trimmed() : QString{};
 
 	settings.topicKeywords.clear();

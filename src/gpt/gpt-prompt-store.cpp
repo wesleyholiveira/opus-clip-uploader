@@ -5,6 +5,11 @@
 #include <QCryptographicHash>
 #include <QFileInfo>
 
+static bool isSemanticGateFailurePrompt(const QString &prompt)
+{
+	return prompt.trimmed().startsWith(QStringLiteral("NO_STRONG_CLIP_FOUND:"), Qt::CaseInsensitive);
+}
+
 QString GptPromptStore::safeFileKey(const QString &videoPath)
 {
 	const QFileInfo info(videoPath);
@@ -18,15 +23,38 @@ QString GptPromptStore::keyForVideoPath(const QString &videoPath)
 	return QStringLiteral("gpt_prompt.%1").arg(safeFileKey(videoPath));
 }
 
+QString GptPromptStore::keyForInput(const QString &model, const QString &inputText)
+{
+	const QString normalizedModel = model.trimmed().toLower();
+	const QString normalizedInput = inputText.trimmed();
+	const QByteArray material = normalizedModel.toUtf8() + "\n---clip-cropper-gpt-input---\n" + normalizedInput.toUtf8();
+	const QByteArray hash = QCryptographicHash::hash(material, QCryptographicHash::Sha256).toHex();
+	return QStringLiteral("gpt_prompt_input.v15.%1").arg(QString::fromLatin1(hash.left(32)));
+}
+
 static QString pendingKeyForVideoPath(const QString &videoPath)
 {
-	return QStringLiteral("gpt_prompt_pending.%1")
-		.arg(GptPromptStore::keyForVideoPath(videoPath).section(QLatin1Char('.'), -1));
+	return QStringLiteral("gpt_prompt_pending.%1").arg(GptPromptStore::keyForVideoPath(videoPath).section(QLatin1Char('.'), -1));
 }
 
 QString GptPromptStore::loadForVideoPath(const QString &videoPath)
 {
 	return PluginConfig::getValue(keyForVideoPath(videoPath)).trimmed();
+}
+
+QString GptPromptStore::loadForInput(const QString &model, const QString &inputText)
+{
+	if (inputText.trimmed().isEmpty())
+		return {};
+
+	const QString key = keyForInput(model, inputText);
+	const QString cached = PluginConfig::getValue(key).trimmed();
+	if (isSemanticGateFailurePrompt(cached)) {
+		PluginConfig::removeValue(key);
+		return {};
+	}
+
+	return cached;
 }
 
 void GptPromptStore::saveForVideoPath(const QString &videoPath, const QString &prompt)
@@ -37,6 +65,18 @@ void GptPromptStore::saveForVideoPath(const QString &videoPath, const QString &p
 
 	PluginConfig::setValue(keyForVideoPath(videoPath), trimmedPrompt);
 	clearPendingForVideoPath(videoPath);
+}
+
+void GptPromptStore::saveForInput(const QString &model, const QString &inputText, const QString &prompt)
+{
+	const QString trimmedPrompt = prompt.trimmed();
+	if (inputText.trimmed().isEmpty() || trimmedPrompt.isEmpty())
+		return;
+
+	if (isSemanticGateFailurePrompt(trimmedPrompt))
+		return;
+
+	PluginConfig::setValue(keyForInput(model, inputText), trimmedPrompt);
 }
 
 bool GptPromptStore::isPendingForVideoPath(const QString &videoPath)
