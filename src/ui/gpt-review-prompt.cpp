@@ -29,6 +29,19 @@ static const QString &title = clipCropperTitle();
 static constexpr const char *CONFIG_GPT_TRANSCRIPT_CONTEXT_PADDING_SEC = "gpt_transcript_context_padding_sec";
 static constexpr double DEFAULT_GPT_TRANSCRIPT_CONTEXT_PADDING_SEC = 60.0;
 
+static QString gptPromptBlockedReason(const QString &details = {})
+{
+	const QString base = QStringLiteral(
+		"No usable transcript segments were produced, so the GPT Opus prompt could not be generated.");
+	const QString trimmedDetails = details.trimmed();
+	return trimmedDetails.isEmpty() ? base : QStringLiteral("%1 %2").arg(base, trimmedDetails);
+}
+
+static QString gptPromptBlockedPrompt(const QString &details = {})
+{
+	return GptPromptClient::promptGenerationBlockedPrompt(gptPromptBlockedReason(details));
+}
+
 static double configured_gpt_transcript_context_padding_seconds()
 {
 	bool ok = false;
@@ -409,10 +422,12 @@ static void generate_gpt_prompt_with_progress_dialog_async(QWidget *parent, cons
 	     rangeLog.toUtf8().constData());
 	if (promptTranscript.segments.isEmpty()) {
 		blog(LOG_WARNING,
-		     "No transcript segments inside the selected curation ranges for %s. Skipping GPT prompt generation.",
+		     "No transcript segments inside the selected curation ranges for %s. Blocking upload without GPT prompt.",
 		     videoPath.toUtf8().constData());
-		QMessageBox::warning(parent, title, obsText("Message.TranscriptUnavailableForGpt"));
-		invoke_prompt_finished(parent, std::move(finishedCallback), {});
+		invoke_prompt_finished(
+			parent, std::move(finishedCallback),
+			gptPromptBlockedPrompt(QStringLiteral(
+				"Try selecting a range with audible speech or check the transcription language/audio stream.")));
 		return;
 	}
 
@@ -516,17 +531,19 @@ void generate_custom_prompt_for_curation_async(QWidget *parent, const QString &v
 				       finish](const RecordingTranscript &transcript,
 					       bool transcriptionCanceled) mutable {
 		if (transcriptionCanceled) {
-			blog(LOG_INFO, "GPT curation prompt generation skipped because transcription was canceled: %s",
+			blog(LOG_INFO, "GPT curation prompt generation blocked because transcription was canceled: %s",
 			     videoPath.toUtf8().constData());
-			finish({});
+			finish(gptPromptBlockedPrompt(
+				QStringLiteral("Transcription was canceled before a prompt could be generated.")));
 			return;
 		}
 
 		if (transcript.segments.isEmpty()) {
-			blog(LOG_WARNING, "No transcript available for %s. Skipping GPT curation prompt generation.",
+			blog(LOG_WARNING,
+			     "No transcript available for %s. Blocking upload without GPT curation prompt.",
 			     videoPath.toUtf8().constData());
-			QMessageBox::warning(parent, title, obsText("Message.TranscriptUnavailableForGpt"));
-			finish({});
+			finish(gptPromptBlockedPrompt(QStringLiteral(
+				"Try selecting a range with audible speech or check the transcription language/audio stream.")));
 			return;
 		}
 
@@ -553,10 +570,11 @@ void generate_custom_prompt_for_curation_async(QWidget *parent, const QString &v
 	     TranscriptStore::keyForVideoPath(videoPath, transcriptionLanguage).toUtf8().constData());
 
 	if (!transcribeOnDemand) {
-		blog(LOG_WARNING, "No cached transcript available for %s. Skipping GPT curation prompt generation.",
+		blog(LOG_WARNING,
+		     "No cached transcript available for %s and on-demand transcription is disabled. Blocking upload without GPT curation prompt.",
 		     videoPath.toUtf8().constData());
-		QMessageBox::warning(parent, title, obsText("Message.TranscriptUnavailableForGpt"));
-		finish({});
+		finish(gptPromptBlockedPrompt(
+			QStringLiteral("No cached transcript is available and on-demand transcription is disabled.")));
 		return;
 	}
 

@@ -117,6 +117,14 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 
 	src/curation/curation-preset.cpp
 	src/curation/curation-preset.hpp
+	src/curation/curation-signals.cpp
+	src/curation/curation-signals.hpp
+	src/curation/curation-intent.cpp
+	src/curation/curation-intent.hpp
+	src/curation/curation-rules.cpp
+	src/curation/curation-rules.hpp
+	src/curation/opus-prompt-renderer.cpp
+	src/curation/opus-prompt-renderer.hpp
 
 	src/transcription/transcript-store.cpp
 	src/transcription/transcript-store.hpp
