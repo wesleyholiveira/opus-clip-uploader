@@ -1,6 +1,8 @@
 #include "opus/opus-clip-client.hpp"
 
 #include "curation/curation-preset.hpp"
+#include "opus/opus-api-types.hpp"
+#include "opus/opus-curation-payload-builder.hpp"
 
 #ifdef __cplusplus
 extern "C" {
@@ -23,22 +25,9 @@ extern "C" {
 #include <algorithm>
 #include <utility>
 
-static constexpr const char *OPUS_API_BASE_URL = "https://api.opus.pro";
-
 static QString obsText(const char *key)
 {
 	return QString::fromUtf8(obs_module_text(key));
-}
-
-static QJsonArray clipDurationsForBounds(double minSec, double maxSec)
-{
-	QJsonArray bounds;
-	bounds.append(minSec);
-	bounds.append(maxSec);
-
-	QJsonArray clipDurations;
-	clipDurations.append(bounds);
-	return clipDurations;
 }
 
 OpusClipClient::OpusClipClient(QString apiKey, QString brandTemplateId, QString sourceLang,
@@ -123,7 +112,7 @@ void OpusClipClient::uploadFileResumableAndCreateProjectAsync(const QString &fil
 
 void OpusClipClient::createUploadLink(const QString &filePath)
 {
-	QNetworkRequest request{QUrl(QString("%1/api/upload-links").arg(OPUS_API_BASE_URL))};
+	QNetworkRequest request{QUrl(QString("%1/api/upload-links").arg(OpusApi::BaseUrl))};
 	request.setRawHeader("Accept", "application/json");
 	request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
 	request.setRawHeader("Authorization", QString("Bearer %1").arg(apiKey).toUtf8());
@@ -358,7 +347,7 @@ void OpusClipClient::createClipProject(const QString &uploadId, const ClipDurati
 	emit progressChanged(50 + static_cast<int>((projectIndex * 50.0) / std::max(1, totalProjects)),
 			     obsText("Status.CreatingClipProject").arg(projectIndex + 1).arg(totalProjects));
 
-	QNetworkRequest request{QUrl(QString("%1/api/clip-projects").arg(OPUS_API_BASE_URL))};
+	QNetworkRequest request{QUrl(QString("%1/api/clip-projects").arg(OpusApi::BaseUrl))};
 	request.setRawHeader("Accept", "application/json");
 	request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
 	request.setRawHeader("Authorization", QString("Bearer %1").arg(apiKey).toUtf8());
@@ -373,53 +362,13 @@ void OpusClipClient::createClipProject(const QString &uploadId, const ClipDurati
 	if (!brandTemplateId.trimmed().isEmpty())
 		payload.insert("brandTemplateId", brandTemplateId.trimmed());
 
-	QJsonObject curationPref;
-
-	QJsonObject range;
-	range.insert("startSec", rangeValue.startSec);
-	range.insert("endSec", rangeValue.endSec);
-	curationPref.insert("range", range);
+	const QJsonObject curationPref = OpusCurationPayloadBuilder{}.build(rangeValue, curationSettings);
 
 	const double rangeDurationSec = std::max(0.0, rangeValue.endSec - rangeValue.startSec);
 	const bool createFixedClip = curationSettings.skipCurate;
 	const CurationPreset::ClipLengthBounds clipLengthBounds =
 		CurationPreset::clipLengthBoundsForSettings(curationSettings);
 	const bool hasPreferredClipLength = !createFixedClip && clipLengthBounds.enabled;
-
-	if (createFixedClip) {
-		QJsonArray clipDurations;
-		QJsonArray item;
-		item.append(rangeValue.startSec);
-		item.append(rangeValue.endSec);
-		clipDurations.append(item);
-		curationPref.insert("clipDurations", clipDurations);
-
-		QJsonArray clipStarts;
-		clipStarts.append(rangeValue.startSec);
-		curationPref.insert("clip_start", clipStarts);
-
-		QJsonArray clipDurationSeconds;
-		clipDurationSeconds.append(rangeDurationSec);
-		curationPref.insert("clip_duration", clipDurationSeconds);
-	} else if (hasPreferredClipLength) {
-		curationPref.insert("clipDurations",
-				    clipDurationsForBounds(clipLengthBounds.minSec, clipLengthBounds.maxSec));
-	}
-
-	QJsonArray topicKeywords;
-	for (const QString &keyword : curationSettings.topicKeywords)
-		topicKeywords.append(keyword);
-
-	curationPref.insert("model", curationSettings.model.trimmed().isEmpty() ? "ClipAnything"
-										: curationSettings.model.trimmed());
-	curationPref.insert("topicKeywords", topicKeywords);
-	curationPref.insert("genre", curationSettings.genre.trimmed().isEmpty() ? "Auto" : curationSettings.genre);
-	curationPref.insert("skipCurate", curationSettings.skipCurate);
-
-	if (!curationSettings.aiPrompt.trimmed().isEmpty()) {
-		curationPref.insert("prompt", curationSettings.aiPrompt.trimmed());
-		curationPref.insert("userPrompt", curationSettings.aiPrompt.trimmed());
-	}
 
 	const QString clipLengthBoundsLog = hasPreferredClipLength ? QStringLiteral("%1-%2")
 									     .arg(clipLengthBounds.minSec, 0, 'f', 0)

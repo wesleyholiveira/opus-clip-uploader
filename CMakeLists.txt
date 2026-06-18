@@ -115,6 +115,15 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 	src/models/curation-settings.hpp
 	src/models/transcript.hpp
 
+	src/curation/domain/curation-plan.hpp
+	src/curation/analysis/named-reference-detector.cpp
+	src/curation/analysis/named-reference-detector.hpp
+	src/curation/compiler/opus-prompt-compiler.cpp
+	src/curation/compiler/opus-prompt-compiler.hpp
+	src/curation/compiler/prompt-quality-gate.cpp
+	src/curation/compiler/prompt-quality-gate.hpp
+	src/curation/service/curation-service.cpp
+	src/curation/service/curation-service.hpp
 	src/curation/curation-preset.cpp
 	src/curation/curation-preset.hpp
 	src/curation/curation-signals.cpp
@@ -131,6 +140,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 	src/transcription/realtime-transcription-service.cpp
 	src/transcription/realtime-transcription-service.hpp
 
+	src/gpt/openai-chat-payload.cpp
+	src/gpt/openai-chat-payload.hpp
 	src/gpt/gpt-prompt-client.cpp
 	src/gpt/gpt-prompt-client.hpp
 	src/gpt/gpt-prompt-store.cpp
@@ -141,6 +152,9 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 	src/utils/file.cpp
 	src/utils/file.hpp
 
+	src/opus/opus-api-types.hpp
+	src/opus/opus-curation-payload-builder.cpp
+	src/opus/opus-curation-payload-builder.hpp
 	src/opus/opus-clip-client.cpp
 	src/opus/opus-clip-client.hpp
 

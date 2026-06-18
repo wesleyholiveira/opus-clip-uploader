@@ -18,7 +18,7 @@ QString renderPresetPrompt(const QString &presetId, bool multipleClips)
 							  : QStringLiteral("Choose a clip that stops");
 
 		return QStringLiteral(
-			       "%1 built from the longest coherent response to a single viewer message. Prioritize emotionally consequential and clearly useful viewer messages over casual banter; %2 should include only enough of that one message for context, then follow the speaker's direct response while it stays focused on that same message. %3 at the first natural resolution; if no clean longer response exists, choose a shorter complete reaction instead of continuing into another viewer message, stream housekeeping, or a different topic.")
+			       "%1 built from one complete response to a single viewer message. Prioritize clearly useful viewer messages with emotional consequence while keeping only that one exchange; %2 should include only enough of that message for context, then follow the speaker's direct answer to that same message until its first complete resolution. %3 before the speaker reads another viewer message, answers another viewer message, switches to stream management, thanks a donor, or moves to a different topic.")
 			.arg(findPrefix, eachClip, chooseClips)
 			.simplified();
 	}

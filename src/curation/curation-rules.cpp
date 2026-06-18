@@ -12,6 +12,17 @@ static Curation::ClipStrategy strategyForScope(const QString &scope)
 	return Curation::ClipStrategy::BestMoment;
 }
 
+static bool shouldPreferSingleBestClipForSingleConfirmedRange(const CurationSettings &settings, const QString &presetId)
+{
+	// A single confirmed range is already an editorial constraint. For presets that search for one
+	// coherent answer/explanation, keep the Opus search focused on the strongest complete clip
+	// inside that range instead of broadening the prompt into multiple independent clips just
+	// because the selected range is long.
+	const QString id = CurationPreset::normalizeId(presetId);
+	return settings.clipDurations.size() == 1 &&
+	       (id == CurationPreset::viewerMessageResponsePresetId() || id == QStringLiteral("explanation"));
+}
+
 static QVector<Curation::BoundaryPolicy> boundaryPoliciesForPreset(const QString &presetId)
 {
 	const QString id = CurationPreset::normalizeId(presetId);
@@ -55,7 +66,9 @@ Intent resolveIntent(const CurationSettings &settings, const RecordingTranscript
 	intent.viewerSignals = result.likelyViewerExchange;
 	intent.archetype = archetypeFromPresetId(resolvedPresetId);
 	intent.contentKind = contentKindFromArchetype(intent.archetype, result.likelyViewerExchange);
-	intent.strategy = strategyForScope(intent.scope);
+	intent.strategy = shouldPreferSingleBestClipForSingleConfirmedRange(settings, resolvedPresetId)
+				  ? Curation::ClipStrategy::BestMoment
+				  : strategyForScope(intent.scope);
 	intent.boundaryPolicies = boundaryPoliciesForPreset(resolvedPresetId);
 	return intent;
 }

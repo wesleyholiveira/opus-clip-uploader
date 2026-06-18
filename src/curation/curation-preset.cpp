@@ -178,7 +178,7 @@ QString gptContextForId(const QString &presetId)
 	const QString id = normalizeId(presetId);
 	if (id == viewerMessageResponsePresetId())
 		return QStringLiteral(
-			"Use the viewer-message-response preset: find one viewer message plus the speaker's direct response to that same message. Prefer the longest coherent response while it stays on the same message, but choose a shorter complete reaction instead of continuing into another viewer message, housekeeping, or a different topic.");
+			"Use the viewer-message-response preset: find one viewer message plus the speaker's direct response to that same message. Prefer one complete answer to that single message, and stop before another viewer message, stream management, donor thanks, or a different topic.");
 	if (id == QStringLiteral("advice_answer"))
 		return QStringLiteral(
 			"Use the advice-answer preset: find one concrete question or problem and the speaker's useful answer. Prefer the full coherent advice, but stop before adjacent chat, examples, or a new problem if they start a separate arc.");

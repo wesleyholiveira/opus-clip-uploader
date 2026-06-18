@@ -30,7 +30,7 @@ QString GptPromptStore::keyForInput(const QString &model, const QString &inputTe
 	const QByteArray material =
 		normalizedModel.toUtf8() + "\n---clip-cropper-gpt-input---\n" + normalizedInput.toUtf8();
 	const QByteArray hash = QCryptographicHash::hash(material, QCryptographicHash::Sha256).toHex();
-	return QStringLiteral("gpt_prompt_input.v33.%1").arg(QString::fromLatin1(hash.left(32)));
+	return QStringLiteral("gpt_prompt_input.v40.%1").arg(QString::fromLatin1(hash.left(32)));
 }
 
 static QString pendingKeyForVideoPath(const QString &videoPath)
