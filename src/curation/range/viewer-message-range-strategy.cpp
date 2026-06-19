@@ -7,7 +7,7 @@
 #include <algorithm>
 
 namespace {
-static constexpr int MAX_VIEWER_MESSAGE_CANDIDATE_PROJECTS = 4;
+static constexpr int MAX_VIEWER_MESSAGE_CANDIDATE_PROJECTS = 3;
 
 bool shouldApplyCandidateRanges(const ViewerMessageFocusRangeResult &focus)
 {
@@ -56,6 +56,7 @@ CurationRangeStrategyResolution ViewerMessageResponseRangeStrategy::resolve(cons
 	resolution.manualRange = focus.manualRange;
 	resolution.confidence = focus.confidence;
 	resolution.startAdjusted = focus.startAdjusted;
+	resolution.details = focus.candidateSummary;
 
 	if (focus.applied) {
 		resolution.mode = CurationRangeStrategyResolution::Mode::FocusRange;

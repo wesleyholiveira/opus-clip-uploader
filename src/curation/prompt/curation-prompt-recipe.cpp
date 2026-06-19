@@ -38,9 +38,9 @@ QString renderViewerMessagePrompt(bool multipleClips, const QString &targetSuffi
 
 	const QString priority = discoveryMode && targetSuffix.trimmed().isEmpty()
 					 ? QStringLiteral(
-						   "Prefer a clearly useful, emotionally consequential viewer message while keeping one exchange, and start with the selected viewer message's first meaningful words; when only the speaker's reaction is audible, start with the first direct reaction.")
+						   "Prefer a clearly useful or emotionally consequential viewer message, starting at the message's clearest self-contained sentence that states the viewer's issue; when only the speaker's reaction is audible, start with the first direct reaction.")
 					 : QStringLiteral(
-						   "Start with the selected viewer message's first meaningful words; when only the speaker's reaction is audible, start with the first direct reaction.");
+						   "Start with the viewer message's clearest self-contained sentence that states the issue; when only the speaker's reaction is audible, start with the first direct reaction.");
 	const QString boundary = QStringLiteral(
 		"Follow only the speaker's direct answer to that same message until its first complete resolution, keeping the clip focused on that one exchange from start to finish.");
 

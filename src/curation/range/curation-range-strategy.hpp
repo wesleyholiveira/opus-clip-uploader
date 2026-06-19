@@ -21,6 +21,7 @@ public:
 	QString reason;
 	QString target;
 	QString anchorText;
+	QString details;
 	ClipDuration manualRange;
 	QVector<ClipDuration> ranges;
 	double confidence = 0.0;
@@ -34,20 +35,19 @@ public:
 	virtual ~CurationRangeStrategy() = default;
 	virtual QString name() const = 0;
 	virtual CurationRangeStrategyResolution resolve(const RecordingTranscript &transcript,
-							      const CurationSettings &settings,
-							      const QString &opusPrompt) const = 0;
+							const CurationSettings &settings,
+							const QString &opusPrompt) const = 0;
 };
 
 class CurationRangeStrategyResolver {
 public:
 	CurationRangeStrategyResolver();
 
-	CurationRangeStrategyResolution resolve(const RecordingTranscript &transcript,
-						      const CurationSettings &settings,
-						      const QString &opusPrompt) const;
+	CurationRangeStrategyResolution resolve(const RecordingTranscript &transcript, const CurationSettings &settings,
+						const QString &opusPrompt) const;
 
 	CurationSettings apply(const CurationSettings &settings,
-				     const CurationRangeStrategyResolution &resolution) const;
+			       const CurationRangeStrategyResolution &resolution) const;
 
 private:
 	QVector<std::shared_ptr<CurationRangeStrategy>> strategies;

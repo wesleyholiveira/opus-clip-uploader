@@ -261,10 +261,11 @@ static GeneratedCurationPromptResult result_with_strategy_ranges(const QString &
 		}
 
 		blog(LOG_INFO,
-		     "[clip-cropper] Curation range strategy applied. video=%s strategy=%s mode=%s reason=%s projects=%d ranges=%s",
+		     "[clip-cropper] Curation range strategy applied. video=%s strategy=%s mode=%s reason=%s projects=%d ranges=%s details=%s",
 		     videoPath.toUtf8().constData(), resolution.strategyName.toUtf8().constData(),
 		     range_resolution_mode_name(resolution.mode), resolution.reason.toUtf8().constData(),
-		     static_cast<int>(resolution.ranges.size()), ranges_log(resolution.ranges).toUtf8().constData());
+		     static_cast<int>(resolution.ranges.size()), ranges_log(resolution.ranges).toUtf8().constData(),
+		     resolution.details.toUtf8().constData());
 		return result;
 	}
 

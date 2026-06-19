@@ -11,6 +11,7 @@ struct ViewerMessageFocusRangeResult {
 	QString reason;
 	QString target;
 	QString anchorText;
+	QString candidateSummary;
 	ClipDuration manualRange;
 	ClipDuration focusRange;
 	double confidence = 0.0;
@@ -25,5 +26,5 @@ public:
 							 const QString &opusPrompt) const;
 
 	CurationSettings applyFocusRange(const CurationSettings &settings,
-					       const ViewerMessageFocusRangeResult &result) const;
+						   const ViewerMessageFocusRangeResult &result) const;
 };

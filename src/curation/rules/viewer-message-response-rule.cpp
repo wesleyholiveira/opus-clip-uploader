@@ -56,7 +56,7 @@ CurationPromptRecipe ViewerMessageResponseRule::promptRecipe() const
 		QStringLiteral(
 			"Find continuous, unbroken clips, each built from one complete response to a single viewer message."),
 		QStringLiteral(
-			"Prefer a clearly useful, emotionally consequential viewer message while keeping one exchange, and start with the selected viewer message's first meaningful words; when only the speaker's reaction is audible, start with the first direct reaction."),
+			"Prefer a clearly useful or emotionally consequential viewer message, starting at the message's clearest self-contained sentence that states the viewer's issue; when only the speaker's reaction is audible, start with the first direct reaction."),
 		QStringLiteral(
 			"Follow only the speaker's direct answer to that same message until its first complete resolution, keeping the clip focused on that one exchange from start to finish.")};
 }
