@@ -8,8 +8,16 @@ extern "C" {
 }
 #endif
 
+#include <QCheckBox>
 #include <QFrame>
+#include <QHeaderView>
+#include <QLabel>
+#include <QSize>
+#include <QSizePolicy>
 #include <QString>
+#include <QVBoxLayout>
+
+#include <algorithm>
 
 static QString obsText(const char *key)
 {
@@ -18,12 +26,21 @@ static QString obsText(const char *key)
 
 AdvancedSettingsTree::AdvancedSettingsTree(QWidget *parent) : QTreeWidget(parent)
 {
-	setColumnCount(2);
+	setColumnCount(1);
 	setHeaderHidden(true);
 	setRootIsDecorated(true);
 	setItemsExpandable(true);
 	setAnimated(true);
-	setMinimumHeight(130);
+	setMinimumHeight(190);
+	setWordWrap(false);
+	setUniformRowHeights(false);
+	setTextElideMode(Qt::ElideNone);
+	setIndentation(16);
+	setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+	setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+
+	header()->setStretchLastSection(true);
+	header()->setSectionResizeMode(0, QHeaderView::Stretch);
 
 	setFrameShape(QFrame::NoFrame);
 	setAutoFillBackground(false);
@@ -60,9 +77,42 @@ AdvancedSettingsTree::AdvancedSettingsTree(QWidget *parent) : QTreeWidget(parent
 QTreeWidgetItem *AdvancedSettingsTree::addField(const QString &label, QWidget *widget)
 {
 	auto *item = new QTreeWidgetItem(advancedItem);
-	item->setText(0, label);
-	setItemWidget(item, 1, widget);
-	resizeColumnToContents(0);
+	item->setToolTip(0, label);
+	item->setFirstColumnSpanned(true);
+
+	auto *fieldWidget = new QWidget(this);
+	auto *fieldLayout = new QVBoxLayout(fieldWidget);
+	fieldLayout->setContentsMargins(4, 4, 4, 8);
+	fieldLayout->setSpacing(4);
+
+	auto *checkbox = qobject_cast<QCheckBox *>(widget);
+	if (checkbox) {
+		item->setText(0, QString());
+		checkbox->setText(label);
+		checkbox->setToolTip(label);
+		checkbox->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+		fieldLayout->addWidget(checkbox);
+	} else {
+		item->setText(0, QString());
+		auto *labelWidget = new QLabel(label, fieldWidget);
+		labelWidget->setWordWrap(true);
+		labelWidget->setTextInteractionFlags(Qt::TextSelectableByMouse);
+		labelWidget->setToolTip(label);
+		labelWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
+		fieldLayout->addWidget(labelWidget);
+		if (widget) {
+			widget->setMinimumWidth(320);
+			widget->setSizePolicy(QSizePolicy::Expanding, widget->sizePolicy().verticalPolicy());
+			fieldLayout->addWidget(widget);
+		}
+	}
+
+	fieldWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+	setItemWidget(item, 0, fieldWidget);
+
+	const int rowHeight = std::max(checkbox ? 36 : 58, fieldWidget->sizeHint().height());
+	item->setSizeHint(0, QSize(0, rowHeight));
+
 	return item;
 }
 

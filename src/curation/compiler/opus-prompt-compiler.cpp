@@ -294,6 +294,33 @@ QString viewerMessageTargetSuffix(QString target, QString contextPhrase)
 	return {};
 }
 
+QString viewerTargetFromRenderedPrompt(const QString &prompt)
+{
+	QString text = lineValueForPrefix(prompt, OPUS_PROMPT_PREFIX);
+	if (text.trimmed().isEmpty())
+		text = prompt;
+	text = text.simplified();
+	QRegularExpression specificallyAboutPattern(QStringLiteral("\\bspecifically\\s+about\\s+([^\\.]+)"),
+						    QRegularExpression::CaseInsensitiveOption);
+	QRegularExpressionMatch match = specificallyAboutPattern.match(text);
+	if (match.hasMatch()) {
+		const QString target = cleanViewerTarget(match.captured(1));
+		if (!target.isEmpty())
+			return target;
+	}
+
+	QRegularExpression messageAboutPattern(QStringLiteral("\\bsingle\\s+viewer\\s+message\\s+about\\s+([^\\.]+)"),
+					       QRegularExpression::CaseInsensitiveOption);
+	match = messageAboutPattern.match(text);
+	if (match.hasMatch()) {
+		const QString target = cleanViewerTarget(match.captured(1));
+		if (!target.isEmpty())
+			return target;
+	}
+
+	return {};
+}
+
 bool isSafeViewerStopPhrase(const QString &phrase)
 {
 	const QString lower = phrase.toLower();
@@ -337,10 +364,8 @@ QString renderViewerMessagePlanPrompt(const QJsonObject &plan, const RecordingTr
 				      const CurationSettings &curationSettings, const QString &planHint)
 {
 	const bool multipleClips = shouldRenderMultipleClips(selectedRangeTranscript, curationSettings, planHint);
-	const QString findPrefix = multipleClips ? QStringLiteral("Find self-contained clips")
-						 : QStringLiteral("Find the strongest self-contained clip");
-	const QString choosePrefix = multipleClips ? QStringLiteral("Choose clips that stop")
-						   : QStringLiteral("Choose a clip that stops");
+	const QString findPrefix = multipleClips ? QStringLiteral("Find continuous, unbroken clips")
+						 : QStringLiteral("Find one continuous, unbroken clip");
 
 	QString target = jsonStringValue(plan, QStringLiteral("main_target"));
 	if (target.isEmpty())
@@ -351,25 +376,26 @@ QString renderViewerMessagePlanPrompt(const QJsonObject &plan, const RecordingTr
 	const bool hasTarget = !targetSuffix.isEmpty();
 
 	const QString sentence1 =
-		hasTarget ? QStringLiteral(
-				    "%1 built from one complete response to a single viewer message specifically %2.")
-				    .arg(findPrefix, targetSuffix)
-			  : QStringLiteral("%1 built from one complete response to a single viewer message.")
-				    .arg(findPrefix);
+		hasTarget
+			? (multipleClips
+				   ? QStringLiteral(
+					     "%1, each built from one complete response to a single viewer message specifically %2.")
+				   : QStringLiteral(
+					     "%1 built from one complete response to a single viewer message specifically %2."))
+				  .arg(findPrefix, targetSuffix)
+			: (multipleClips
+				   ? QStringLiteral(
+					     "%1, each built from one complete response to a single viewer message.")
+				   : QStringLiteral("%1 built from one complete response to a single viewer message."))
+				  .arg(findPrefix);
 	const QString sentence2 =
 		hasTarget
 			? QStringLiteral(
-				  "Include only enough of that viewer message for context, then follow the speaker's direct answer to that same message until its first complete resolution.")
+				  "Start with the selected viewer message's first meaningful words; when only the speaker's reaction is audible, start with the first direct reaction.")
 			: QStringLiteral(
-				  "Prioritize clearly useful viewer messages with emotional consequence while keeping only that one exchange; include only enough of that message for context, then follow the speaker's direct answer to that same message until its first complete resolution.");
-	const QString sentence3 =
-		hasTarget
-			? QStringLiteral(
-				  "%1 at the first complete resolution while staying on that viewer message, before the speaker reads another viewer message, answers another viewer message, switches to stream management, thanks a donor, or moves to a different topic.")
-				  .arg(choosePrefix)
-			: QStringLiteral(
-				  "%1 before the speaker reads another viewer message, answers another viewer message, switches to stream management, thanks a donor, or moves to a different topic.")
-				  .arg(choosePrefix);
+				  "Prefer a clearly useful, emotionally consequential viewer message while keeping one exchange, and start with the selected viewer message's first meaningful words; when only the speaker's reaction is audible, start with the first direct reaction.");
+	const QString sentence3 = QStringLiteral(
+		"Follow only the speaker's direct answer to that same message until its first complete resolution, keeping the clip focused on that one exchange from start to finish.");
 
 	const QString prompt = QStringLiteral("%1 %2 %3").arg(sentence1, sentence2, sentence3).simplified();
 	if (!hasEnglishOnlyPromptText(prompt))
@@ -670,7 +696,9 @@ QString deterministicOpusPromptFallback(const QString &generatedPrompt,
 {
 	const QString scope = Curation::scopeForDuration(
 		Curation::selectedDurationSeconds(selectedRangeTranscript, curationSettings));
-	const QString target = deterministicPromptTarget(generatedPrompt, selectedRangeTranscript, curationSettings);
+	QString target = viewerTargetFromRenderedPrompt(generatedPrompt);
+	if (target.isEmpty())
+		target = deterministicPromptTarget(generatedPrompt, selectedRangeTranscript, curationSettings);
 	const QStringList namedReferences = Curation::importantNamedReferences(selectedRangeTranscript);
 	const bool needsNamedReference =
 		Curation::transcriptHasPronounDependentNamedReference(selectedRangeTranscript) &&
@@ -684,6 +712,26 @@ QString deterministicOpusPromptFallback(const QString &generatedPrompt,
 
 	QString sentence1;
 	if (viewerExchange) {
+		const QString targetSuffix = viewerMessageTargetSuffix(target, QString());
+		if (!targetSuffix.isEmpty()) {
+			const bool multipleClips = Curation::shouldUseMultipleClips(intent);
+			const QString findPrefix = multipleClips ? QStringLiteral("Find continuous, unbroken clips")
+								 : QStringLiteral("Find one continuous, unbroken clip");
+			const QString sentence1 =
+				multipleClips
+					? QStringLiteral(
+						  "%1, each built from one complete response to a single viewer message specifically %2.")
+						  .arg(findPrefix, targetSuffix)
+					: QStringLiteral(
+						  "%1 built from one complete response to a single viewer message specifically %2.")
+						  .arg(findPrefix, targetSuffix);
+			const QString sentence2 = QStringLiteral(
+				"Start with the selected viewer message's first meaningful words; when only the speaker's reaction is audible, start with the first direct reaction.");
+			const QString sentence3 = QStringLiteral(
+				"Follow only the speaker's direct answer to that same message until its first complete resolution, keeping the clip focused on that one exchange from start to finish.");
+			return QStringLiteral("%1 %2 %3").arg(sentence1, sentence2, sentence3).simplified();
+		}
+
 		return OpusPromptRenderer::renderIntentPrompt(intent);
 	} else if (Curation::shouldUseMultipleClips(intent) && scope == QStringLiteral("large_range_multiple_clips"))
 		sentence1 = QStringLiteral("Find multiple strong self-contained clips where the speaker explains %1.")
@@ -719,10 +767,9 @@ QString deterministicOpusPromptFallback(const QString &generatedPrompt,
 
 	const QString sentence3 =
 		viewerExchange
-			? QStringLiteral(
-				  "Choose clips that stop at the first resolved response; do not continue just to make the clip longer, and avoid clips that continue into the next viewer message, stream housekeeping, or another topic.")
+			? QStringLiteral("Choose a clip that stays focused on that one exchange from start to finish.")
 			: QStringLiteral(
-				  "Prefer clips that end after the local point is resolved, with clean natural boundaries and without unfinished setup, list items, long pauses, or mid-thought transitions.");
+				  "Prefer clips that end after the local point is resolved, with clean natural boundaries and a complete local idea.");
 
 	return QStringLiteral("%1 %2 %3").arg(sentence1, sentence2, sentence3).trimmed();
 }

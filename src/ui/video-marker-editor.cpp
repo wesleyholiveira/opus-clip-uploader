@@ -45,6 +45,7 @@ extern "C" {
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <limits>
 
 static QString obsText(const char *key)
 {
@@ -71,7 +72,7 @@ public:
 
 	void setPosition(qint64 value)
 	{
-		if (dragging)
+		if (draggingPosition || draggingMarker)
 			return;
 
 		positionMs = clampPosition(value);
@@ -83,6 +84,14 @@ public:
 	void setMarkers(const QList<qint64> &newMarkers)
 	{
 		markers = newMarkers;
+		if (selectedMarkerIndex >= markers.size())
+			selectedMarkerIndex = -1;
+		update();
+	}
+
+	void setSelectedMarkerIndex(int index)
+	{
+		selectedMarkerIndex = index >= 0 && index < markers.size() ? index : -1;
 		update();
 	}
 
@@ -94,6 +103,9 @@ public:
 
 	std::function<void(qint64)> previewSeekRequested;
 	std::function<void(qint64)> commitSeekRequested;
+	std::function<void(int)> markerSelected;
+	std::function<void(int, qint64)> markerMovePreviewRequested;
+	std::function<void(int, qint64)> markerMoveCommitted;
 
 protected:
 	void paintEvent(QPaintEvent *) override
@@ -129,12 +141,12 @@ protected:
 			painter.setPen(Qt::NoPen);
 		}
 
-		painter.setPen(QPen(QColor(20, 20, 20), 1));
-		painter.setBrush(QColor(255, 193, 7));
-		for (qint64 marker : markers) {
+		for (int i = 0; i < markers.size(); ++i) {
+			const qint64 marker = markers[i];
 			if (durationMs <= 0 || marker < 0 || marker > durationMs)
 				continue;
 
+			const bool selected = i == selectedMarkerIndex;
 			const qreal x = xForPosition(marker);
 			const qreal top = track.top() - 16.0;
 
@@ -147,11 +159,15 @@ protected:
 			markerPath.lineTo(x - 2.0, top + 9.0);
 			markerPath.lineTo(x - 6.0, top + 9.0);
 			markerPath.closeSubpath();
+
+			painter.setPen(QPen(selected ? QColor(255, 255, 255) : QColor(20, 20, 20), selected ? 2 : 1));
+			painter.setBrush(selected ? QColor(255, 225, 90) : QColor(255, 193, 7));
 			painter.drawPath(markerPath);
 		}
 
 		painter.setPen(Qt::NoPen);
 		painter.setBrush(QColor(245, 245, 245));
+		const bool dragging = draggingPosition || draggingMarker;
 		painter.drawEllipse(QPointF(progressX, track.center().y()), dragging ? 8.0 : 6.0, dragging ? 8.0 : 6.0);
 		painter.setPen(QPen(QColor(35, 35, 35), 1));
 		painter.setBrush(Qt::NoBrush);
@@ -160,25 +176,38 @@ protected:
 
 	void mousePressEvent(QMouseEvent *event) override
 	{
-		const qint64 markerPosition = markerAt(event->position().x(), event->position().y());
-		if (markerPosition >= 0) {
-			dragging = false;
-			positionMs = markerPosition;
+		const int markerIndex = markerIndexAt(event->position().x(), event->position().y());
+		if (markerIndex >= 0) {
+			draggingPosition = false;
+			draggingMarker = true;
+			selectedMarkerIndex = markerIndex;
+			positionMs = markers[markerIndex];
 			update();
+			if (markerSelected)
+				markerSelected(markerIndex);
 			if (commitSeekRequested)
 				commitSeekRequested(positionMs);
 			event->accept();
 			return;
 		}
 
-		dragging = true;
+		selectedMarkerIndex = -1;
+		if (markerSelected)
+			markerSelected(-1);
+		draggingPosition = true;
 		setPositionFromMouse(event->position().x(), true);
 		event->accept();
 	}
 
 	void mouseMoveEvent(QMouseEvent *event) override
 	{
-		if (!dragging)
+		if (draggingMarker) {
+			setMarkerFromMouse(event->position().x(), false);
+			event->accept();
+			return;
+		}
+
+		if (!draggingPosition)
 			return;
 
 		setPositionFromMouse(event->position().x(), false);
@@ -187,13 +216,21 @@ protected:
 
 	void mouseReleaseEvent(QMouseEvent *event) override
 	{
-		if (!dragging) {
+		if (draggingMarker) {
+			setMarkerFromMouse(event->position().x(), true);
+			draggingMarker = false;
+			update();
+			event->accept();
+			return;
+		}
+
+		if (!draggingPosition) {
 			QWidget::mouseReleaseEvent(event);
 			return;
 		}
 
 		setPositionFromMouse(event->position().x(), true);
-		dragging = false;
+		draggingPosition = false;
 		if (commitSeekRequested)
 			commitSeekRequested(positionMs);
 		update();
@@ -205,7 +242,9 @@ private:
 	qint64 positionMs = 0;
 	QList<qint64> markers;
 	QVector<ClipDuration> clipRanges;
-	bool dragging = false;
+	bool draggingPosition = false;
+	bool draggingMarker = false;
+	int selectedMarkerIndex = -1;
 	QElapsedTimer seekThrottle;
 
 	QRectF trackRect() const { return QRectF(12.0, height() / 2.0 - 3.5, std::max(1, width() - 24), 7.0); }
@@ -233,7 +272,7 @@ private:
 		return clampPosition(static_cast<qint64>(ratio * qreal(durationMs)));
 	}
 
-	qint64 markerAt(qreal x, qreal y) const
+	int markerIndexAt(qreal x, qreal y) const
 	{
 		if (durationMs <= 0 || markers.isEmpty())
 			return -1;
@@ -244,20 +283,21 @@ private:
 		if (!hitBand.contains(QPointF(x, y)))
 			return -1;
 
-		qint64 bestMarker = -1;
+		int bestIndex = -1;
 		qreal bestDistance = 10.0;
-		for (qint64 marker : markers) {
+		for (int i = 0; i < markers.size(); ++i) {
+			const qint64 marker = markers[i];
 			if (marker < 0 || marker > durationMs)
 				continue;
 
 			const qreal distance = std::abs(xForPosition(marker) - x);
 			if (distance <= bestDistance) {
 				bestDistance = distance;
-				bestMarker = marker;
+				bestIndex = i;
 			}
 		}
 
-		return bestMarker;
+		return bestIndex;
 	}
 
 	void setPositionFromMouse(qreal x, bool forceSeek)
@@ -274,6 +314,33 @@ private:
 
 		seekThrottle.restart();
 		previewSeekRequested(positionMs);
+	}
+
+	void setMarkerFromMouse(qreal x, bool commit)
+	{
+		if (selectedMarkerIndex < 0 || selectedMarkerIndex >= markers.size())
+			return;
+
+		const qint64 markerPosition = positionForX(x);
+		markers[selectedMarkerIndex] = markerPosition;
+		positionMs = markerPosition;
+		update();
+
+		if (commit) {
+			if (markerMoveCommitted)
+				markerMoveCommitted(selectedMarkerIndex, markerPosition);
+			return;
+		}
+
+		if (!markerMovePreviewRequested)
+			return;
+
+		const bool shouldSeek = !seekThrottle.isValid() || seekThrottle.elapsed() >= 80;
+		if (!shouldSeek)
+			return;
+
+		seekThrottle.restart();
+		markerMovePreviewRequested(selectedMarkerIndex, markerPosition);
 	}
 };
 
@@ -391,6 +458,17 @@ VideoMarkerEditor::VideoMarkerEditor(const QString &videoPath, QWidget *parent) 
 	timeline->commitSeekRequested = [this](qint64 positionMs) {
 		seekToMilliseconds(positionMs);
 	};
+	timeline->markerSelected = [this](int index) {
+		selectMarker(index);
+	};
+	timeline->markerMovePreviewRequested = [this](int index, qint64 positionMs) {
+		updateMarkerAtIndex(index, positionMs / 1000.0, false);
+		seekToMilliseconds(positionMs);
+	};
+	timeline->markerMoveCommitted = [this](int index, qint64 positionMs) {
+		updateMarkerAtIndex(index, positionMs / 1000.0, true);
+		seekToMilliseconds(positionMs);
+	};
 
 	currentTimeLabel = new QLabel("00:00:00", editorSurface);
 	durationTimeLabel = new QLabel("00:00:00", editorSurface);
@@ -402,14 +480,10 @@ VideoMarkerEditor::VideoMarkerEditor(const QString &videoPath, QWidget *parent) 
 		"QLabel { background: rgba(127, 127, 127, 35); border: 1px solid rgba(127, 127, 127, 90); "
 		"border-radius: 6px; padding: 6px 8px; color: palette(text); font-size: 11px; }");
 
-	auto *btnAddMarker = new QPushButton(obsText("Button.AddMarker"), editorSurface);
-	auto *btnRemoveMarker = new QPushButton(obsText("Button.RemoveMarker"), editorSurface);
 	reviewActionButton = new QPushButton(obsText("Button.ReviewAndUpload"), editorSurface);
 	reviewActionButton->setVisible(false);
 	reviewActionButton->setToolTip(obsText("Tooltip.ReviewAndUpload"));
 
-	connect(btnAddMarker, &QPushButton::clicked, this, &VideoMarkerEditor::addMarkerAtCurrentPosition);
-	connect(btnRemoveMarker, &QPushButton::clicked, this, &VideoMarkerEditor::removeSelectedRange);
 	connect(reviewActionButton, &QPushButton::clicked, this, [this]() {
 		saveMarkers();
 		emit reviewRequested();
@@ -433,8 +507,6 @@ VideoMarkerEditor::VideoMarkerEditor(const QString &videoPath, QWidget *parent) 
 	auto *controlsLayout = new QHBoxLayout();
 	controlsLayout->setContentsMargins(0, 0, 0, 0);
 	controlsLayout->setSpacing(8);
-	controlsLayout->addWidget(btnAddMarker);
-	controlsLayout->addWidget(btnRemoveMarker);
 	controlsLayout->addWidget(reviewActionButton);
 	controlsLayout->addStretch();
 
@@ -543,8 +615,8 @@ void VideoMarkerEditor::setupShortcuts()
 	addShortcut(QKeySequence(Qt::Key_Period), &VideoMarkerEditor::seekForwardFrame);
 	addShortcut(QKeySequence(Qt::Key_Comma), &VideoMarkerEditor::seekBackwardFrame);
 	addShortcut(QKeySequence(Qt::Key_M), &VideoMarkerEditor::addMarkerAtCurrentPosition);
-	addShortcut(QKeySequence(Qt::Key_Delete), &VideoMarkerEditor::removeSelectedRange);
-	addShortcut(QKeySequence(Qt::Key_Backspace), &VideoMarkerEditor::removeSelectedRange);
+	addShortcut(QKeySequence(Qt::Key_Delete), &VideoMarkerEditor::deleteSelectedMarkerOrRange);
+	addShortcut(QKeySequence(Qt::Key_Backspace), &VideoMarkerEditor::deleteSelectedMarkerOrRange);
 	addShortcut(QKeySequence(Qt::Key_F), &VideoMarkerEditor::toggleFullScreen);
 	addShortcut(QKeySequence(Qt::Key_Escape), &VideoMarkerEditor::exitFullScreen);
 }
@@ -758,10 +830,19 @@ void VideoMarkerEditor::addMarkerAtCurrentPosition()
 	const double startSec = positionMilliseconds() / 1000.0;
 	clipMarkersSec.append(startSec);
 	rebuildClipRanges();
+
+	QVector<double> markers = markerPositions();
+	for (int i = 0; i < markers.size(); ++i) {
+		if (std::abs(markers[i] - startSec) < 0.01) {
+			selectMarker(i);
+			break;
+		}
+	}
 }
 
 void VideoMarkerEditor::selectRange(int index)
 {
+	clearSelectedMarker();
 	selectedRangeIndex = index;
 	updateSelectedClipPreview(positionMilliseconds() / 1000.0);
 }
@@ -777,7 +858,38 @@ void VideoMarkerEditor::goToSelectedRange()
 
 void VideoMarkerEditor::removeSelectedRange()
 {
+	clearSelectedMarker();
 	removeClipRangeAtIndex(selectedRangeIndex);
+}
+
+void VideoMarkerEditor::removeSelectedMarker()
+{
+	if (selectedMarkerIndex < 0)
+		return;
+
+	QVector<double> markers = clipMarkersSec;
+	std::sort(markers.begin(), markers.end());
+	if (selectedMarkerIndex >= markers.size()) {
+		clearSelectedMarker();
+		return;
+	}
+
+	markers.removeAt(selectedMarkerIndex);
+	clipMarkersSec = markers;
+	selectedMarkerIndex = -1;
+	if (timeline)
+		timeline->setSelectedMarkerIndex(-1);
+	rebuildClipRanges();
+}
+
+void VideoMarkerEditor::deleteSelectedMarkerOrRange()
+{
+	if (selectedMarkerIndex >= 0) {
+		removeSelectedMarker();
+		return;
+	}
+
+	removeSelectedRange();
 }
 
 void VideoMarkerEditor::updateTimelinePosition(qint64 positionMs)
@@ -927,6 +1039,7 @@ void VideoMarkerEditor::refreshTimelineMarkers()
 		markers.append(static_cast<qint64>(markerSec * 1000.0));
 
 	timeline->setMarkers(markers);
+	timeline->setSelectedMarkerIndex(selectedMarkerIndex);
 	timeline->setClipRanges(clipRanges());
 }
 
@@ -936,11 +1049,75 @@ void VideoMarkerEditor::rebuildClipRanges()
 	const QVector<ClipDuration> ranges = clipRanges();
 	if (selectedRangeIndex >= ranges.size())
 		selectedRangeIndex = ranges.isEmpty() ? -1 : ranges.size() - 1;
+	if (selectedMarkerIndex >= clipMarkersSec.size())
+		selectedMarkerIndex = -1;
 
 	refreshTimelineMarkers();
 	updateSelectedClipPreview(positionMilliseconds() / 1000.0);
 	saveMarkers();
 	emit rangesChanged(ranges);
+}
+
+void VideoMarkerEditor::selectMarker(int index)
+{
+	QVector<double> markers = markerPositions();
+	if (index < 0 || index >= markers.size()) {
+		clearSelectedMarker();
+		return;
+	}
+
+	selectedMarkerIndex = index;
+	selectedRangeIndex = index / 2;
+	if (timeline)
+		timeline->setSelectedMarkerIndex(selectedMarkerIndex);
+	updateSelectedClipPreview(markers[index]);
+}
+
+void VideoMarkerEditor::clearSelectedMarker()
+{
+	if (selectedMarkerIndex < 0)
+		return;
+
+	selectedMarkerIndex = -1;
+	if (timeline)
+		timeline->setSelectedMarkerIndex(-1);
+}
+
+void VideoMarkerEditor::updateMarkerAtIndex(int index, double markerSec, bool commit)
+{
+	QVector<double> markers = clipMarkersSec;
+	std::sort(markers.begin(), markers.end());
+	if (index < 0 || index >= markers.size())
+		return;
+
+	const double durationSec = durationMs > 0 ? durationMs / 1000.0 : 0.0;
+	markerSec = std::max(0.0, markerSec);
+	if (durationSec > 0.0)
+		markerSec = std::min(markerSec, durationSec);
+
+	markers[index] = markerSec;
+	std::sort(markers.begin(), markers.end());
+	clipMarkersSec = markers;
+
+	int selectedIndex = 0;
+	double bestDistance = std::numeric_limits<double>::max();
+	for (int i = 0; i < clipMarkersSec.size(); ++i) {
+		const double distance = std::abs(clipMarkersSec[i] - markerSec);
+		if (distance < bestDistance) {
+			bestDistance = distance;
+			selectedIndex = i;
+		}
+	}
+	selectedMarkerIndex = clipMarkersSec.isEmpty() ? -1 : selectedIndex;
+	selectedRangeIndex = selectedMarkerIndex >= 0 ? selectedMarkerIndex / 2 : -1;
+
+	if (commit) {
+		rebuildClipRanges();
+		return;
+	}
+
+	refreshTimelineMarkers();
+	updateSelectedClipPreview(markerSec);
 }
 
 void VideoMarkerEditor::removeClipRangeAtIndex(int index)

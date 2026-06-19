@@ -13,13 +13,18 @@ QString renderPresetPrompt(const QString &presetId, bool multipleClips)
 						 : QStringLiteral("Find the strongest self-contained clip");
 
 	if (id == CurationPreset::viewerMessageResponsePresetId()) {
-		const QString eachClip = multipleClips ? QStringLiteral("each clip") : QStringLiteral("the clip");
-		const QString chooseClips = multipleClips ? QStringLiteral("Choose clips that stop")
-							  : QStringLiteral("Choose a clip that stops");
+		const QString findExchange = multipleClips ? QStringLiteral("Find continuous, unbroken clips")
+							   : QStringLiteral("Find one continuous, unbroken clip");
+
+		const QString opening =
+			multipleClips
+				? QStringLiteral(
+					  "%1, each built from one complete response to a single viewer message.")
+				: QStringLiteral("%1 built from one complete response to a single viewer message.");
 
 		return QStringLiteral(
-			       "%1 built from one complete response to a single viewer message. Prioritize clearly useful viewer messages with emotional consequence while keeping only that one exchange; %2 should include only enough of that message for context, then follow the speaker's direct answer to that same message until its first complete resolution. %3 before the speaker reads another viewer message, answers another viewer message, switches to stream management, thanks a donor, or moves to a different topic.")
-			.arg(findPrefix, eachClip, chooseClips)
+			       "%1 Prefer a clearly useful, emotionally consequential viewer message while keeping one exchange, and start with the selected viewer message's first meaningful words; when only the speaker's reaction is audible, start with the first direct reaction. Follow only the speaker's direct answer to that same message until its first complete resolution, keeping the clip focused on that one exchange from start to finish.")
+			.arg(opening.arg(findExchange))
 			.simplified();
 	}
 

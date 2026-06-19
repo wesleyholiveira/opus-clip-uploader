@@ -34,6 +34,8 @@ public slots:
 	void seekToMilliseconds(qint64 positionMs);
 	void addMarkerAtCurrentPosition();
 	void removeSelectedRange();
+	void removeSelectedMarker();
+	void deleteSelectedMarkerOrRange();
 	void goToSelectedRange();
 	void selectRange(int index);
 	void togglePlayback();
@@ -65,6 +67,7 @@ private:
 	bool updatingTimelineFromPlayer = false;
 	bool pauseAfterSeekWarmup = false;
 	int selectedRangeIndex = -1;
+	int selectedMarkerIndex = -1;
 
 	QMediaPlayer *player = nullptr;
 	QAudioOutput *audioOutput = nullptr;
@@ -100,6 +103,9 @@ private:
 	void positionOverlayControls();
 	void rebuildClipRanges();
 	void removeClipRangeAtIndex(int index);
+	void updateMarkerAtIndex(int index, double markerSec, bool commit);
+	void selectMarker(int index);
+	void clearSelectedMarker();
 	void loadSavedMarkers();
 	void saveMarkers() const;
 	QString markerConfigKey() const;

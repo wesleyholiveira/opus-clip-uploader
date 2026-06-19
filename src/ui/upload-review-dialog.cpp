@@ -146,6 +146,18 @@ static void setComboCurrentDataIfExists(QComboBox *combo, const QString &value)
 	setComboCurrentTextIfExists(combo, value);
 }
 
+static void setOpusModelOrDefault(QComboBox *combo, const QString &value = {})
+{
+	if (!combo)
+		return;
+
+	const QString requested = value.trimmed().isEmpty() ? QStringLiteral("ClipAnything") : value.trimmed();
+	setComboCurrentTextIfExists(combo, requested);
+
+	if (combo->currentText().trimmed().isEmpty() || combo->currentText() == QStringLiteral("ClipBasic"))
+		setComboCurrentTextIfExists(combo, QStringLiteral("ClipAnything"));
+}
+
 static double totalRangeDurationSeconds(const QVector<ClipDuration> &ranges)
 {
 	double totalSeconds = 0.0;
@@ -216,6 +228,7 @@ UploadReviewDialog::UploadReviewDialog(const QString &videoPath, const CurationS
 
 	modelInput = new QComboBox(this);
 	modelInput->addItems(QStringList{"ClipBasic", "ClipAnything"});
+	setOpusModelOrDefault(modelInput);
 
 	clipLengthInput = new QComboBox(this);
 	clipLengthInput->addItem(obsText("Option.ClipLengthAuto"), QStringLiteral("Auto"));
@@ -356,7 +369,7 @@ void UploadReviewDialog::applyCurationSettings(const CurationSettings &settings)
 
 	setComboCurrentTextIfExists(genreInput, settings.genre);
 	setComboCurrentDataIfExists(curationPresetInput, CurationPreset::normalizeId(settings.curationPreset));
-	setComboCurrentTextIfExists(modelInput, settings.model);
+	setOpusModelOrDefault(modelInput, settings.model);
 	setComboCurrentDataIfExists(clipLengthInput, settings.clipLengthPreset);
 	setComboCurrentDataIfExists(sourceLanguageInput, normalizeLanguageSetting(settings.sourceLanguage));
 	setComboCurrentDataIfExists(transcriptionLanguageInput,
@@ -430,7 +443,7 @@ void UploadReviewDialog::loadSavedCurationOptions()
 		curationPresetInput,
 		CurationPreset::normalizeId(
 			root.value(QStringLiteral("curationPreset")).toString(QStringLiteral("auto"))));
-	setComboCurrentTextIfExists(modelInput, root.value(QStringLiteral("model")).toString());
+	setOpusModelOrDefault(modelInput, root.value(QStringLiteral("model")).toString());
 	setComboCurrentDataIfExists(clipLengthInput,
 				    root.value(QStringLiteral("clipLengthPreset")).toString(QStringLiteral("Medium")));
 	setComboCurrentDataIfExists(
