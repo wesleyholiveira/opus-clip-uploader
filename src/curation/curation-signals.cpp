@@ -128,13 +128,13 @@ double emotionalScoreForText(const QString &text, QStringList *matchedCues)
 						 {QStringLiteral("aposta"), QStringLiteral("apostas"), QStringLiteral("vício"),
 						  QStringLiteral("vicio"), QStringLiteral("gambling"), QStringLiteral("betting"),
 						  QStringLiteral("addiction"), QStringLiteral("depress"), QStringLiteral("ansiedade"),
-						  QStringLiteral("trauma"), QStringLiteral("sinto muito"), QStringLiteral("desculpa"),
-						  QStringLiteral("sorry for your loss")},
+						  QStringLiteral("trauma"), QStringLiteral("sorry for your loss")},
 						 cues);
 	const int vulnerableHits = phraseHitCount(lower,
 						{QStringLiteral("nunca falei"), QStringLiteral("nunca pedi"),
 						 QStringLiteral("não sei como"), QStringLiteral("nao sei como"),
 						 QStringLiteral("tenho medo"), QStringLiteral("me sinto"),
+						 QStringLiteral("sinto muita falta"), QStringLiteral("sinto falta"),
 						 QStringLiteral("não consigo"), QStringLiteral("nao consigo"),
 						 QStringLiteral("i don't know"), QStringLiteral("i feel")},
 						cues);

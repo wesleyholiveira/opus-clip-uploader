@@ -38,11 +38,11 @@ QString renderViewerMessagePrompt(bool multipleClips, const QString &targetSuffi
 
 	const QString priority = discoveryMode && targetSuffix.trimmed().isEmpty()
 					 ? QStringLiteral(
-						   "Prefer a clearly useful or emotionally consequential viewer message, starting at the message's clearest self-contained sentence that states the viewer's issue; when only the speaker's reaction is audible, start with the first direct reaction.")
+						   "Prefer the clearest emotionally consequential viewer issue and start at the self-contained sentence that states it.")
 					 : QStringLiteral(
-						   "Start with the viewer message's clearest self-contained sentence that states the issue; when only the speaker's reaction is audible, start with the first direct reaction.");
+						   "Start with the viewer message's clearest self-contained sentence that states the issue.");
 	const QString boundary = QStringLiteral(
-		"Follow only the speaker's direct answer to that same message until its first complete resolution, keeping the clip focused on that one exchange from start to finish.");
+		"Follow the speaker's direct answer through its first local resolution, ending as soon as the speaker leaves that exchange.");
 
 	return QStringLiteral("%1 %2 %3").arg(opening, priority, boundary).simplified();
 }

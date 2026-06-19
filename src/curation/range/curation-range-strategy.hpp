@@ -35,19 +35,20 @@ public:
 	virtual ~CurationRangeStrategy() = default;
 	virtual QString name() const = 0;
 	virtual CurationRangeStrategyResolution resolve(const RecordingTranscript &transcript,
-							const CurationSettings &settings,
-							const QString &opusPrompt) const = 0;
+							      const CurationSettings &settings,
+							      const QString &opusPrompt) const = 0;
 };
 
 class CurationRangeStrategyResolver {
 public:
 	CurationRangeStrategyResolver();
 
-	CurationRangeStrategyResolution resolve(const RecordingTranscript &transcript, const CurationSettings &settings,
-						const QString &opusPrompt) const;
+	CurationRangeStrategyResolution resolve(const RecordingTranscript &transcript,
+						      const CurationSettings &settings,
+						      const QString &opusPrompt) const;
 
 	CurationSettings apply(const CurationSettings &settings,
-			       const CurationRangeStrategyResolution &resolution) const;
+				     const CurationRangeStrategyResolution &resolution) const;
 
 private:
 	QVector<std::shared_ptr<CurationRangeStrategy>> strategies;

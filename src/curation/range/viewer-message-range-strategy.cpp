@@ -7,7 +7,7 @@
 #include <algorithm>
 
 namespace {
-static constexpr int MAX_VIEWER_MESSAGE_CANDIDATE_PROJECTS = 3;
+static constexpr int MAX_VIEWER_MESSAGE_CANDIDATE_PROJECTS = 5;
 
 bool shouldApplyCandidateRanges(const ViewerMessageFocusRangeResult &focus)
 {

@@ -65,5 +65,6 @@ CurationSettings CurationRangeStrategyResolver::apply(const CurationSettings &se
 	}
 	adjusted.rangeStartSec = minStartSec;
 	adjusted.rangeEndSec = maxEndSec;
+	adjusted.uploadClipRangesIndependently = resolution.mode == CurationRangeStrategyResolution::Mode::CandidateRanges && ranges.size() > 1;
 	return adjusted;
 }

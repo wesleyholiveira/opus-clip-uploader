@@ -24,4 +24,5 @@ struct CurationSettings {
 	QString transcriptionLanguage = "auto";
 	QString aiPrompt;
 	QString reviewSettingsKey;
+	bool uploadClipRangesIndependently = false;
 };

@@ -2,6 +2,8 @@
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
+#include <QVector>
 
 #include <atomic>
 
@@ -37,6 +39,13 @@ private:
 		CurationSettings curationSettings;
 	};
 
+	struct PreparedUploadItem {
+		QString filePath;
+		QString fileName;
+		QString mimeType;
+		CurationSettings curationSettings;
+	};
+
 	QString apiKey;
 	QString filePath;
 	QString fileName;
@@ -49,8 +58,14 @@ private:
 	OpusClipClient *client = nullptr;
 	QProcess *currentProcess = nullptr;
 	std::atomic_bool cancelRequested{false};
+	QVector<PreparedUploadItem> independentUploadItems;
+	QStringList independentProjectIds;
+	int independentUploadIndex = 0;
 
 	ResampleResult prepareUploadVideo();
+	QVector<PreparedUploadItem> prepareIndependentRangeUploadVideos();
+	void startIndependentRangeUploads(QVector<PreparedUploadItem> items);
+	void startNextIndependentRangeUpload();
 	void startOpusUpload(const QString &uploadFilePath, const QString &uploadFileName,
 			     const QString &uploadMimeType, const CurationSettings &settings, bool hasResamplePhase);
 	bool runProcess(const QString &program, const QStringList &arguments, int progressStart, int progressEnd,

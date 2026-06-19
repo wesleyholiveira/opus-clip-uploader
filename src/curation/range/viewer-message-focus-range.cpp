@@ -26,9 +26,17 @@ static constexpr double VIEWER_CANDIDATE_DEFAULT_AFTER_SEC = 28.0;
 static constexpr double VIEWER_CANDIDATE_EMOTIONAL_AFTER_SEC = 34.0;
 static constexpr double VIEWER_CANDIDATE_ADVICE_AFTER_SEC = 30.0;
 static constexpr double VIEWER_CANDIDATE_MIN_DURATION_SEC = 18.0;
+static constexpr double VIEWER_CANDIDATE_BOUNDARY_MIN_DURATION_SEC = 7.0;
 static constexpr double VIEWER_CANDIDATE_MAX_DURATION_SEC = 42.0;
 static constexpr double VIEWER_CANDIDATE_MIN_SCORE = 0.55;
+static constexpr double VIEWER_CANDIDATE_SECONDARY_MIN_SCORE = 0.55;
+static constexpr double VIEWER_CANDIDATE_HIGH_CONFIDENCE_BEST_SCORE = 1.80;
+static constexpr double VIEWER_CANDIDATE_SECONDARY_RELATIVE_TO_BEST = 0.25;
 static constexpr double VIEWER_CANDIDATE_OVERLAP_TOLERANCE_SEC = 8.0;
+static constexpr double VIEWER_CANDIDATE_SAME_CUE_DEDUPE_WINDOW_SEC = 45.0;
+static constexpr double VIEWER_CANDIDATE_NEXT_CUE_PADDING_SEC = 0.35;
+static constexpr double VIEWER_CANDIDATE_NEXT_CUE_MIN_GAP_SEC = 10.0;
+static constexpr double VIEWER_CANDIDATE_ANCHOR_CUE_MISMATCH_PENALTY = 0.45;
 static constexpr int MAX_LOGGED_CANDIDATES = 5;
 
 QString stripDiacritics(const QString &value)
@@ -312,6 +320,16 @@ int firstPositionForPhrases(const QString &normalizedSegment, const QStringList 
 	return position;
 }
 
+int priorityPositionForPhrases(const QString &normalizedSegment, const QStringList &phrases)
+{
+	for (const QString &phrase : phrases) {
+		const int index = normalizedSegment.indexOf(phrase);
+		if (index >= 0)
+			return index;
+	}
+	return -1;
+}
+
 int meaningfulStartPosition(const QString &normalizedSegment, const QStringList &terms)
 {
 	static const QStringList strongestMessageStarts{
@@ -325,7 +343,7 @@ int meaningfulStartPosition(const QString &normalizedSegment, const QStringList 
 		QStringLiteral("eu tava passando"),
 		QStringLiteral("tava passando"),
 	};
-	const int strongestPosition = firstPositionForPhrases(normalizedSegment, strongestMessageStarts);
+	const int strongestPosition = priorityPositionForPhrases(normalizedSegment, strongestMessageStarts);
 	if (strongestPosition >= 0)
 		return strongestPosition;
 
@@ -402,7 +420,7 @@ bool looksLikeQuestionOrViewerMessage(const QString &text)
 	static const QStringList markers{QStringLiteral("mano"), QStringLiteral("cara"), QStringLiteral("perdi"),
 					       QStringLiteral("eu "), QStringLiteral("como "), QStringLiteral("por que"),
 					       QStringLiteral("lembra"), QStringLiteral("acho que"), QStringLiteral("meu "),
-					       QStringLiteral("sinto "), QStringLiteral("tenho ")};
+					       QStringLiteral("tenho ")};
 	for (const QString &marker : markers) {
 		if (normalized.startsWith(marker) || normalized.contains(QStringLiteral(" ") + marker))
 			return true;
@@ -441,7 +459,10 @@ struct CandidateRangeScore {
 	QStringList emotionalCues;
 	QString anchorText;
 	QString sampleText;
+	QString cueSignature;
 	bool startAdjusted = false;
+	bool anchorCueAligned = true;
+	bool boundaryTrimmed = false;
 };
 
 bool hasStrongLocalCue(const QString &text)
@@ -450,6 +471,34 @@ bool hasStrongLocalCue(const QString &text)
 	const double emotionalScore = Curation::emotionalScoreForText(text, &cues);
 	const double adviceScore = Curation::adviceScoreForText(text);
 	return emotionalScore >= 0.40 || adviceScore >= 0.25 || looksLikeQuestionOrViewerMessage(text);
+}
+
+QStringList normalizedCueList(const QStringList &cues)
+{
+	QStringList normalized;
+	for (const QString &cue : cues) {
+		const QString value = normalizedText(cue);
+		if (!value.isEmpty())
+			normalized << value;
+	}
+	normalized.removeDuplicates();
+	normalized.sort();
+	return normalized;
+}
+
+bool textContainsCue(const QString &text, const QStringList &cues)
+{
+	const QString normalized = normalizedText(text);
+	for (const QString &cue : normalizedCueList(cues)) {
+		if (normalized.contains(cue))
+			return true;
+	}
+	return false;
+}
+
+QString cueSignatureForCues(const QStringList &cues)
+{
+	return normalizedCueList(cues).join(QLatin1Char('|'));
 }
 
 QStringList genericAnchorTermsForSegment(const QString &text)
@@ -467,7 +516,8 @@ QStringList genericAnchorTermsForSegment(const QString &text)
 		terms << QStringLiteral("como") << QStringLiteral("aumento") << QStringLiteral("chefe")
 		      << QStringLiteral("pedir");
 	}
-	if (normalized.contains(QStringLiteral("sinto")) || normalized.contains(QStringLiteral("falta"))) {
+	if (normalized.contains(QStringLiteral("sinto muita falta")) || normalized.contains(QStringLiteral("sinto falta")) ||
+	    normalized.contains(QStringLiteral("melhor amigo"))) {
 		terms << QStringLiteral("sinto") << QStringLiteral("falta") << QStringLiteral("amigo");
 	}
 	if (normalized.contains(QStringLiteral("ansiedade")) || normalized.contains(QStringLiteral("sentindo"))) {
@@ -503,9 +553,12 @@ CandidateRangeScore scoreCandidateRange(const RecordingTranscript &transcript, c
 	score.emotionalScore = Curation::emotionalScoreForText(candidateText, &score.emotionalCues);
 	score.adviceScore = Curation::adviceScoreForText(candidateText);
 	score.questionScore = looksLikeQuestionOrViewerMessage(anchor.anchorText) ? 0.25 : 0.0;
+	score.cueSignature = cueSignatureForCues(score.emotionalCues);
+	score.anchorCueAligned = score.emotionalCues.isEmpty() || textContainsCue(anchor.anchorText, score.emotionalCues);
 
 	const double compactnessBonus = std::max(0.0, 1.0 - ((range.endSec - range.startSec) / VIEWER_CANDIDATE_MAX_DURATION_SEC)) * 0.08;
-	score.score = std::clamp((score.emotionalScore * 2.4) + (score.adviceScore * 0.8) + score.questionScore + compactnessBonus,
+	const double mismatchPenalty = score.anchorCueAligned ? 0.0 : VIEWER_CANDIDATE_ANCHOR_CUE_MISMATCH_PENALTY;
+	score.score = std::clamp((score.emotionalScore * 2.4) + (score.adviceScore * 0.8) + score.questionScore + compactnessBonus - mismatchPenalty,
 				       0.0, 3.6);
 	return score;
 }
@@ -522,22 +575,142 @@ bool rangesOverlapTooMuch(const ClipDuration &left, const ClipDuration &right)
 	       std::fabs(left.startSec - right.startSec) < VIEWER_CANDIDATE_OVERLAP_TOLERANCE_SEC;
 }
 
+bool hasStrongViewerIssueSignal(const CandidateRangeScore &candidate)
+{
+	if (candidate.adviceScore >= 0.25)
+		return true;
+	if (candidate.emotionalScore >= 0.40)
+		return true;
+	if (candidate.score >= 0.95)
+		return true;
+	return false;
+}
+
+bool shouldKeepSecondaryCandidate(const CandidateRangeScore &candidate, const CandidateRangeScore &bestCandidate)
+{
+	if (!candidate.anchorCueAligned)
+		return false;
+
+	const double relativeMinimum = bestCandidate.score >= VIEWER_CANDIDATE_HIGH_CONFIDENCE_BEST_SCORE
+		? bestCandidate.score * VIEWER_CANDIDATE_SECONDARY_RELATIVE_TO_BEST
+		: VIEWER_CANDIDATE_SECONDARY_MIN_SCORE;
+	const double minimumScore = std::max(VIEWER_CANDIDATE_SECONDARY_MIN_SCORE, relativeMinimum);
+
+	if (candidate.score < minimumScore && candidate.adviceScore < 0.25)
+		return false;
+
+	return hasStrongViewerIssueSignal(candidate);
+}
+
 QString candidateSummary(const QVector<CandidateRangeScore> &candidates)
 {
 	QStringList parts;
 	for (const CandidateRangeScore &candidate : candidates) {
 		const QString cues = candidate.emotionalCues.isEmpty() ? QStringLiteral("-") : candidate.emotionalCues.join(QStringLiteral("|"));
-		parts << QStringLiteral("%1-%2 score=%3 emotional=%4 advice=%5 question=%6 adjusted=%7 cues=%8 anchor=\"%9\"")
-				 .arg(candidate.range.startSec, 0, 'f', 2)
-				 .arg(candidate.range.endSec, 0, 'f', 2)
-				 .arg(candidate.score, 0, 'f', 2)
-				 .arg(candidate.emotionalScore, 0, 'f', 2)
-				 .arg(candidate.adviceScore, 0, 'f', 2)
-				 .arg(candidate.questionScore, 0, 'f', 2)
-				 .arg(candidate.startAdjusted ? QStringLiteral("true") : QStringLiteral("false"))
-				 .arg(cues, candidate.anchorText);
+		parts << QStringLiteral("%1-%2 score=%3 emotional=%4 advice=%5 question=%6 adjusted=%7 cueAligned=%8 boundaryTrimmed=%9 cues=%10 anchor=\"%11\"")
+					 .arg(candidate.range.startSec, 0, 'f', 2)
+					 .arg(candidate.range.endSec, 0, 'f', 2)
+					 .arg(candidate.score, 0, 'f', 2)
+					 .arg(candidate.emotionalScore, 0, 'f', 2)
+					 .arg(candidate.adviceScore, 0, 'f', 2)
+					 .arg(candidate.questionScore, 0, 'f', 2)
+					 .arg(candidate.startAdjusted ? QStringLiteral("true") : QStringLiteral("false"))
+					 .arg(candidate.anchorCueAligned ? QStringLiteral("true") : QStringLiteral("false"))
+					 .arg(candidate.boundaryTrimmed ? QStringLiteral("true") : QStringLiteral("false"))
+					 .arg(cues, candidate.anchorText);
 	}
 	return parts.join(QStringLiteral("; "));
+}
+
+
+struct CandidateAnchorChoice {
+	AnchorStartEstimate anchor;
+	double emotionalScore = 0.0;
+	double adviceScore = 0.0;
+	bool realigned = false;
+};
+
+CandidateAnchorChoice bestAnchorInsideRange(const RecordingTranscript &transcript, const ClipDuration &range,
+						     const AnchorStartEstimate &fallbackAnchor)
+{
+	CandidateAnchorChoice best;
+	best.anchor = fallbackAnchor;
+	best.emotionalScore = Curation::emotionalScoreForText(fallbackAnchor.anchorText);
+	best.adviceScore = Curation::adviceScoreForText(fallbackAnchor.anchorText);
+
+	double bestScore = (best.emotionalScore * 2.6) + (best.adviceScore * 0.8) +
+			   (looksLikeQuestionOrViewerMessage(fallbackAnchor.anchorText) ? 0.15 : 0.0);
+
+	for (const TranscriptSegment &segment : transcript.segments) {
+		if (!segmentOverlapsRange(segment, range) || segment.text.trimmed().isEmpty())
+			continue;
+
+		QStringList cues;
+		const double emotionalScore = Curation::emotionalScoreForText(segment.text, &cues);
+		const double adviceScore = Curation::adviceScoreForText(segment.text);
+		const double questionScore = looksLikeQuestionOrViewerMessage(segment.text) ? 0.15 : 0.0;
+		const double localScore = (emotionalScore * 2.6) + (adviceScore * 0.8) + questionScore;
+
+		if (localScore <= bestScore + 0.0001)
+			continue;
+
+		const QStringList terms = genericAnchorTermsForSegment(segment.text);
+		best.anchor = estimatedAnchorStart(segment, terms);
+		best.emotionalScore = emotionalScore;
+		best.adviceScore = adviceScore;
+		best.realigned = std::fabs(best.anchor.startSec - fallbackAnchor.startSec) > 0.5;
+		bestScore = localScore;
+	}
+
+	return best;
+}
+
+ClipDuration buildCandidateRange(const ClipDuration &manualRange, const AnchorStartEstimate &anchor,
+					  double emotionalScore, double adviceScore)
+{
+	const double afterSec = candidateAfterSeconds(emotionalScore, adviceScore);
+	const double startSec = std::clamp(anchor.startSec - VIEWER_CANDIDATE_PADDING_BEFORE_SEC,
+					       manualRange.startSec, manualRange.endSec);
+	const double desiredEndSec = std::min(manualRange.endSec, anchor.startSec + afterSec);
+	const double minEndSec = std::min(manualRange.endSec, startSec + VIEWER_CANDIDATE_MIN_DURATION_SEC);
+	double endSec = std::min(manualRange.endSec, std::max(desiredEndSec, minEndSec));
+
+	if ((endSec - startSec) > VIEWER_CANDIDATE_MAX_DURATION_SEC)
+		endSec = std::min(manualRange.endSec, startSec + VIEWER_CANDIDATE_MAX_DURATION_SEC);
+
+	return {startSec, endSec};
+}
+
+ClipDuration trimCandidateBeforeNextCue(const RecordingTranscript &transcript, const ClipDuration &range, double anchorStartSec)
+{
+	for (const TranscriptSegment &segment : transcript.segments) {
+		if (!segmentOverlapsRange(segment, range) || segment.text.trimmed().isEmpty())
+			continue;
+		if (segment.startSec <= anchorStartSec + VIEWER_CANDIDATE_NEXT_CUE_MIN_GAP_SEC)
+			continue;
+		if (!hasStrongLocalCue(segment.text))
+			continue;
+
+		const double trimmedEndSec = segment.startSec - VIEWER_CANDIDATE_NEXT_CUE_PADDING_SEC;
+		if (trimmedEndSec > range.startSec + VIEWER_CANDIDATE_BOUNDARY_MIN_DURATION_SEC)
+			return {range.startSec, std::min(range.endSec, trimmedEndSec)};
+	}
+
+	return range;
+}
+
+bool sameSemanticCue(const CandidateRangeScore &left, const CandidateRangeScore &right)
+{
+	const QStringList leftCues = normalizedCueList(left.emotionalCues);
+	const QStringList rightCues = normalizedCueList(right.emotionalCues);
+	if (leftCues.isEmpty() || rightCues.isEmpty())
+		return false;
+
+	for (const QString &cue : leftCues) {
+		if (rightCues.contains(cue))
+			return true;
+	}
+	return false;
 }
 
 QVector<ClipDuration> genericCandidateRanges(const RecordingTranscript &transcript, const ClipDuration &manualRange,
@@ -552,24 +725,24 @@ QVector<ClipDuration> genericCandidateRanges(const RecordingTranscript &transcri
 			continue;
 
 		const QStringList terms = genericAnchorTermsForSegment(segment.text);
-		const AnchorStartEstimate anchor = estimatedAnchorStart(segment, terms);
+		const AnchorStartEstimate initialAnchor = estimatedAnchorStart(segment, terms);
 		const double segmentEmotional = Curation::emotionalScoreForText(segment.text);
 		const double segmentAdvice = Curation::adviceScoreForText(segment.text);
-		const double afterSec = candidateAfterSeconds(segmentEmotional, segmentAdvice);
-
-		const double startSec = std::clamp(anchor.startSec - VIEWER_CANDIDATE_PADDING_BEFORE_SEC,
-						       manualRange.startSec, manualRange.endSec);
-		const double desiredEndSec = std::min(manualRange.endSec, anchor.startSec + afterSec);
-		const double minEndSec = std::min(manualRange.endSec, startSec + VIEWER_CANDIDATE_MIN_DURATION_SEC);
-		const double endSec = std::min(manualRange.endSec, std::max(desiredEndSec, minEndSec));
-		if (endSec <= startSec)
+		ClipDuration range = buildCandidateRange(manualRange, initialAnchor, segmentEmotional, segmentAdvice);
+		if (range.endSec <= range.startSec)
 			continue;
 
-		ClipDuration range{startSec, endSec};
-		if ((range.endSec - range.startSec) > VIEWER_CANDIDATE_MAX_DURATION_SEC)
-			range.endSec = std::min(manualRange.endSec, range.startSec + VIEWER_CANDIDATE_MAX_DURATION_SEC);
+		const CandidateAnchorChoice aligned = bestAnchorInsideRange(transcript, range, initialAnchor);
+		range = buildCandidateRange(manualRange, aligned.anchor, aligned.emotionalScore, aligned.adviceScore);
+		const double endSecBeforeBoundaryTrim = range.endSec;
+		range = trimCandidateBeforeNextCue(transcript, range, aligned.anchor.startSec);
+		const bool boundaryTrimmed = range.endSec < endSecBeforeBoundaryTrim - 0.01;
+		if (range.endSec <= range.startSec)
+			continue;
 
-		CandidateRangeScore scored = scoreCandidateRange(transcript, range, anchor);
+		CandidateRangeScore scored = scoreCandidateRange(transcript, range, aligned.anchor);
+		scored.boundaryTrimmed = boundaryTrimmed;
+		scored.startAdjusted = scored.startAdjusted || aligned.realigned;
 		if (scored.score < VIEWER_CANDIDATE_MIN_SCORE)
 			continue;
 
@@ -585,9 +758,15 @@ QVector<ClipDuration> genericCandidateRanges(const RecordingTranscript &transcri
 	QVector<CandidateRangeScore> selected;
 	selected.reserve(std::min(static_cast<long long>(MAX_LOGGED_CANDIDATES), static_cast<long long>(allCandidates.size())));
 	for (const CandidateRangeScore &candidate : allCandidates) {
+		if (!selected.isEmpty() && !shouldKeepSecondaryCandidate(candidate, selected.first()))
+			continue;
+
 		bool overlapsSelected = false;
 		for (const CandidateRangeScore &selectedCandidate : selected) {
-			if (rangesOverlapTooMuch(candidate.range, selectedCandidate.range)) {
+			const bool duplicateCue = sameSemanticCue(candidate, selectedCandidate) &&
+				(std::fabs(candidate.range.startSec - selectedCandidate.range.startSec) < VIEWER_CANDIDATE_SAME_CUE_DEDUPE_WINDOW_SEC ||
+				 rangesOverlapTooMuch(candidate.range, selectedCandidate.range));
+			if (duplicateCue || rangesOverlapTooMuch(candidate.range, selectedCandidate.range)) {
 				overlapsSelected = true;
 				break;
 			}
