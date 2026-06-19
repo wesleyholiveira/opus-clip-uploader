@@ -2,6 +2,8 @@
 
 #include "ui/ui-common.hpp"
 
+#include "curation/range/curation-range-strategy.hpp"
+
 #include <obs-module.h>
 #include <plugin-support.h>
 
@@ -182,6 +184,97 @@ static void invoke_prompt_finished(QWidget *parent, std::function<void(QString)>
 		finishedCallback(prompt);
 	});
 }
+
+static void invoke_prompt_result_finished(QWidget *parent,
+					  std::function<void(GeneratedCurationPromptResult)> finishedCallback,
+					  GeneratedCurationPromptResult result)
+{
+	if (!finishedCallback)
+		return;
+
+	invoke_finished(parent, [finishedCallback = std::move(finishedCallback), result = std::move(result)]() mutable {
+		finishedCallback(result);
+	});
+}
+
+static QString range_log(const ClipDuration &range)
+{
+	return QStringLiteral("%1-%2").arg(range.startSec, 0, 'f', 2).arg(range.endSec, 0, 'f', 2);
+}
+
+static bool is_prompt_blocked_or_empty(const QString &prompt)
+{
+	const QString trimmed = prompt.trimmed();
+	return trimmed.isEmpty() || GptPromptClient::isPromptGenerationBlockedPrompt(trimmed) ||
+	       GptPromptClient::isSemanticGateFailurePrompt(trimmed);
+}
+
+static QString ranges_log(const QVector<ClipDuration> &ranges)
+{
+	QStringList values;
+	for (const ClipDuration &range : ranges)
+		values << range_log(range);
+	return values.join(QStringLiteral(","));
+}
+
+static const char *range_resolution_mode_name(CurationRangeStrategyResolution::Mode mode)
+{
+	switch (mode) {
+	case CurationRangeStrategyResolution::Mode::FocusRange:
+		return "focus_range";
+	case CurationRangeStrategyResolution::Mode::CandidateRanges:
+		return "candidate_ranges";
+	case CurationRangeStrategyResolution::Mode::Unchanged:
+		return "unchanged";
+	}
+
+	return "unknown";
+}
+
+static GeneratedCurationPromptResult result_with_strategy_ranges(const QString &videoPath,
+							 const RecordingTranscript &transcript,
+							 const CurationSettings &settings,
+							 const QString &prompt)
+{
+	GeneratedCurationPromptResult result;
+	result.prompt = prompt.trimmed();
+	result.curationSettings = settings;
+
+	if (is_prompt_blocked_or_empty(result.prompt))
+		return result;
+
+	const CurationRangeStrategyResolver resolver;
+	const CurationRangeStrategyResolution resolution = resolver.resolve(transcript, settings, result.prompt);
+
+	if (resolution.applied()) {
+		result.curationSettings = resolver.apply(settings, resolution);
+
+		if (resolution.mode == CurationRangeStrategyResolution::Mode::FocusRange) {
+			blog(LOG_INFO,
+			     "[clip-cropper] Curation range strategy applied. video=%s strategy=%s mode=%s target=%s confidence=%.2f manualRange=%s ranges=%s startAdjusted=%s anchor=%s",
+			     videoPath.toUtf8().constData(), resolution.strategyName.toUtf8().constData(),
+			     range_resolution_mode_name(resolution.mode), resolution.target.toUtf8().constData(),
+			     resolution.confidence, range_log(resolution.manualRange).toUtf8().constData(),
+			     ranges_log(resolution.ranges).toUtf8().constData(),
+			     resolution.startAdjusted ? "true" : "false", resolution.anchorText.toUtf8().constData());
+			return result;
+		}
+
+		blog(LOG_INFO,
+		     "[clip-cropper] Curation range strategy applied. video=%s strategy=%s mode=%s reason=%s projects=%d ranges=%s",
+		     videoPath.toUtf8().constData(), resolution.strategyName.toUtf8().constData(),
+		     range_resolution_mode_name(resolution.mode), resolution.reason.toUtf8().constData(),
+		     static_cast<int>(resolution.ranges.size()), ranges_log(resolution.ranges).toUtf8().constData());
+		return result;
+	}
+
+	blog(LOG_INFO,
+	     "[clip-cropper] Curation range strategy skipped. video=%s strategy=%s reason=%s mode=%s",
+	     videoPath.toUtf8().constData(), resolution.strategyName.toUtf8().constData(),
+	     resolution.reason.toUtf8().constData(), range_resolution_mode_name(resolution.mode));
+	return result;
+}
+
 
 static QVector<ClipDuration> valid_prompt_ranges(const CurationSettings &curationSettings)
 {
@@ -497,44 +590,67 @@ void generate_custom_prompt_for_curation_async(QWidget *parent, const QString &v
 					       const CurationSettings &curationSettings, bool transcribeOnDemand,
 					       std::function<void(QString)> finishedCallback)
 {
-	auto callback = std::make_shared<std::function<void(QString)>>(std::move(finishedCallback));
-	auto finish = [parent, callback](QString prompt) mutable {
+	generate_custom_prompt_for_curation_result_async(
+		parent, videoPath, curationSettings, transcribeOnDemand,
+		[finishedCallback = std::move(finishedCallback)](GeneratedCurationPromptResult result) mutable {
+			if (finishedCallback)
+				finishedCallback(result.prompt);
+		});
+}
+
+void generate_custom_prompt_for_curation_result_async(QWidget *parent, const QString &videoPath,
+						      const CurationSettings &curationSettings,
+						      bool transcribeOnDemand,
+						      std::function<void(GeneratedCurationPromptResult)> finishedCallback)
+{
+	auto callback = std::make_shared<std::function<void(GeneratedCurationPromptResult)>>(std::move(finishedCallback));
+	auto finish = [parent, callback](GeneratedCurationPromptResult result) mutable {
 		if (!callback || !*callback)
 			return;
 
 		auto finalCallback = std::move(*callback);
 		*callback = {};
-		invoke_prompt_finished(parent, std::move(finalCallback), std::move(prompt));
+		invoke_prompt_result_finished(parent, std::move(finalCallback), std::move(result));
+	};
+
+	auto finishPromptOnly = [finish, curationSettings](QString prompt) mutable {
+		GeneratedCurationPromptResult result;
+		result.prompt = prompt.trimmed();
+		result.curationSettings = curationSettings;
+		finish(std::move(result));
 	};
 
 	if (!curationSettings.aiPrompt.trimmed().isEmpty()) {
 		blog(LOG_INFO, "Using custom Opus prompt provided in review dialog: %s",
 		     videoPath.toUtf8().constData());
-		finish(curationSettings.aiPrompt.trimmed());
+		finishPromptOnly(curationSettings.aiPrompt.trimmed());
 		return;
 	}
 
 	const QString openAiApiKey = get_openai_api_key();
 	if (openAiApiKey.trimmed().isEmpty()) {
 		blog(LOG_WARNING, "OpenAI API key is empty. Skipping GPT curation prompt generation.");
-		finish({});
+		finishPromptOnly({});
 		return;
 	}
 
 	if (!is_openai_model_enabled()) {
 		blog(LOG_INFO, "OpenAI model is disabled. Skipping GPT curation prompt generation.");
-		finish({});
+		finishPromptOnly({});
 		return;
 	}
 
 	auto continueWithTranscript = [parent, videoPath, curationSettings,
 				       finish](const RecordingTranscript &transcript,
-					       bool transcriptionCanceled) mutable {
+				       bool transcriptionCanceled) mutable {
 		if (transcriptionCanceled) {
 			blog(LOG_INFO, "GPT curation prompt generation blocked because transcription was canceled: %s",
 			     videoPath.toUtf8().constData());
-			finish(gptPromptBlockedPrompt(
-				QStringLiteral("Transcription was canceled before a prompt could be generated.")));
+			GeneratedCurationPromptResult result;
+			result.prompt = gptPromptBlockedPrompt(
+				QStringLiteral("Transcription was canceled before a prompt could be generated."));
+			result.curationSettings = curationSettings;
+			finish(std::move(result));
 			return;
 		}
 
@@ -542,12 +658,23 @@ void generate_custom_prompt_for_curation_async(QWidget *parent, const QString &v
 			blog(LOG_WARNING,
 			     "No transcript available for %s. Blocking upload without GPT curation prompt.",
 			     videoPath.toUtf8().constData());
-			finish(gptPromptBlockedPrompt(QStringLiteral(
-				"Try selecting a range with audible speech or check the transcription language/audio stream.")));
+			GeneratedCurationPromptResult result;
+			result.prompt = gptPromptBlockedPrompt(QStringLiteral(
+				"Try selecting a range with audible speech or check the transcription language/audio stream."));
+			result.curationSettings = curationSettings;
+			finish(std::move(result));
 			return;
 		}
 
-		generate_gpt_prompt_with_progress_dialog_async(parent, videoPath, transcript, curationSettings, finish);
+		auto finishWithFocus = [videoPath, transcript, curationSettings,
+					    finish](QString prompt) mutable {
+			GeneratedCurationPromptResult result = result_with_strategy_ranges(videoPath, transcript,
+											  curationSettings, prompt);
+			finish(std::move(result));
+		};
+
+		generate_gpt_prompt_with_progress_dialog_async(parent, videoPath, transcript, curationSettings,
+								     std::move(finishWithFocus));
 	};
 
 	blog(LOG_INFO, "Loading transcript after review before GPT curation prompt generation: %s",
@@ -573,8 +700,11 @@ void generate_custom_prompt_for_curation_async(QWidget *parent, const QString &v
 		blog(LOG_WARNING,
 		     "No cached transcript available for %s and on-demand transcription is disabled. Blocking upload without GPT curation prompt.",
 		     videoPath.toUtf8().constData());
-		finish(gptPromptBlockedPrompt(
-			QStringLiteral("No cached transcript is available and on-demand transcription is disabled.")));
+		GeneratedCurationPromptResult result;
+		result.prompt = gptPromptBlockedPrompt(
+			QStringLiteral("No cached transcript is available and on-demand transcription is disabled."));
+		result.curationSettings = curationSettings;
+		finish(std::move(result));
 		return;
 	}
 

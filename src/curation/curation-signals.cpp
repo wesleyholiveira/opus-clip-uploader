@@ -3,6 +3,8 @@
 #include <QRegularExpression>
 #include <QStringList>
 
+#include <algorithm>
+
 namespace {
 
 static int substringCount(const QString &text, const QString &needle)
@@ -17,6 +19,25 @@ static int substringCount(const QString &text, const QString &needle)
 		index += needle.size();
 	}
 	return count;
+}
+
+
+static int phraseHitCount(const QString &text, const QStringList &phrases, QStringList *matchedPhrases = nullptr)
+{
+	int hits = 0;
+	for (const QString &phrase : phrases) {
+		if (!phrase.trimmed().isEmpty() && text.contains(phrase, Qt::CaseInsensitive)) {
+			++hits;
+			if (matchedPhrases)
+				matchedPhrases->append(phrase);
+		}
+	}
+	return hits;
+}
+
+static double boundedScore(double value)
+{
+	return std::clamp(value, 0.0, 1.0);
 }
 
 static bool containsAnyPhrase(const QString &text, const QStringList &phrases)
@@ -85,6 +106,99 @@ QString scopeForDuration(double durationSec)
 		return QStringLiteral("medium_range_multiple_independent_clips");
 
 	return QStringLiteral("short_range_best_moment");
+}
+
+
+double emotionalScoreForText(const QString &text, QStringList *matchedCues)
+{
+	const QString lower = text.toLower();
+	QStringList localCues;
+	QStringList *cues = matchedCues ? matchedCues : &localCues;
+
+	const int griefHits = phraseHitCount(lower,
+					     {QStringLiteral("perdi meu pai"), QStringLiteral("perdi minha mãe"),
+					      QStringLiteral("perdi minha mae"), QStringLiteral("perdeu o pai"),
+					      QStringLiteral("perdeu a mãe"), QStringLiteral("perdeu a mae"),
+					      QStringLiteral("meu pai morreu"), QStringLiteral("minha mãe morreu"),
+					      QStringLiteral("minha mae morreu"), QStringLiteral("faleceu"),
+					      QStringLiteral("luto"), QStringLiteral("grief"), QStringLiteral("lost my father"),
+					      QStringLiteral("lost my mother")},
+					     cues);
+	const int highStakesHits = phraseHitCount(lower,
+						 {QStringLiteral("aposta"), QStringLiteral("apostas"), QStringLiteral("vício"),
+						  QStringLiteral("vicio"), QStringLiteral("gambling"), QStringLiteral("betting"),
+						  QStringLiteral("addiction"), QStringLiteral("depress"), QStringLiteral("ansiedade"),
+						  QStringLiteral("trauma"), QStringLiteral("sinto muito"), QStringLiteral("desculpa"),
+						  QStringLiteral("sorry for your loss")},
+						 cues);
+	const int vulnerableHits = phraseHitCount(lower,
+						{QStringLiteral("nunca falei"), QStringLiteral("nunca pedi"),
+						 QStringLiteral("não sei como"), QStringLiteral("nao sei como"),
+						 QStringLiteral("tenho medo"), QStringLiteral("me sinto"),
+						 QStringLiteral("não consigo"), QStringLiteral("nao consigo"),
+						 QStringLiteral("i don't know"), QStringLiteral("i feel")},
+						cues);
+
+	const double griefWeight = griefHits > 0 ? 0.58 : 0.0;
+	const double highStakesWeight = std::min(0.32, highStakesHits * 0.12);
+	const double vulnerableWeight = std::min(0.24, vulnerableHits * 0.08);
+	const double comboWeight = griefHits > 0 && highStakesHits > 0 ? 0.18 : 0.0;
+	return boundedScore(griefWeight + highStakesWeight + vulnerableWeight + comboWeight);
+}
+
+double adviceScoreForText(const QString &text)
+{
+	const QString lower = text.toLower();
+	const int hits = phraseHitCount(lower,
+					 {QStringLiteral("conselho"), QStringLiteral("advice"), QStringLiteral("como eu posso"),
+					  QStringLiteral("como posso"), QStringLiteral("o que eu faço"),
+					  QStringLiteral("o que eu faco"), QStringLiteral("devo"), QStringLiteral("should i"),
+					  QStringLiteral("how can i"), QStringLiteral("relacionamento"),
+					  QStringLiteral("relationship")});
+	return boundedScore(static_cast<double>(hits) / 4.0);
+}
+
+double explanationScoreForText(const QString &text)
+{
+	const QString lower = text.toLower();
+	const int hits = phraseHitCount(lower,
+					 {QStringLiteral("explica"), QStringLiteral("explicar"), QStringLiteral("por que"),
+					  QStringLiteral("porque"), QStringLiteral("conceito"), QStringLiteral("funciona"),
+					  QStringLiteral("método"), QStringLiteral("metodo"), QStringLiteral("method"),
+					  QStringLiteral("explains"), QStringLiteral("because"), QStringLiteral("means that")});
+	return boundedScore(static_cast<double>(hits) / 5.0);
+}
+
+double storyScoreForText(const QString &text)
+{
+	const QString lower = text.toLower();
+	const int hits = phraseHitCount(lower,
+					 {QStringLiteral("uma vez"), QStringLiteral("aconteceu"), QStringLiteral("quando eu"),
+					  QStringLiteral("na época"), QStringLiteral("na epoca"), QStringLiteral("lembro"),
+					  QStringLiteral("história"), QStringLiteral("historia"), QStringLiteral("story"),
+					  QStringLiteral("when i was")});
+	return boundedScore(static_cast<double>(hits) / 4.0);
+}
+
+double opinionScoreForText(const QString &text)
+{
+	const QString lower = text.toLower();
+	const int hits = phraseHitCount(lower,
+					 {QStringLiteral("eu acho"), QStringLiteral("minha opinião"), QStringLiteral("minha opiniao"),
+					  QStringLiteral("na minha visão"), QStringLiteral("na minha visao"),
+					  QStringLiteral("i think"), QStringLiteral("my take"), QStringLiteral("opinion")});
+	return boundedScore(static_cast<double>(hits) / 3.0);
+}
+
+double tutorialScoreForText(const QString &text)
+{
+	const QString lower = text.toLower();
+	const int hits = phraseHitCount(lower,
+					 {QStringLiteral("passo"), QStringLiteral("primeiro"), QStringLiteral("depois"),
+					  QStringLiteral("tutorial"), QStringLiteral("como fazer"), QStringLiteral("faça"),
+					  QStringLiteral("faca"), QStringLiteral("step"), QStringLiteral("walk through"),
+					  QStringLiteral("do this")});
+	return boundedScore(static_cast<double>(hits) / 4.0);
 }
 
 bool textHasViewerExchangeSignals(const QString &text)
@@ -221,11 +335,28 @@ Signals analyzeSignals(const RecordingTranscript &transcript, const CurationSett
 		curationSettings.genre + QLatin1Char(' ') + curationSettings.topicKeywords.join(QLatin1Char(' '));
 	metadata += QLatin1Char(' ') + generatedPrompt + QLatin1Char(' ') + curationSettings.aiPrompt;
 
+	const QString transcriptText = joinedTranscriptText(transcript);
+	const QString combinedText = metadata + QLatin1Char(' ') + transcriptText;
+
 	result.hasMetadataViewerSignals = textHasViewerExchangeSignals(metadata);
-	result.hasTranscriptViewerSignals = textHasViewerExchangeSignals(joinedTranscriptText(transcript));
+	result.hasTranscriptViewerSignals = textHasViewerExchangeSignals(transcriptText);
 	result.hasFragmentedViewerChatSignals = transcriptLooksLikeFragmentedViewerChat(transcript);
 	result.likelyViewerExchange = result.hasMetadataViewerSignals || result.hasTranscriptViewerSignals ||
 				      result.hasFragmentedViewerChatSignals;
+	result.viewerExchangeScore = result.likelyViewerExchange ? 0.75 : 0.0;
+	if (result.hasMetadataViewerSignals)
+		result.viewerExchangeScore = std::max(result.viewerExchangeScore, 0.55);
+	if (result.hasTranscriptViewerSignals)
+		result.viewerExchangeScore = std::max(result.viewerExchangeScore, 0.65);
+	if (result.hasFragmentedViewerChatSignals)
+		result.viewerExchangeScore = std::max(result.viewerExchangeScore, 0.85);
+
+	result.emotionalScore = emotionalScoreForText(combinedText, &result.emotionalCues);
+	result.adviceScore = adviceScoreForText(combinedText);
+	result.explanationScore = explanationScoreForText(combinedText);
+	result.storyScore = storyScoreForText(combinedText);
+	result.opinionScore = opinionScoreForText(combinedText);
+	result.tutorialScore = tutorialScoreForText(combinedText);
 
 	return result;
 }

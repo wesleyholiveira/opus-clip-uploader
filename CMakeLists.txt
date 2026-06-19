@@ -122,6 +122,35 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 	src/curation/compiler/opus-prompt-compiler.hpp
 	src/curation/compiler/prompt-quality-gate.cpp
 	src/curation/compiler/prompt-quality-gate.hpp
+	src/curation/range/curation-range-strategy.cpp
+	src/curation/range/curation-range-strategy.hpp
+	src/curation/range/viewer-message-focus-range.cpp
+	src/curation/range/viewer-message-focus-range.hpp
+	src/curation/range/viewer-message-range-strategy.cpp
+	src/curation/range/viewer-message-range-strategy.hpp
+	src/curation/prompt/curation-prompt-recipe.cpp
+	src/curation/prompt/curation-prompt-recipe.hpp
+	src/curation/rules/curation-rule-helpers.cpp
+	src/curation/rules/curation-rule-helpers.hpp
+	src/curation/rules/curation-preset-rule.hpp
+	src/curation/rules/curation-rule-engine.cpp
+	src/curation/rules/curation-rule-engine.hpp
+	src/curation/rules/auto-rule.cpp
+	src/curation/rules/auto-rule.hpp
+	src/curation/rules/viewer-message-response-rule.cpp
+	src/curation/rules/viewer-message-response-rule.hpp
+	src/curation/rules/advice-answer-rule.cpp
+	src/curation/rules/advice-answer-rule.hpp
+	src/curation/rules/emotional-reaction-rule.cpp
+	src/curation/rules/emotional-reaction-rule.hpp
+	src/curation/rules/explanation-rule.cpp
+	src/curation/rules/explanation-rule.hpp
+	src/curation/rules/story-arc-rule.cpp
+	src/curation/rules/story-arc-rule.hpp
+	src/curation/rules/opinion-rule.cpp
+	src/curation/rules/opinion-rule.hpp
+	src/curation/rules/tutorial-step-rule.cpp
+	src/curation/rules/tutorial-step-rule.hpp
 	src/curation/service/curation-service.cpp
 	src/curation/service/curation-service.hpp
 	src/curation/curation-preset.cpp

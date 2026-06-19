@@ -6,13 +6,11 @@
 #include "curation/curation-rules.hpp"
 #include "curation/curation-signals.hpp"
 #include "curation/opus-prompt-renderer.hpp"
+#include "curation/prompt/curation-prompt-recipe.hpp"
 
 #include <QJsonDocument>
 #include <QJsonParseError>
 #include <QRegularExpression>
-
-#include <algorithm>
-#include <cmath>
 
 namespace {
 
@@ -190,8 +188,11 @@ bool containsPortuguesePromptMarkers(const QString &text)
 	}
 
 	int softHits = 0;
-	for (const QString &softToken : {QStringLiteral("sobre"), QStringLiteral("como"), QStringLiteral("para"),
-					 QStringLiteral("com"), QStringLiteral("porque"), QStringLiteral("porquê")}) {
+	for (const QString &softToken :
+	     {QStringLiteral("sobre"), QStringLiteral("como"), QStringLiteral("para"), QStringLiteral("com"),
+	      QStringLiteral("porque"), QStringLiteral("porquê"), QStringLiteral("uma"), QStringLiteral("em"),
+	      QStringLiteral("de"), QStringLiteral("da"), QStringLiteral("do"), QStringLiteral("dos"),
+	      QStringLiteral("das")}) {
 		if (padded.contains(QStringLiteral(" ") + softToken + QLatin1Char(' ')))
 			++softHits;
 	}
@@ -214,6 +215,49 @@ QString englishOnlyPresetFallback(const RecordingTranscript &selectedRangeTransc
 bool looksLikePortugueseViewerTarget(const QString &target)
 {
 	return containsPortuguesePromptMarkers(target);
+}
+
+bool isGenericViewerTarget(const QString &target)
+{
+	QString normalized = target.toLower().simplified();
+	normalized.replace(QRegularExpression(QStringLiteral("[^\\p{L}\\p{N}]+")), QStringLiteral(" "));
+	normalized.replace(QRegularExpression(QStringLiteral("\\s+")), QStringLiteral(" "));
+	normalized = normalized.trimmed();
+
+	if (normalized.isEmpty())
+		return true;
+
+	if (normalized.startsWith(QStringLiteral("one clear idea")) ||
+	    normalized.startsWith(QStringLiteral("the selected idea")) ||
+	    normalized.contains(QStringLiteral("selected range")) ||
+	    normalized.contains(QStringLiteral("that same message")) ||
+	    normalized.contains(QStringLiteral("one exchange")))
+		return true;
+
+	static const QStringList genericPhrases{
+		QStringLiteral("em uma conversa de live"),
+		QStringLiteral("em uma live"),
+		QStringLiteral("conversa de live"),
+		QStringLiteral("live conversation"),
+		QStringLiteral("conversation in a live"),
+		QStringLiteral("live stream conversation"),
+		QStringLiteral("stream conversation"),
+		QStringLiteral("viewer interaction"),
+		QStringLiteral("viewer message"),
+		QStringLiteral("viewer question"),
+		QStringLiteral("viewer comment"),
+		QStringLiteral("chat message"),
+		QStringLiteral("live chat"),
+		QStringLiteral("general chat"),
+		QStringLiteral("stream chat"),
+	};
+
+	for (const QString &phrase : genericPhrases) {
+		if (normalized == phrase || normalized.contains(phrase))
+			return true;
+	}
+
+	return false;
 }
 
 QString cleanViewerTarget(QString target)
@@ -241,14 +285,29 @@ QString cleanViewerTarget(QString target)
 	target.remove(QRegularExpression(QStringLiteral("^pergunta\\s+(?:sobre|a|para)\\s+"),
 					 QRegularExpression::CaseInsensitiveOption));
 
-	if (looksLikePortugueseViewerTarget(target))
+	if (looksLikePortugueseViewerTarget(target) || isGenericViewerTarget(target))
 		return {};
 
 	target = compactPlanPhrase(target, 72);
-	if (!hasEnglishOnlyPromptText(target))
+	if (!hasEnglishOnlyPromptText(target) || isGenericViewerTarget(target))
 		return {};
 
 	return target;
+}
+
+QString explicitViewerTargetFromSettings(const CurationSettings &curationSettings)
+{
+	QStringList cleanedKeywords;
+	for (const QString &keyword : curationSettings.topicKeywords) {
+		const QString cleaned = cleanViewerTarget(keyword);
+		if (!cleaned.isEmpty())
+			cleanedKeywords << cleaned;
+	}
+
+	if (cleanedKeywords.isEmpty())
+		return {};
+
+	return compactPlanPhrase(cleanedKeywords.join(QStringLiteral(" ")), 72);
 }
 
 bool isStructuredViewerMessagePrompt(const QString &prompt)
@@ -363,41 +422,11 @@ QString viewerStopPhrase(QString ending)
 QString renderViewerMessagePlanPrompt(const QJsonObject &plan, const RecordingTranscript &selectedRangeTranscript,
 				      const CurationSettings &curationSettings, const QString &planHint)
 {
+	Q_UNUSED(plan);
 	const bool multipleClips = shouldRenderMultipleClips(selectedRangeTranscript, curationSettings, planHint);
-	const QString findPrefix = multipleClips ? QStringLiteral("Find continuous, unbroken clips")
-						 : QStringLiteral("Find one continuous, unbroken clip");
-
-	QString target = jsonStringValue(plan, QStringLiteral("main_target"));
-	if (target.isEmpty())
-		target = deterministicPromptTarget(QString(), selectedRangeTranscript, curationSettings);
-
-	const QString targetSuffix =
-		viewerMessageTargetSuffix(target, jsonStringValue(plan, QStringLiteral("context_phrase")));
-	const bool hasTarget = !targetSuffix.isEmpty();
-
-	const QString sentence1 =
-		hasTarget
-			? (multipleClips
-				   ? QStringLiteral(
-					     "%1, each built from one complete response to a single viewer message specifically %2.")
-				   : QStringLiteral(
-					     "%1 built from one complete response to a single viewer message specifically %2."))
-				  .arg(findPrefix, targetSuffix)
-			: (multipleClips
-				   ? QStringLiteral(
-					     "%1, each built from one complete response to a single viewer message.")
-				   : QStringLiteral("%1 built from one complete response to a single viewer message."))
-				  .arg(findPrefix);
-	const QString sentence2 =
-		hasTarget
-			? QStringLiteral(
-				  "Start with the selected viewer message's first meaningful words; when only the speaker's reaction is audible, start with the first direct reaction.")
-			: QStringLiteral(
-				  "Prefer a clearly useful, emotionally consequential viewer message while keeping one exchange, and start with the selected viewer message's first meaningful words; when only the speaker's reaction is audible, start with the first direct reaction.");
-	const QString sentence3 = QStringLiteral(
-		"Follow only the speaker's direct answer to that same message until its first complete resolution, keeping the clip focused on that one exchange from start to finish.");
-
-	const QString prompt = QStringLiteral("%1 %2 %3").arg(sentence1, sentence2, sentence3).simplified();
+	const QString target = explicitViewerTargetFromSettings(curationSettings);
+	const QString targetSuffix = viewerMessageTargetSuffix(target, QString());
+	const QString prompt = Curation::renderViewerMessagePrompt(multipleClips, targetSuffix, targetSuffix.isEmpty());
 	if (!hasEnglishOnlyPromptText(prompt))
 		return englishOnlyPresetFallback(selectedRangeTranscript, curationSettings, planHint);
 
@@ -696,9 +725,14 @@ QString deterministicOpusPromptFallback(const QString &generatedPrompt,
 {
 	const QString scope = Curation::scopeForDuration(
 		Curation::selectedDurationSeconds(selectedRangeTranscript, curationSettings));
-	QString target = viewerTargetFromRenderedPrompt(generatedPrompt);
-	if (target.isEmpty())
-		target = deterministicPromptTarget(generatedPrompt, selectedRangeTranscript, curationSettings);
+	QString target = explicitViewerTargetFromSettings(curationSettings);
+	if (target.isEmpty() &&
+	    Curation::resolveIntent(curationSettings, selectedRangeTranscript, generatedPrompt).resolvedPresetId !=
+		    CurationPreset::viewerMessageResponsePresetId()) {
+		target = viewerTargetFromRenderedPrompt(generatedPrompt);
+		if (target.isEmpty())
+			target = deterministicPromptTarget(generatedPrompt, selectedRangeTranscript, curationSettings);
+	}
 	const QStringList namedReferences = Curation::importantNamedReferences(selectedRangeTranscript);
 	const bool needsNamedReference =
 		Curation::transcriptHasPronounDependentNamedReference(selectedRangeTranscript) &&
@@ -715,21 +749,7 @@ QString deterministicOpusPromptFallback(const QString &generatedPrompt,
 		const QString targetSuffix = viewerMessageTargetSuffix(target, QString());
 		if (!targetSuffix.isEmpty()) {
 			const bool multipleClips = Curation::shouldUseMultipleClips(intent);
-			const QString findPrefix = multipleClips ? QStringLiteral("Find continuous, unbroken clips")
-								 : QStringLiteral("Find one continuous, unbroken clip");
-			const QString sentence1 =
-				multipleClips
-					? QStringLiteral(
-						  "%1, each built from one complete response to a single viewer message specifically %2.")
-						  .arg(findPrefix, targetSuffix)
-					: QStringLiteral(
-						  "%1 built from one complete response to a single viewer message specifically %2.")
-						  .arg(findPrefix, targetSuffix);
-			const QString sentence2 = QStringLiteral(
-				"Start with the selected viewer message's first meaningful words; when only the speaker's reaction is audible, start with the first direct reaction.");
-			const QString sentence3 = QStringLiteral(
-				"Follow only the speaker's direct answer to that same message until its first complete resolution, keeping the clip focused on that one exchange from start to finish.");
-			return QStringLiteral("%1 %2 %3").arg(sentence1, sentence2, sentence3).simplified();
+			return Curation::renderViewerMessagePrompt(multipleClips, targetSuffix, false);
 		}
 
 		return OpusPromptRenderer::renderIntentPrompt(intent);

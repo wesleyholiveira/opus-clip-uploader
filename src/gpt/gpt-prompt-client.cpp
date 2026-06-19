@@ -285,10 +285,12 @@ static QString renderInputTemplate(QString templateText, const QString &videoPat
 								  : curationSettings.genre.trimmed());
 	const Curation::Intent intent = Curation::resolveIntent(curationSettings, selectedRangeTranscript);
 	blog(LOG_INFO,
-	     "Resolved GPT curation preset. requested=%s resolved=%s viewerSignals=%s scope=%s selectedSegments=%d selectedDurationSec=%.3f",
+	     "Resolved GPT curation preset. requested=%s resolved=%s viewerSignals=%s scope=%s selectedSegments=%d selectedDurationSec=%.3f scores={viewer=%.2f,advice=%.2f,emotional=%.2f,explanation=%.2f,story=%.2f,opinion=%.2f,tutorial=%.2f}",
 	     curationSettings.curationPreset.toUtf8().constData(), intent.resolvedPresetId.toUtf8().constData(),
 	     intent.viewerSignals ? "true" : "false", intent.scope.toUtf8().constData(),
-	     static_cast<int>(selectedRangeTranscript.segments.size()), intent.selectedDurationSec);
+	     static_cast<int>(selectedRangeTranscript.segments.size()), intent.selectedDurationSec,
+	     intent.viewerExchangeScore, intent.adviceScore, intent.emotionalScore, intent.explanationScore,
+	     intent.storyScore, intent.opinionScore, intent.tutorialScore);
 	templateText.replace(QStringLiteral("{{curation_preset}}"),
 			     CurationPreset::labelForId(intent.resolvedPresetId));
 	templateText.replace(QStringLiteral("{{curation_preset_context}}"),

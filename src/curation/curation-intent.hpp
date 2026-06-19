@@ -37,6 +37,10 @@ enum class BoundaryPolicy {
 	StopBeforeNextViewerMessage,
 	StopBeforeHousekeeping,
 	StopBeforeTopicShift,
+	StopAfterEmotionalPayoff,
+	StopAfterStoryPayoff,
+	StopAfterClaimResolution,
+	StopAfterStepCompletion,
 };
 
 struct Intent {
@@ -44,6 +48,13 @@ struct Intent {
 	QString resolvedPresetId;
 	QString scope;
 	double selectedDurationSec = 0.0;
+	double viewerExchangeScore = 0.0;
+	double adviceScore = 0.0;
+	double emotionalScore = 0.0;
+	double explanationScore = 0.0;
+	double storyScore = 0.0;
+	double opinionScore = 0.0;
+	double tutorialScore = 0.0;
 	bool viewerSignals = false;
 	ContentKind contentKind = ContentKind::Unknown;
 	ClipArchetype archetype = ClipArchetype::Auto;
