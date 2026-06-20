@@ -30,7 +30,7 @@ bool PluginConfig::ensureConfigDir()
 	char *configDir = obs_module_config_path("");
 
 	if (!configDir) {
-		obs_log(LOG_ERROR, "[clip-cropper] Failed to get config directory");
+		blog(LOG_ERROR, "[clip-cropper] Failed to get config directory");
 		return false;
 	}
 
@@ -45,7 +45,7 @@ obs_data_t *PluginConfig::loadConfig()
 	char *configPath = getConfigPath();
 
 	if (!configPath) {
-		obs_log(LOG_ERROR, "[clip-cropper] Failed to get config path");
+		blog(LOG_ERROR, "[clip-cropper] Failed to get config path");
 		return obs_data_create();
 	}
 
@@ -63,7 +63,7 @@ obs_data_t *PluginConfig::loadConfig()
 void PluginConfig::setValue(const QString &key, const QString &value)
 {
 	if (key.trimmed().isEmpty()) {
-		obs_log(LOG_WARNING, "[clip-cropper] Ignoring empty config key");
+		blog(LOG_WARNING, "[clip-cropper] Ignoring empty config key");
 		return;
 	}
 
@@ -72,7 +72,7 @@ void PluginConfig::setValue(const QString &key, const QString &value)
 	char *configPath = getConfigPath();
 
 	if (!configPath) {
-		obs_log(LOG_ERROR, "[clip-cropper] Failed to get config path");
+		blog(LOG_ERROR, "[clip-cropper] Failed to get config path");
 		return;
 	}
 
@@ -82,8 +82,8 @@ void PluginConfig::setValue(const QString &key, const QString &value)
 
 	const bool saved = obs_data_save_json(settings, configPath);
 
-	obs_log(LOG_INFO, "[clip-cropper] Config saved. key=%s saved=%s", key.toUtf8().constData(),
-		saved ? "true" : "false");
+	blog(LOG_INFO, "[clip-cropper] Config saved. key=%s saved=%s", key.toUtf8().constData(),
+	     saved ? "true" : "false");
 
 	obs_data_release(settings);
 	bfree(configPath);
@@ -92,14 +92,14 @@ void PluginConfig::setValue(const QString &key, const QString &value)
 QString PluginConfig::getValue(const QString &key, const QString &defaultValue)
 {
 	if (key.trimmed().isEmpty()) {
-		obs_log(LOG_WARNING, "[clip-cropper] Empty config key requested");
+		blog(LOG_WARNING, "[clip-cropper] Empty config key requested");
 		return defaultValue;
 	}
 
 	char *configPath = getConfigPath();
 
 	if (!configPath) {
-		obs_log(LOG_ERROR, "[clip-cropper] Failed to get config path");
+		blog(LOG_ERROR, "[clip-cropper] Failed to get config path");
 		return defaultValue;
 	}
 
@@ -175,9 +175,9 @@ int PluginConfig::removeValuesWithPrefixes(const QStringList &prefixes)
 	QJsonParseError parseError;
 	const QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
 	if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
-		obs_log(LOG_WARNING,
-			"[clip-cropper] Could not purge config cache keys because settings.json is not a JSON object: %s",
-			parseError.errorString().toUtf8().constData());
+		blog(LOG_WARNING,
+		     "[clip-cropper] Could not purge config cache keys because settings.json is not a JSON object: %s",
+		     parseError.errorString().toUtf8().constData());
 		return 0;
 	}
 
@@ -200,18 +200,18 @@ int PluginConfig::removeValuesWithPrefixes(const QStringList &prefixes)
 
 	QSaveFile out(path);
 	if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-		obs_log(LOG_ERROR, "[clip-cropper] Failed to open settings.json for cache purge: %s",
-			path.toUtf8().constData());
+		blog(LOG_ERROR, "[clip-cropper] Failed to open settings.json for cache purge: %s",
+		     path.toUtf8().constData());
 		return 0;
 	}
 
 	out.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
 	if (!out.commit()) {
-		obs_log(LOG_ERROR, "[clip-cropper] Failed to save settings.json after cache purge: %s",
-			path.toUtf8().constData());
+		blog(LOG_ERROR, "[clip-cropper] Failed to save settings.json after cache purge: %s",
+		     path.toUtf8().constData());
 		return 0;
 	}
 
-	obs_log(LOG_INFO, "[clip-cropper] Purged %d cached config key(s).", keysToRemove.size());
+	blog(LOG_INFO, "[clip-cropper] Purged %d cached config key(s).", keysToRemove.size());
 	return keysToRemove.size();
 }

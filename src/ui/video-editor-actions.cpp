@@ -35,9 +35,17 @@ static bool is_openai_model_enabled()
 	return !model.isEmpty() && model != OPENAI_MODEL_DISABLED;
 }
 
-static bool show_semantic_gate_failure_if_needed(QWidget *parent, const QString &videoPath,
-						 const QString &generatedPrompt)
+static bool show_prompt_blocker_if_needed(QWidget *parent, const QString &videoPath, const QString &generatedPrompt)
 {
+	if (GptPromptClient::isPromptGenerationBlockedPrompt(generatedPrompt)) {
+		const QString reason = GptPromptClient::promptGenerationBlockedReason(generatedPrompt);
+		blog(LOG_WARNING, "GPT prompt generation blocked Opus upload from video editor for %s: %s",
+		     videoPath.toUtf8().constData(), reason.toUtf8().constData());
+		QMessageBox::warning(parent, obsText("Dialog.GptPromptRequiredTitle"),
+				     obsText("Message.GptPromptRequiredButUnavailable").arg(reason));
+		return true;
+	}
+
 	if (!GptPromptClient::isSemanticGateFailurePrompt(generatedPrompt))
 		return false;
 
@@ -114,11 +122,12 @@ static void upload_reviewed_video(QWidget *parent, const QString &videoPath, con
 static void generate_prompt_and_upload_reviewed_video(QWidget *parent, const QString &videoPath,
 						      const CurationSettings &curationSettings)
 {
-	auto startUpload = [parent, videoPath, curationSettings](const QString &generatedPrompt) mutable {
-		if (show_semantic_gate_failure_if_needed(parent, videoPath, generatedPrompt))
+	auto startUpload = [parent, videoPath, curationSettings](GeneratedCurationPromptResult promptResult) mutable {
+		const QString generatedPrompt = promptResult.prompt.trimmed();
+		if (show_prompt_blocker_if_needed(parent, videoPath, generatedPrompt))
 			return;
 
-		CurationSettings finalSettings = curationSettings;
+		CurationSettings finalSettings = promptResult.curationSettings;
 		const bool gptGeneratedPrompt = finalSettings.aiPrompt.trimmed().isEmpty() &&
 						!generatedPrompt.trimmed().isEmpty();
 
@@ -165,11 +174,11 @@ static void generate_prompt_and_upload_reviewed_video(QWidget *parent, const QSt
 	if (!is_openai_model_enabled() || !curationSettings.aiPrompt.trimmed().isEmpty()) {
 		if (!is_openai_model_enabled())
 			blog(LOG_INFO, "OpenAI model is disabled. Skipping GPT prompt generation after review.");
-		startUpload(curationSettings.aiPrompt);
+		startUpload(GeneratedCurationPromptResult{curationSettings.aiPrompt, curationSettings});
 		return;
 	}
 
-	generate_custom_prompt_for_curation_async(parent, videoPath, curationSettings, true, startUpload);
+	generate_custom_prompt_for_curation_result_async(parent, videoPath, curationSettings, true, startUpload);
 }
 
 void open_video_editor_impl(void *private_data)

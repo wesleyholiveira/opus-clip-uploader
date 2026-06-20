@@ -22,6 +22,9 @@ public:
 	static QString configuredInputTextTemplate(const QString &sourceLanguage);
 	static bool isSemanticGateFailurePrompt(const QString &prompt);
 	static QString semanticGateFailureReason(const QString &prompt);
+	static QString promptGenerationBlockedPrompt(const QString &reason);
+	static bool isPromptGenerationBlockedPrompt(const QString &prompt);
+	static QString promptGenerationBlockedReason(const QString &prompt);
 	void cancel();
 	void createOpusPromptAsync(const QString &videoPath, const RecordingTranscript &transcript,
 				   const CurationSettings &curationSettings);

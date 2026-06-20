@@ -1,14 +1,6 @@
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #include <obs-module.h>
 #include <obs-frontend-api.h>
 #include <plugin-support.h>
-
-#ifdef __cplusplus
-}
-#endif
 
 #include <ui/ui.hpp>
 #include <ui/ui-common.hpp>
@@ -109,8 +101,8 @@ static QStringList video_files_modified_between(const QString &directoryPath, co
 	result.removeDuplicates();
 	result.sort();
 
-	blog(LOG_INFO, "[clip-cropper] Recording scan in %s found %lld new file(s).",
-	     directoryPath.toUtf8().constData(), static_cast<long long>(result.size()));
+	blog(LOG_INFO, "[clip-cropper] Recording scan in %s found %d new file(s).", directoryPath.toUtf8().constData(),
+	     result.size());
 
 	return result;
 }

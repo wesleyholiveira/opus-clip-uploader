@@ -115,11 +115,75 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 	src/models/curation-settings.hpp
 	src/models/transcript.hpp
 
+	src/curation/domain/curation-plan.hpp
+	src/curation/analysis/named-reference-detector.cpp
+	src/curation/analysis/named-reference-detector.hpp
+	src/curation/compiler/opus-prompt-compiler.cpp
+	src/curation/compiler/opus-prompt-compiler.hpp
+	src/curation/compiler/prompt-quality-gate.cpp
+	src/curation/compiler/prompt-quality-gate.hpp
+	src/curation/range/curation-range-strategy.cpp
+	src/curation/range/curation-range-strategy.hpp
+	src/curation/range/viewer-message-focus-range.cpp
+	src/curation/range/viewer-message-focus-range.hpp
+	src/curation/range/viewer-message-range-strategy.cpp
+	src/curation/range/viewer-message-range-strategy.hpp
+	src/curation/scoring/text-analysis.cpp
+	src/curation/scoring/text-analysis.hpp
+	src/curation/scoring/transcript-index.cpp
+	src/curation/scoring/transcript-index.hpp
+	src/curation/scoring/clip-candidate.hpp
+	src/curation/scoring/candidate-generator.cpp
+	src/curation/scoring/candidate-generator.hpp
+	src/curation/scoring/cheap-clip-scorer.cpp
+	src/curation/scoring/cheap-clip-scorer.hpp
+	src/curation/scoring/clip-ranker.cpp
+	src/curation/scoring/clip-ranker.hpp
+	src/curation/scoring/clip-scoring-pipeline.cpp
+	src/curation/scoring/clip-scoring-pipeline.hpp
+	src/curation/prompt/curation-prompt-recipe.cpp
+	src/curation/prompt/curation-prompt-recipe.hpp
+	src/curation/rules/curation-rule-helpers.cpp
+	src/curation/rules/curation-rule-helpers.hpp
+	src/curation/rules/curation-preset-rule.hpp
+	src/curation/rules/curation-rule-engine.cpp
+	src/curation/rules/curation-rule-engine.hpp
+	src/curation/rules/auto-rule.cpp
+	src/curation/rules/auto-rule.hpp
+	src/curation/rules/viewer-message-response-rule.cpp
+	src/curation/rules/viewer-message-response-rule.hpp
+	src/curation/rules/advice-answer-rule.cpp
+	src/curation/rules/advice-answer-rule.hpp
+	src/curation/rules/emotional-reaction-rule.cpp
+	src/curation/rules/emotional-reaction-rule.hpp
+	src/curation/rules/explanation-rule.cpp
+	src/curation/rules/explanation-rule.hpp
+	src/curation/rules/story-arc-rule.cpp
+	src/curation/rules/story-arc-rule.hpp
+	src/curation/rules/opinion-rule.cpp
+	src/curation/rules/opinion-rule.hpp
+	src/curation/rules/tutorial-step-rule.cpp
+	src/curation/rules/tutorial-step-rule.hpp
+	src/curation/service/curation-service.cpp
+	src/curation/service/curation-service.hpp
+	src/curation/curation-preset.cpp
+	src/curation/curation-preset.hpp
+	src/curation/curation-signals.cpp
+	src/curation/curation-signals.hpp
+	src/curation/curation-intent.cpp
+	src/curation/curation-intent.hpp
+	src/curation/curation-rules.cpp
+	src/curation/curation-rules.hpp
+	src/curation/opus-prompt-renderer.cpp
+	src/curation/opus-prompt-renderer.hpp
+
 	src/transcription/transcript-store.cpp
 	src/transcription/transcript-store.hpp
 	src/transcription/realtime-transcription-service.cpp
 	src/transcription/realtime-transcription-service.hpp
 
+	src/gpt/openai-chat-payload.cpp
+	src/gpt/openai-chat-payload.hpp
 	src/gpt/gpt-prompt-client.cpp
 	src/gpt/gpt-prompt-client.hpp
 	src/gpt/gpt-prompt-store.cpp
@@ -130,6 +194,9 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 	src/utils/file.cpp
 	src/utils/file.hpp
 
+	src/opus/opus-api-types.hpp
+	src/opus/opus-curation-payload-builder.cpp
+	src/opus/opus-curation-payload-builder.hpp
 	src/opus/opus-clip-client.cpp
 	src/opus/opus-clip-client.hpp
 

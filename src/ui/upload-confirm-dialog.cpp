@@ -34,9 +34,17 @@ static bool is_openai_model_enabled()
 	return !model.isEmpty() && model != OPENAI_MODEL_DISABLED;
 }
 
-static bool show_semantic_gate_failure_if_needed(QWidget *parent, const QString &videoPath,
-						 const QString &generatedPrompt)
+static bool show_prompt_blocker_if_needed(QWidget *parent, const QString &videoPath, const QString &generatedPrompt)
 {
+	if (GptPromptClient::isPromptGenerationBlockedPrompt(generatedPrompt)) {
+		const QString reason = GptPromptClient::promptGenerationBlockedReason(generatedPrompt);
+		blog(LOG_WARNING, "GPT prompt generation blocked Opus upload for %s: %s",
+		     videoPath.toUtf8().constData(), reason.toUtf8().constData());
+		QMessageBox::warning(parent, obsText("Dialog.GptPromptRequiredTitle"),
+				     obsText("Message.GptPromptRequiredButUnavailable").arg(reason));
+		return true;
+	}
+
 	if (!GptPromptClient::isSemanticGateFailurePrompt(generatedPrompt))
 		return false;
 
@@ -109,13 +117,14 @@ static void generate_prompt_and_upload(QWidget *parent, const QStringList &paths
 		return;
 	}
 
-	auto startUpload = [parent, paths, apiKey, curationSettings](const QString &generatedPrompt) mutable {
-		if (show_semantic_gate_failure_if_needed(parent, paths.first(), generatedPrompt)) {
+	auto startUpload = [parent, paths, apiKey, curationSettings](GeneratedCurationPromptResult promptResult) mutable {
+		const QString generatedPrompt = promptResult.prompt.trimmed();
+		if (show_prompt_blocker_if_needed(parent, paths.first(), generatedPrompt)) {
 			clear_pending_recording_paths();
 			return;
 		}
 
-		CurationSettings finalSettings = curationSettings;
+		CurationSettings finalSettings = promptResult.curationSettings;
 		const bool shouldReviewGeneratedPrompt = finalSettings.aiPrompt.trimmed().isEmpty() &&
 							 !generatedPrompt.trimmed().isEmpty();
 
@@ -136,11 +145,11 @@ static void generate_prompt_and_upload(QWidget *parent, const QStringList &paths
 	if (!is_openai_model_enabled() || !curationSettings.aiPrompt.trimmed().isEmpty()) {
 		if (!is_openai_model_enabled())
 			blog(LOG_INFO, "OpenAI model is disabled. Skipping GPT prompt generation after review.");
-		startUpload(curationSettings.aiPrompt);
+		startUpload(GeneratedCurationPromptResult{curationSettings.aiPrompt, curationSettings});
 		return;
 	}
 
-	generate_custom_prompt_for_curation_async(parent, paths.first(), curationSettings, true, startUpload);
+	generate_custom_prompt_for_curation_result_async(parent, paths.first(), curationSettings, true, startUpload);
 }
 
 static void open_review_and_upload(QWidget *parent, const QStringList &paths, const QString &apiKey)

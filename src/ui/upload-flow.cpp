@@ -24,6 +24,7 @@
 #include <QWidget>
 
 #include <functional>
+#include <memory>
 
 static const QString &title = clipCropperTitle();
 
@@ -92,7 +93,7 @@ void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCance
 		QVector<QPointer<UploadWorker>> workers;
 	};
 
-	auto *state = new UploadBatchState();
+	auto state = std::make_shared<UploadBatchState>();
 	state->paths = recordingPaths;
 	state->progress = QVector<int>(recordingPaths.size(), 0);
 	state->statusMessages = QVector<QString>(recordingPaths.size());
@@ -163,8 +164,6 @@ void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCance
 			QMessageBox::information(dialog, title, obsText("Message.UploadSuccess"));
 		}
 
-		delete state;
-
 		mark_progress_window_finished(dialog);
 		dialog->accept();
 		return true;
@@ -200,6 +199,7 @@ void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCance
 	bind_progress_window_cancel(dialog, cancelUpload);
 
 	auto *startNext = new std::function<void()>();
+	QObject::connect(dialog, &QObject::destroyed, dialog, [startNext]() { delete startNext; });
 
 	*startNext = [=]() mutable {
 		if (state->canceled)
@@ -221,10 +221,8 @@ void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCance
 
 				updateProgress();
 
-				if (finishBatchIfNeeded()) {
-					delete startNext;
+				if (finishBatchIfNeeded())
 					return;
-				}
 
 				continue;
 			}
@@ -288,10 +286,8 @@ void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCance
 
 					updateProgress();
 
-					if (finishBatchIfNeeded()) {
-						delete startNext;
+					if (finishBatchIfNeeded())
 						return;
-					}
 
 					(*startNext)();
 				},
@@ -309,10 +305,8 @@ void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCance
 
 					updateProgress();
 
-					if (finishBatchIfNeeded()) {
-						delete startNext;
+					if (finishBatchIfNeeded())
 						return;
-					}
 
 					(*startNext)();
 				},

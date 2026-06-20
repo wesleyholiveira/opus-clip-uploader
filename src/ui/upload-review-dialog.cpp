@@ -11,6 +11,7 @@ extern "C" {
 #include "ui/advanced-settings-tree.hpp"
 #include "ui/ui-common.hpp"
 #include "ui/video-marker-editor.hpp"
+#include "curation/curation-preset.hpp"
 #include "utils/config.hpp"
 
 #include <QAbstractItemView>
@@ -145,6 +146,18 @@ static void setComboCurrentDataIfExists(QComboBox *combo, const QString &value)
 	setComboCurrentTextIfExists(combo, value);
 }
 
+static void setOpusModelOrDefault(QComboBox *combo, const QString &value = {})
+{
+	if (!combo)
+		return;
+
+	const QString requested = value.trimmed().isEmpty() ? QStringLiteral("ClipAnything") : value.trimmed();
+	setComboCurrentTextIfExists(combo, requested);
+
+	if (combo->currentText().trimmed().isEmpty() || combo->currentText() == QStringLiteral("ClipBasic"))
+		setComboCurrentTextIfExists(combo, QStringLiteral("ClipAnything"));
+}
+
 static double totalRangeDurationSeconds(const QVector<ClipDuration> &ranges)
 {
 	double totalSeconds = 0.0;
@@ -215,6 +228,7 @@ UploadReviewDialog::UploadReviewDialog(const QString &videoPath, const CurationS
 
 	modelInput = new QComboBox(this);
 	modelInput->addItems(QStringList{"ClipBasic", "ClipAnything"});
+	setOpusModelOrDefault(modelInput);
 
 	clipLengthInput = new QComboBox(this);
 	clipLengthInput->addItem(obsText("Option.ClipLengthAuto"), QStringLiteral("Auto"));
@@ -237,6 +251,11 @@ UploadReviewDialog::UploadReviewDialog(const QString &videoPath, const CurationS
 	genreInput->addItems(QStringList{"Auto", "Q&A", "Commentary", "Marketing", "Webinar", "Motivational speech",
 					 "Podcast", "Academic", "Listicle", "Product reviews", "How-to", "Comedy",
 					 "Sports commentary", "Church", "News", "Vlog", "Gaming", "Others"});
+
+	curationPresetInput = new QComboBox(this);
+	for (const auto &option : CurationPreset::options())
+		curationPresetInput->addItem(option.second, option.first);
+	setComboCurrentDataIfExists(curationPresetInput, QStringLiteral("auto"));
 
 	skipCurateInput = new QCheckBox(obsText("Label.SkipCurate"), this);
 
@@ -266,6 +285,7 @@ UploadReviewDialog::UploadReviewDialog(const QString &videoPath, const CurationS
 	advancedTree->addField(obsText("Settings.ClipLength"), clipLengthInput);
 	advancedTree->addField(obsText("Settings.TopicKeywords"), topicKeywordsInput);
 	advancedTree->addField(obsText("Settings.Genre"), genreInput);
+	advancedTree->addField(obsText("Settings.CurationPreset"), curationPresetInput);
 	advancedTree->addField(obsText("Settings.SkipCurate"), skipCurateInput);
 	advancedTree->addField(obsText("Settings.CustomPrompt"), customPromptInput);
 
@@ -348,7 +368,8 @@ void UploadReviewDialog::applyCurationSettings(const CurationSettings &settings)
 		topicKeywordsInput->setText(settings.topicKeywords.join(QStringLiteral(", ")));
 
 	setComboCurrentTextIfExists(genreInput, settings.genre);
-	setComboCurrentTextIfExists(modelInput, settings.model);
+	setComboCurrentDataIfExists(curationPresetInput, CurationPreset::normalizeId(settings.curationPreset));
+	setOpusModelOrDefault(modelInput, settings.model);
 	setComboCurrentDataIfExists(clipLengthInput, settings.clipLengthPreset);
 	setComboCurrentDataIfExists(sourceLanguageInput, normalizeLanguageSetting(settings.sourceLanguage));
 	setComboCurrentDataIfExists(transcriptionLanguageInput,
@@ -418,7 +439,11 @@ void UploadReviewDialog::loadSavedCurationOptions()
 	}
 
 	setComboCurrentTextIfExists(genreInput, root.value(QStringLiteral("genre")).toString());
-	setComboCurrentTextIfExists(modelInput, root.value(QStringLiteral("model")).toString());
+	setComboCurrentDataIfExists(
+		curationPresetInput,
+		CurationPreset::normalizeId(
+			root.value(QStringLiteral("curationPreset")).toString(QStringLiteral("auto"))));
+	setOpusModelOrDefault(modelInput, root.value(QStringLiteral("model")).toString());
 	setComboCurrentDataIfExists(clipLengthInput,
 				    root.value(QStringLiteral("clipLengthPreset")).toString(QStringLiteral("Medium")));
 	setComboCurrentDataIfExists(
@@ -475,6 +500,8 @@ void UploadReviewDialog::saveCurationOptions() const
 	}
 	root.insert(QStringLiteral("topicKeywords"), topicKeywords);
 	root.insert(QStringLiteral("genre"), genreInput ? genreInput->currentText() : QStringLiteral("Auto"));
+	root.insert(QStringLiteral("curationPreset"),
+		    curationPresetInput ? curationPresetInput->currentData().toString() : QStringLiteral("auto"));
 	root.insert(QStringLiteral("model"), modelInput ? modelInput->currentText() : QStringLiteral("ClipAnything"));
 	root.insert(QStringLiteral("clipLengthPreset"),
 		    clipLengthInput ? clipLengthInput->currentData().toString() : QStringLiteral("Medium"));
@@ -523,6 +550,8 @@ CurationSettings UploadReviewDialog::curationSettings() const
 		settings.clipDurations.append(range);
 
 	settings.genre = genreInput->currentText();
+	settings.curationPreset = curationPresetInput ? curationPresetInput->currentData().toString()
+						      : QStringLiteral("auto");
 	settings.skipCurate = skipCurateInput->isChecked();
 	settings.model = modelInput->currentText();
 	settings.clipLengthPreset = clipLengthInput ? clipLengthInput->currentData().toString()

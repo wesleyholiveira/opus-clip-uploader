@@ -23,21 +23,28 @@
 #include <utility>
 
 #include "gpt/gpt-prompt-store.hpp"
+#include "gpt/openai-chat-payload.hpp"
+#include "curation/analysis/named-reference-detector.hpp"
+#include "curation/compiler/opus-prompt-compiler.hpp"
+#include "curation/compiler/prompt-quality-gate.hpp"
+#include "curation/curation-preset.hpp"
+#include "curation/curation-rules.hpp"
+#include "curation/curation-signals.hpp"
+#include "curation/opus-prompt-renderer.hpp"
 #include "utils/config.hpp"
 
 static constexpr const char *OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions";
 static constexpr const char *SEMANTIC_GATE_FAILURE_PREFIX = "NO_STRONG_CLIP_FOUND:";
+static constexpr const char *PROMPT_GENERATION_BLOCKED_PREFIX = "GPT_PROMPT_BLOCKED:";
 static constexpr const char *OPUS_PROMPT_PREFIX = "OPUS_PROMPT:";
 static constexpr const char *REPAIR_TEMPLATE_SECTION = "repair_opus_prompt";
 
-static constexpr const char *CONFIG_GPT_INPUT_TEMPLATE_PREFIX = "gpt.input_text_template.v33.";
+static constexpr const char *CONFIG_GPT_INPUT_TEMPLATE_PREFIX = "gpt.input_text_template.v55.";
 static constexpr const char *CONFIG_OPUS_SOURCE_LANGUAGE = "opus_source_lang";
 static constexpr const char *CONFIG_GPT_PROMPT_REPAIR_MODE = "gpt.prompt_repair_mode";
 static constexpr const char *CONFIG_GPT_TRANSCRIPT_CONTEXT_PADDING_SEC = "gpt_transcript_context_padding_sec";
 static constexpr double DEFAULT_GPT_TRANSCRIPT_CONTEXT_PADDING_SEC = 60.0;
 static constexpr const char *GPT_PROMPT_REPAIR_MODE_GPT = "gpt";
-static constexpr int GPT_PROMPT_SEED = 12345;
-
 static QString loadTemplateSectionFromRuntimeFile(const QString &sectionName, const QString &logLabel);
 
 static double configuredGptTranscriptContextPaddingSeconds()
@@ -53,466 +60,7 @@ static double configuredGptTranscriptContextPaddingSeconds()
 	return std::clamp(value, 0.0, 600.0);
 }
 
-static QString lineValueForPrefix(const QString &text, const char *prefix)
-{
-	const QString prefixText = QString::fromLatin1(prefix);
-	const QStringList lines = text.split(QLatin1Char('\n'));
-
-	for (QString line : lines) {
-		line = line.trimmed();
-		if (line.startsWith(prefixText, Qt::CaseInsensitive))
-			return line.mid(prefixText.size()).trimmed();
-	}
-
-	return {};
-}
-
-static double selectedDurationSec(const RecordingTranscript &selectedRangeTranscript,
-				  const CurationSettings &curationSettings)
-{
-	double duration = 0.0;
-
-	for (const ClipDuration &range : curationSettings.clipDurations) {
-		if (range.endSec > range.startSec)
-			duration += range.endSec - range.startSec;
-	}
-
-	if (duration <= 0.0 && curationSettings.rangeEndSec > curationSettings.rangeStartSec)
-		duration = curationSettings.rangeEndSec - curationSettings.rangeStartSec;
-
-	if (duration <= 0.0 && !selectedRangeTranscript.segments.isEmpty()) {
-		const double startSec = selectedRangeTranscript.segments.first().startSec;
-		const double endSec = selectedRangeTranscript.segments.last().endSec;
-		if (endSec > startSec)
-			duration = endSec - startSec;
-	}
-
-	return duration;
-}
-
-static QString curationScopeForDuration(double durationSec)
-{
-	if (durationSec >= 2400.0)
-		return QStringLiteral("large_range_multiple_clips");
-
-	if (durationSec >= 600.0)
-		return QStringLiteral("medium_range_one_or_more_clips");
-
-	return QStringLiteral("short_range_best_moment");
-}
-
-static QString opusPromptPayload(const QString &prompt)
-{
-	const QString value = lineValueForPrefix(prompt, OPUS_PROMPT_PREFIX);
-	if (!value.trimmed().isEmpty())
-		return value.trimmed();
-
-	return prompt.trimmed();
-}
-
-static int wordCount(const QString &text)
-{
-	return text.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts).size();
-}
-
-static int substringCount(const QString &text, const QString &needle)
-{
-	if (needle.isEmpty())
-		return 0;
-
-	int count = 0;
-	int index = 0;
-	while ((index = text.indexOf(needle, index, Qt::CaseInsensitive)) >= 0) {
-		++count;
-		index += needle.size();
-	}
-	return count;
-}
-
-static bool containsAnyPhrase(const QString &text, const QStringList &phrases)
-{
-	for (const QString &phrase : phrases) {
-		if (text.contains(phrase, Qt::CaseInsensitive))
-			return true;
-	}
-	return false;
-}
-
-static void applyDeterministicSampling(QJsonObject &payload);
-static QJsonObject buildChatCompletionsPayload(const QString &model, const QString &inputText, int maxTokens,
-					       bool jsonMode = true);
 static bool gptPromptRepairEnabled();
-static QStringList importantNamedReferences(const RecordingTranscript &transcript);
-static bool transcriptHasPronounDependentNamedReference(const RecordingTranscript &transcript);
-static bool transcriptHasReferenceBackedUnlockMethod(const RecordingTranscript &transcript);
-static bool promptContainsAnyNamedReference(const QString &prompt, const RecordingTranscript &transcript);
-static QString deterministicPromptTarget(const QString &generatedPrompt,
-					 const RecordingTranscript &selectedRangeTranscript,
-					 const CurationSettings &curationSettings);
-static QString deterministicOpusPromptFallback(const QString &generatedPrompt,
-					       const RecordingTranscript &selectedRangeTranscript,
-					       const CurationSettings &curationSettings);
-static QString renderStructuredPlanToOpusPrompt(const QJsonObject &plan,
-						const RecordingTranscript &selectedRangeTranscript,
-						const CurationSettings &curationSettings);
-static QString normalizeStructuredPlanOutput(const QString &rawOutput,
-					     const RecordingTranscript &selectedRangeTranscript,
-					     const CurationSettings &curationSettings);
-
-static QStringList generatedPromptQualityIssues(const QString &prompt,
-						const RecordingTranscript &selectedRangeTranscript,
-						const CurationSettings &curationSettings)
-{
-	QStringList issues;
-	const QString opusPrompt = opusPromptPayload(prompt);
-	const QString normalized = opusPrompt.simplified();
-	const QString lower = normalized.toLower();
-
-	if (normalized.isEmpty()) {
-		issues << QStringLiteral("empty prompt");
-		return issues;
-	}
-
-	if (!normalized.startsWith(QStringLiteral("Find "), Qt::CaseInsensitive))
-		issues << QStringLiteral("prompt does not start with Find");
-
-	const int words = wordCount(normalized);
-	if (words > 95)
-		issues << QStringLiteral("too verbose for a predictable ClipAnything search prompt");
-
-	if (substringCount(normalized, QStringLiteral(". ")) > 2)
-		issues << QStringLiteral("does not follow the expected 3-sentence maximum");
-
-	if (lower.contains(QStringLiteral("especially")))
-		issues << QStringLiteral("uses especially to append adjacent topics");
-
-	if (normalized.contains(QLatin1Char(':')))
-		issues << QStringLiteral("uses a colon that may introduce a topic catalog");
-
-	if (lower.contains(QStringLiteral("also look for")) || lower.contains(QStringLiteral("also find")))
-		issues << QStringLiteral("adds a second search target");
-
-	const QRegularExpression genderedSpeakerPattern(QStringLiteral("\\bspeaker\\b[^.]{0,80}\\b(his|her)\\b"),
-							QRegularExpression::CaseInsensitiveOption);
-	if (genderedSpeakerPattern.match(normalized).hasMatch())
-		issues << QStringLiteral("assumes the speaker's gender");
-
-	if (lower.contains(QStringLiteral("why it matters")) &&
-	    (lower.contains(QStringLiteral("how it works")) || lower.contains(QStringLiteral("what the plan"))))
-		issues << QStringLiteral("uses broad alternative objectives");
-
-	if (substringCount(lower, QStringLiteral(" or ")) >= 2)
-		issues << QStringLiteral("uses too many OR alternatives");
-
-	if (substringCount(normalized, QStringLiteral(",")) >= 7)
-		issues << QStringLiteral("looks like a topic catalog");
-
-	const bool mentionsMethodOrRoutine = containsAnyPhrase(
-		lower, {QStringLiteral("method"), QStringLiteral("routine"), QStringLiteral("daily loop"),
-			QStringLiteral("framework"), QStringLiteral("process")});
-	const bool mentionsRoadmap = containsAnyPhrase(
-		lower, {QStringLiteral("roadmap"), QStringLiteral("8-week"), QStringLiteral("eight-week"),
-			QStringLiteral("week-by-week"), QStringLiteral("progression")});
-	const bool mentionsTools =
-		containsAnyPhrase(lower, {QStringLiteral("tandem"), QStringLiteral("tool"), QStringLiteral("tools"),
-					  QStringLiteral("artificial intelligence"), QStringLiteral("gpt")});
-	const bool mentionsMotivation =
-		containsAnyPhrase(lower, {QStringLiteral("motivation"), QStringLiteral("why they started"),
-					  QStringLiteral("why the speaker started"),
-					  QStringLiteral("why she is starting"), QStringLiteral("why he is starting"),
-					  QStringLiteral("reason for learning"), QStringLiteral("reason for starting"),
-					  QStringLiteral("starting this challenge"), QStringLiteral("challenge")});
-
-	if (mentionsMethodOrRoutine && mentionsRoadmap)
-		issues << QStringLiteral("mixes method/routine with roadmap/progression");
-
-	if (mentionsMethodOrRoutine && mentionsTools && mentionsRoadmap)
-		issues << QStringLiteral("mixes method, tools, and roadmap in one target");
-
-	if (mentionsMethodOrRoutine && mentionsMotivation)
-		issues << QStringLiteral("mixes motivation/challenge with method/routine");
-
-	if (mentionsMethodOrRoutine && mentionsMotivation && mentionsRoadmap)
-		issues << QStringLiteral("mixes motivation, method, and roadmap");
-
-	const bool referenceBackedUnlockMethod = transcriptHasReferenceBackedUnlockMethod(selectedRangeTranscript);
-	if (referenceBackedUnlockMethod &&
-	    containsAnyPhrase(lower, {QStringLiteral("daily loop"), QStringLiteral("daily study loop"),
-				      QStringLiteral("study routine"), QStringLiteral("input"),
-				      QStringLiteral("spaced repetition"), QStringLiteral("vocabulary"),
-				      QStringLiteral("practice"), QStringLiteral("natives"),
-				      QStringLiteral("reason for learning"), QStringLiteral("starting this challenge"),
-				      QStringLiteral("challenge"), QStringLiteral("roadmap"), QStringLiteral("8-week"),
-				      QStringLiteral("plan")}))
-		issues << QStringLiteral(
-			"mixes reference-backed unlock method with routine, motivation, roadmap, tools, or practice");
-
-	if (referenceBackedUnlockMethod &&
-	    (lower.contains(QStringLiteral("making sure")) || lower.contains(QStringLiteral("make sure"))))
-		issues << QStringLiteral("uses a meta-instruction instead of a ClipAnything search target");
-
-	const QString scope = curationScopeForDuration(selectedDurationSec(selectedRangeTranscript, curationSettings));
-	if (scope == QStringLiteral("short_range_best_moment") &&
-	    (mentionsRoadmap || substringCount(lower, QStringLiteral(" and ")) >= 5))
-		issues << QStringLiteral("too broad for the short clip preset");
-
-	if (transcriptHasPronounDependentNamedReference(selectedRangeTranscript) &&
-	    !promptContainsAnyNamedReference(normalized, selectedRangeTranscript))
-		issues << QStringLiteral("drops a named reference needed to resolve pronouns or indirect references");
-
-	if (lower.contains(QStringLiteral("duration")) || lower.contains(QStringLiteral("seconds")) ||
-	    lower.contains(QStringLiteral("minutes")) || lower.contains(QStringLiteral("timestamps")))
-		issues << QStringLiteral("mentions duration or timestamps");
-
-	issues.removeDuplicates();
-	return issues;
-}
-
-static bool shouldRepairGeneratedPrompt(const QString &prompt, const RecordingTranscript &selectedRangeTranscript,
-					const CurationSettings &curationSettings, QStringList *issues = nullptr)
-{
-	const QStringList detectedIssues =
-		generatedPromptQualityIssues(prompt, selectedRangeTranscript, curationSettings);
-	if (issues)
-		*issues = detectedIssues;
-	return !detectedIssues.isEmpty();
-}
-
-static int transcriptTextCharCount(const RecordingTranscript &transcript)
-{
-	int chars = 0;
-	for (const TranscriptSegment &segment : transcript.segments)
-		chars += segment.text.trimmed().size();
-	return chars;
-}
-
-static bool allowNoStrongFailure(const RecordingTranscript &selectedRangeTranscript,
-				 const CurationSettings &curationSettings)
-{
-	const double durationSec = selectedDurationSec(selectedRangeTranscript, curationSettings);
-	const int segmentCount = selectedRangeTranscript.segments.size();
-	const int textChars = transcriptTextCharCount(selectedRangeTranscript);
-
-	return durationSec < 90.0 || segmentCount < 8 || textChars < 400;
-}
-
-static QString renderFallbackRubricTemplate(QString templateText, const CurationSettings &curationSettings)
-{
-	QString topic = curationSettings.topicKeywords.join(QStringLiteral(", ")).trimmed();
-	if (topic.isEmpty())
-		topic = QStringLiteral("the strongest topics in the selected range");
-
-	templateText.replace(QStringLiteral("{{topic_keywords}}"), topic);
-	return templateText.trimmed();
-}
-
-static QString fallbackRubricOpusPrompt(const CurationSettings &curationSettings)
-{
-	const QString runtimeTemplate = loadTemplateSectionFromRuntimeFile(QStringLiteral("fallback_opus_prompt"),
-									   QStringLiteral("GPT fallback rubric"));
-	if (!runtimeTemplate.trimmed().isEmpty())
-		return renderFallbackRubricTemplate(runtimeTemplate, curationSettings);
-
-	QString topic = curationSettings.topicKeywords.join(QStringLiteral(", ")).trimmed();
-	if (topic.isEmpty())
-		topic = QStringLiteral("the strongest topics in the selected range");
-
-	return QStringLiteral(
-		       "Find self-contained clips within the selected range from one dominant sub-arc about %1. "
-		       "Prefer complete arcs with a natural start, focused development, clear payoff, and natural ending. "
-		       "Avoid isolated fragments, housekeeping, timestamps, visual effects, and duration requests.")
-		.arg(topic);
-}
-
-static QString jsonStringValue(const QJsonObject &object, const QString &key)
-{
-	return object.value(key).toString().simplified();
-}
-
-static QString cleanPlanPhrase(QString phrase)
-{
-	phrase = phrase.simplified();
-	phrase.remove(
-		QRegularExpression(QStringLiteral("^OPUS_PROMPT\\s*:\\s*"), QRegularExpression::CaseInsensitiveOption));
-	phrase.remove(QRegularExpression(QStringLiteral("^[\\-–—•]+\\s*")));
-	while (phrase.endsWith(QLatin1Char('.')) || phrase.endsWith(QLatin1Char(';')) ||
-	       phrase.endsWith(QLatin1Char(':')))
-		phrase.chop(1);
-	return phrase.trimmed();
-}
-
-static QString stripLeadingFindTarget(QString target)
-{
-	target = cleanPlanPhrase(target);
-	target.remove(QRegularExpression(
-		QStringLiteral(
-			"^find\\s+(one\\s+|multiple\\s+|the\\s+)?(clear\\s+|strong\\s+|self-contained\\s+|strongest\\s+)*(clip|clips|moment)s?\\s+(where|about)\\s+"),
-		QRegularExpression::CaseInsensitiveOption));
-	target.remove(QRegularExpression(
-		QStringLiteral(
-			"^the\\s+speaker\\s+(explains|answers|tells|argues|demonstrates|compares|walks through)\\s+"),
-		QRegularExpression::CaseInsensitiveOption));
-	return cleanPlanPhrase(target);
-}
-
-static QString arcVerbForType(QString arcType)
-{
-	arcType = arcType.trimmed().toLower();
-	if (arcType == QStringLiteral("advice_answer") || arcType == QStringLiteral("qa_answer"))
-		return QStringLiteral("answers");
-	if (arcType == QStringLiteral("story"))
-		return QStringLiteral("tells");
-	if (arcType == QStringLiteral("opinion"))
-		return QStringLiteral("argues");
-	if (arcType == QStringLiteral("comparison"))
-		return QStringLiteral("compares");
-	if (arcType == QStringLiteral("demo_or_walkthrough") || arcType == QStringLiteral("tutorial_step"))
-		return QStringLiteral("walks through");
-	return QStringLiteral("explains");
-}
-
-static QString scopeFindPhrase(const RecordingTranscript &selectedRangeTranscript,
-			       const CurationSettings &curationSettings)
-{
-	const QString scope = curationScopeForDuration(selectedDurationSec(selectedRangeTranscript, curationSettings));
-	if (scope == QStringLiteral("large_range_multiple_clips"))
-		return QStringLiteral("Find multiple strong self-contained clips where");
-	if (scope == QStringLiteral("short_range_best_moment"))
-		return QStringLiteral("Find the strongest self-contained moment where");
-	return QStringLiteral("Find one or more strong self-contained clips where");
-}
-
-static QJsonObject extractJsonObjectFromText(const QString &rawOutput)
-{
-	QString text = rawOutput.trimmed();
-	if (text.startsWith(QStringLiteral("```"))) {
-		text.remove(QRegularExpression(QStringLiteral("^```(?:json)?\\s*"),
-					       QRegularExpression::CaseInsensitiveOption));
-		text.remove(QRegularExpression(QStringLiteral("\\s*```$")));
-		text = text.trimmed();
-	}
-
-	QJsonParseError error;
-	QJsonDocument doc = QJsonDocument::fromJson(text.toUtf8(), &error);
-	if (!doc.isObject()) {
-		const int firstBrace = text.indexOf(QLatin1Char('{'));
-		const int lastBrace = text.lastIndexOf(QLatin1Char('}'));
-		if (firstBrace >= 0 && lastBrace > firstBrace) {
-			const QString slice = text.mid(firstBrace, lastBrace - firstBrace + 1);
-			doc = QJsonDocument::fromJson(slice.toUtf8(), &error);
-		}
-	}
-
-	if (!doc.isObject())
-		return {};
-
-	QJsonObject object = doc.object();
-	if (object.contains(QStringLiteral("plan")) && object.value(QStringLiteral("plan")).isObject())
-		object = object.value(QStringLiteral("plan")).toObject();
-
-	return object;
-}
-
-static QString renderStructuredPlanToOpusPrompt(const QJsonObject &plan,
-						const RecordingTranscript &selectedRangeTranscript,
-						const CurationSettings &curationSettings)
-{
-	const bool noStrongClip = plan.value(QStringLiteral("no_strong_clip_found")).toBool(false);
-	if (noStrongClip) {
-		QString reason = jsonStringValue(plan, QStringLiteral("reason"));
-		if (reason.isEmpty())
-			reason = QStringLiteral(
-				"No complete self-contained moment with a clear payoff was found in the selected range.");
-		return QString::fromLatin1(SEMANTIC_GATE_FAILURE_PREFIX) + QLatin1Char(' ') + reason;
-	}
-
-	const QString arcType = jsonStringValue(plan, QStringLiteral("arc_type"));
-	QString target = stripLeadingFindTarget(jsonStringValue(plan, QStringLiteral("main_target")));
-	QString contextPhrase = cleanPlanPhrase(jsonStringValue(plan, QStringLiteral("context_phrase")));
-	QString opening = cleanPlanPhrase(jsonStringValue(plan, QStringLiteral("opening_criteria")));
-	QString development = cleanPlanPhrase(jsonStringValue(plan, QStringLiteral("development_criteria")));
-	QString ending = cleanPlanPhrase(jsonStringValue(plan, QStringLiteral("ending_criteria")));
-	QString boundary = cleanPlanPhrase(jsonStringValue(plan, QStringLiteral("boundary_criteria")));
-
-	if (target.isEmpty())
-		target = deterministicPromptTarget(QString(), selectedRangeTranscript, curationSettings);
-	if (opening.isEmpty())
-		opening = QStringLiteral(
-			"introduce the idea with enough local context for the first sentence to stand alone");
-	if (development.isEmpty())
-		development = QStringLiteral("develop one continuous local explanation or answer");
-	if (ending.isEmpty())
-		ending = QStringLiteral("end after the local point is resolved");
-	if (boundary.isEmpty())
-		boundary = QStringLiteral("unfinished setup, list items, or mid-thought transitions");
-
-	if (!contextPhrase.isEmpty() && !contextPhrase.startsWith(QStringLiteral("with"), Qt::CaseInsensitive) &&
-	    !contextPhrase.startsWith(QStringLiteral("through"), Qt::CaseInsensitive) &&
-	    !contextPhrase.startsWith(QStringLiteral("using"), Qt::CaseInsensitive) &&
-	    !contextPhrase.startsWith(QStringLiteral("from"), Qt::CaseInsensitive) &&
-	    !contextPhrase.startsWith(QStringLiteral("about"), Qt::CaseInsensitive))
-		contextPhrase = QStringLiteral("with context from %1").arg(contextPhrase);
-
-	const QString sentence1 =
-		QStringLiteral("%1 the speaker %2 %3%4.")
-			.arg(scopeFindPhrase(selectedRangeTranscript, curationSettings), arcVerbForType(arcType),
-			     target, contextPhrase.isEmpty() ? QString() : QStringLiteral(" ") + contextPhrase);
-	const QString sentence2 = QStringLiteral("Prioritize moments that %1, then %2.").arg(opening, development);
-	const QString sentence3 = QStringLiteral("Prefer clips that %1, with clean natural boundaries and without %2.")
-					  .arg(ending, boundary);
-
-	return QStringLiteral("%1 %2 %3").arg(sentence1, sentence2, sentence3).simplified();
-}
-
-static QString normalizeStructuredPlanOutput(const QString &rawOutput,
-					     const RecordingTranscript &selectedRangeTranscript,
-					     const CurationSettings &curationSettings)
-{
-	const QString trimmedOutput = rawOutput.trimmed();
-	if (trimmedOutput.isEmpty())
-		return {};
-
-	if (trimmedOutput.startsWith(QString::fromLatin1(SEMANTIC_GATE_FAILURE_PREFIX), Qt::CaseInsensitive)) {
-		if (allowNoStrongFailure(selectedRangeTranscript, curationSettings))
-			return trimmedOutput;
-
-		blog(LOG_INFO,
-		     "Ignoring GPT semantic gate failure for non-trivial selected range. selectedSegments=%d selectedDurationSec=%.3f reason=%s",
-		     static_cast<int>(selectedRangeTranscript.segments.size()),
-		     selectedDurationSec(selectedRangeTranscript, curationSettings),
-		     trimmedOutput.toUtf8().constData());
-		return fallbackRubricOpusPrompt(curationSettings);
-	}
-
-	const QJsonObject plan = extractJsonObjectFromText(trimmedOutput);
-	if (!plan.isEmpty()) {
-		const QString renderedPrompt =
-			renderStructuredPlanToOpusPrompt(plan, selectedRangeTranscript, curationSettings).trimmed();
-		if (renderedPrompt.startsWith(QString::fromLatin1(SEMANTIC_GATE_FAILURE_PREFIX), Qt::CaseInsensitive) &&
-		    !allowNoStrongFailure(selectedRangeTranscript, curationSettings)) {
-			blog(LOG_INFO,
-			     "Ignoring GPT semantic gate failure for non-trivial structured plan. selectedSegments=%d selectedDurationSec=%.3f reason=%s",
-			     static_cast<int>(selectedRangeTranscript.segments.size()),
-			     selectedDurationSec(selectedRangeTranscript, curationSettings),
-			     renderedPrompt.toUtf8().constData());
-			return fallbackRubricOpusPrompt(curationSettings);
-		}
-		return renderedPrompt;
-	}
-
-	const QString opusPrompt = lineValueForPrefix(trimmedOutput, OPUS_PROMPT_PREFIX);
-	if (!opusPrompt.isEmpty())
-		return opusPrompt;
-
-	return trimmedOutput;
-}
-
-static QString normalizeGeneratedOutput(const QString &rawOutput, const RecordingTranscript &selectedRangeTranscript,
-					const CurationSettings &curationSettings)
-{
-	return normalizeStructuredPlanOutput(rawOutput, selectedRangeTranscript, curationSettings);
-}
-
 static QString normalizePromptLanguage(QString sourceLanguage)
 {
 	sourceLanguage = sourceLanguage.trimmed().toLower();
@@ -580,49 +128,6 @@ static QString formatTopicKeywords(const CurationSettings &curationSettings, con
 	return curationSettings.topicKeywords.join(QStringLiteral(", ")).trimmed();
 }
 
-static void applyDeterministicSampling(QJsonObject &payload)
-{
-	payload.insert(QStringLiteral("temperature"), 0.0);
-	payload.insert(QStringLiteral("top_p"), 1.0);
-	payload.insert(QStringLiteral("seed"), GPT_PROMPT_SEED);
-}
-
-static QJsonObject buildChatCompletionsPayload(const QString &model, const QString &inputText, int maxTokens,
-					       bool jsonMode)
-{
-	QJsonObject payload;
-	payload.insert(QStringLiteral("model"), model.trimmed());
-	payload.insert(QStringLiteral("max_completion_tokens"), maxTokens);
-	applyDeterministicSampling(payload);
-
-	if (jsonMode) {
-		QJsonObject responseFormat;
-		responseFormat.insert(QStringLiteral("type"), QStringLiteral("json_object"));
-		payload.insert(QStringLiteral("response_format"), responseFormat);
-	}
-
-	QJsonArray messages;
-	QJsonObject systemMessage;
-	systemMessage.insert(QStringLiteral("role"), QStringLiteral("system"));
-	systemMessage.insert(
-		QStringLiteral("content"),
-		jsonMode
-			? QStringLiteral("You are a deterministic ClipAnything prompt planner for Opus Clip. "
-					 "Return valid JSON only. Do not write the final Opus prompt directly.")
-			: QStringLiteral(
-				  "You generate concise English ClipAnything search prompts for Opus Clip. "
-				  "Follow the user's formatting rules exactly and return only the requested output line."));
-	messages.append(systemMessage);
-
-	QJsonObject userMessage;
-	userMessage.insert(QStringLiteral("role"), QStringLiteral("user"));
-	userMessage.insert(QStringLiteral("content"), inputText);
-	messages.append(userMessage);
-
-	payload.insert(QStringLiteral("messages"), messages);
-	return payload;
-}
-
 static bool gptPromptRepairEnabled()
 {
 	const QString mode =
@@ -630,424 +135,6 @@ static bool gptPromptRepairEnabled()
 			.trimmed()
 			.toLower();
 	return mode == QString::fromLatin1(GPT_PROMPT_REPAIR_MODE_GPT);
-}
-
-static QStringList namedReferenceWords(const QString &reference)
-{
-	return reference.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
-}
-
-static bool sameReferenceWord(const QString &a, const QString &b)
-{
-	return a.compare(b, Qt::CaseInsensitive) == 0;
-}
-
-static QString mergedOverlappingReference(const QString &a, const QString &b)
-{
-	const QStringList aWords = namedReferenceWords(a);
-	const QStringList bWords = namedReferenceWords(b);
-	if (aWords.isEmpty() || bWords.isEmpty())
-		return {};
-
-	const int maxOverlap = std::min(aWords.size(), bWords.size());
-	for (int overlap = maxOverlap; overlap >= 1; --overlap) {
-		bool aSuffixMatchesBPrefix = true;
-		for (int index = 0; index < overlap; ++index) {
-			if (!sameReferenceWord(aWords.at(aWords.size() - overlap + index), bWords.at(index))) {
-				aSuffixMatchesBPrefix = false;
-				break;
-			}
-		}
-
-		if (aSuffixMatchesBPrefix) {
-			QStringList merged = aWords;
-			for (int index = overlap; index < bWords.size(); ++index)
-				merged.append(bWords.at(index));
-			return merged.join(QLatin1Char(' ')).simplified();
-		}
-
-		bool bSuffixMatchesAPrefix = true;
-		for (int index = 0; index < overlap; ++index) {
-			if (!sameReferenceWord(bWords.at(bWords.size() - overlap + index), aWords.at(index))) {
-				bSuffixMatchesAPrefix = false;
-				break;
-			}
-		}
-
-		if (bSuffixMatchesAPrefix) {
-			QStringList merged = bWords;
-			for (int index = overlap; index < aWords.size(); ++index)
-				merged.append(aWords.at(index));
-			return merged.join(QLatin1Char(' ')).simplified();
-		}
-	}
-
-	return {};
-}
-
-static void addOverlappingNamedReferences(QMap<QString, int> &counts)
-{
-	bool changed = true;
-	while (changed) {
-		changed = false;
-		const QStringList references = counts.keys();
-
-		for (int i = 0; i < references.size(); ++i) {
-			for (int j = i + 1; j < references.size(); ++j) {
-				const QString merged = mergedOverlappingReference(references.at(i), references.at(j));
-				if (merged.isEmpty())
-					continue;
-
-				const int mergedWordCount = namedReferenceWords(merged).size();
-				const int currentMaxWordCount = std::max(namedReferenceWords(references.at(i)).size(),
-									 namedReferenceWords(references.at(j)).size());
-				if (mergedWordCount <= currentMaxWordCount || mergedWordCount > 6)
-					continue;
-
-				const int mergedCount = counts.value(references.at(i)) + counts.value(references.at(j));
-				if (counts.value(merged) < mergedCount) {
-					counts[merged] = mergedCount;
-					changed = true;
-				}
-			}
-		}
-	}
-}
-
-static QStringList importantNamedReferences(const RecordingTranscript &transcript)
-{
-	QMap<QString, int> counts;
-	static const QSet<QString> ignored = {QStringLiteral("The"),      QStringLiteral("This"),
-					      QStringLiteral("That"),     QStringLiteral("Then"),
-					      QStringLiteral("And"),      QStringLiteral("But"),
-					      QStringLiteral("So"),       QStringLiteral("If"),
-					      QStringLiteral("When"),     QStringLiteral("For"),
-					      QStringLiteral("Week"),     QStringLiteral("German"),
-					      QStringLiteral("Japanese"), QStringLiteral("Brazilian"),
-					      QStringLiteral("Brazil"),   QStringLiteral("UTC")};
-	static const QSet<QString> ignoredLowerPrefixes = {
-		QStringLiteral("and"),     QStringLiteral("but"),    QStringLiteral("the"),
-		QStringLiteral("this"),    QStringLiteral("that"),   QStringLiteral("then"),
-		QStringLiteral("when"),    QStringLiteral("with"),   QStringLiteral("from"),
-		QStringLiteral("through"), QStringLiteral("using"),  QStringLiteral("like"),
-		QStringLiteral("about"),   QStringLiteral("after"),  QStringLiteral("before"),
-		QStringLiteral("into"),    QStringLiteral("only"),   QStringLiteral("also"),
-		QStringLiteral("real"),    QStringLiteral("first"),  QStringLiteral("second"),
-		QStringLiteral("third"),   QStringLiteral("week"),   QStringLiteral("what"),
-		QStringLiteral("where"),   QStringLiteral("which"),  QStringLiteral("while"),
-		QStringLiteral("because"), QStringLiteral("there"),  QStringLiteral("their"),
-		QStringLiteral("your"),    QStringLiteral("some"),   QStringLiteral("many"),
-		QStringLiteral("very"),    QStringLiteral("just"),   QStringLiteral("kind"),
-		QStringLiteral("sort"),    QStringLiteral("will"),   QStringLiteral("would"),
-		QStringLiteral("could"),   QStringLiteral("should"), QStringLiteral("have"),
-		QStringLiteral("been"),    QStringLiteral("were"),   QStringLiteral("they"),
-		QStringLiteral("them"),    QStringLiteral("than"),   QStringLiteral("how"),
-		QStringLiteral("why"),     QStringLiteral("who"),    QStringLiteral("whom"),
-		QStringLiteral("whose")};
-
-	const QRegularExpression namedPhrasePattern(
-		QStringLiteral("\\b([A-Z][\\p{L}0-9]*(?:\\s+[A-Z][\\p{L}0-9]*){1,3})\\b"),
-		QRegularExpression::UseUnicodePropertiesOption);
-	const QRegularExpression prefixedNamedPhrasePattern(
-		QStringLiteral("\\b([a-z][\\p{L}0-9]{2,})\\s+([A-Z][\\p{L}0-9]*(?:\\s+[A-Z][\\p{L}0-9]*){1,3})\\b"),
-		QRegularExpression::UseUnicodePropertiesOption);
-
-	for (const TranscriptSegment &segment : transcript.segments) {
-		const QString text = segment.text.trimmed();
-		if (text.isEmpty())
-			continue;
-
-		QRegularExpressionMatchIterator prefixedIterator = prefixedNamedPhrasePattern.globalMatch(text);
-		while (prefixedIterator.hasNext()) {
-			const QRegularExpressionMatch match = prefixedIterator.next();
-			const QString prefix = match.captured(1).simplified();
-			QString reference = match.captured(2).simplified();
-			if (prefix.isEmpty() || reference.isEmpty())
-				continue;
-
-			if (ignoredLowerPrefixes.contains(prefix.toLower()))
-				continue;
-
-			const QString firstReferenceWord = reference.section(QLatin1Char(' '), 0, 0).trimmed();
-			if (ignored.contains(reference) || ignored.contains(firstReferenceWord))
-				continue;
-
-			QString normalizedPrefix = prefix.toLower();
-			normalizedPrefix.replace(0, 1, normalizedPrefix.left(1).toUpper());
-			reference = QStringList{normalizedPrefix, reference}.join(QLatin1Char(' ')).simplified();
-			counts[reference] += 2;
-		}
-
-		QRegularExpressionMatchIterator iterator = namedPhrasePattern.globalMatch(text);
-		while (iterator.hasNext()) {
-			QString reference = iterator.next().captured(1).simplified();
-			if (reference.isEmpty())
-				continue;
-
-			const QString firstWord = reference.section(QLatin1Char(' '), 0, 0).trimmed();
-			if (ignored.contains(reference) || ignored.contains(firstWord))
-				continue;
-
-			counts[reference] += 1;
-		}
-	}
-
-	addOverlappingNamedReferences(counts);
-
-	QStringList references = counts.keys();
-	std::sort(references.begin(), references.end(), [&counts](const QString &a, const QString &b) {
-		const int wordCountA = namedReferenceWords(a).size();
-		const int wordCountB = namedReferenceWords(b).size();
-		if (wordCountA != wordCountB)
-			return wordCountA > wordCountB;
-
-		if (a.size() != b.size())
-			return a.size() > b.size();
-
-		const int countA = counts.value(a);
-		const int countB = counts.value(b);
-		if (countA != countB)
-			return countA > countB;
-
-		return a.localeAwareCompare(b) < 0;
-	});
-
-	QStringList output;
-	for (const QString &reference : references) {
-		bool coveredByLongerReference = false;
-		for (const QString &existing : output) {
-			if (existing.contains(reference, Qt::CaseInsensitive) ||
-			    reference.contains(existing, Qt::CaseInsensitive)) {
-				coveredByLongerReference = true;
-				break;
-			}
-		}
-
-		if (!coveredByLongerReference)
-			output.append(reference);
-	}
-
-	std::sort(output.begin(), output.end(), [&counts](const QString &a, const QString &b) {
-		const int wordCountA = namedReferenceWords(a).size();
-		const int wordCountB = namedReferenceWords(b).size();
-		if (wordCountA != wordCountB)
-			return wordCountA > wordCountB;
-
-		if (a.size() != b.size())
-			return a.size() > b.size();
-
-		const int countA = counts.value(a);
-		const int countB = counts.value(b);
-		if (countA != countB)
-			return countA > countB;
-
-		return a.localeAwareCompare(b) < 0;
-	});
-
-	if (output.size() > 6)
-		output = output.mid(0, 6);
-
-	return output;
-}
-
-static QString formatImportantNamedReferences(const RecordingTranscript &transcript)
-{
-	const QStringList references = importantNamedReferences(transcript);
-	if (references.isEmpty())
-		return QStringLiteral("No strong named reference detected in the selected range.");
-
-	return references.join(QStringLiteral(", "));
-}
-
-static bool transcriptHasPronounDependentNamedReference(const RecordingTranscript &transcript)
-{
-	if (importantNamedReferences(transcript).isEmpty())
-		return false;
-
-	QString text;
-	for (const TranscriptSegment &segment : transcript.segments) {
-		if (!segment.text.trimmed().isEmpty()) {
-			if (!text.isEmpty())
-				text += QLatin1Char(' ');
-			text += segment.text.trimmed();
-		}
-	}
-	text = text.toLower();
-	return containsAnyPhrase(text, {QStringLiteral("the way she"), QStringLiteral("the way he"),
-					QStringLiteral("the way they"), QStringLiteral("she teaches"),
-					QStringLiteral("he teaches"), QStringLiteral("they teach"),
-					QStringLiteral("this method"), QStringLiteral("that approach"),
-					QStringLiteral("the way it works")});
-}
-
-static bool transcriptHasReferenceBackedUnlockMethod(const RecordingTranscript &transcript)
-{
-	if (importantNamedReferences(transcript).isEmpty())
-		return false;
-
-	QString text;
-	for (const TranscriptSegment &segment : transcript.segments) {
-		if (!segment.text.trimmed().isEmpty()) {
-			if (!text.isEmpty())
-				text += QLatin1Char(' ');
-			text += segment.text.trimmed();
-		}
-	}
-
-	const QString lower = text.toLower();
-	const bool unlockMethod = containsAnyPhrase(lower, {QStringLiteral("unlock"), QStringLiteral("key clicks"),
-							    QStringLiteral("one key"), QStringLiteral("one logic"),
-							    QStringLiteral("core logic")});
-	if (!unlockMethod)
-		return false;
-
-	const bool methodReferenceSignal = containsAnyPhrase(
-		lower, {QStringLiteral("method"), QStringLiteral("approach"), QStringLiteral("framework"),
-			QStringLiteral("style"), QStringLiteral("language-learning"), QStringLiteral("the way"),
-			QStringLiteral("teaches"), QStringLiteral("teach")});
-
-	return methodReferenceSignal && (transcriptHasPronounDependentNamedReference(transcript) ||
-					 !importantNamedReferences(transcript).isEmpty());
-}
-
-static bool promptContainsAnyNamedReference(const QString &prompt, const RecordingTranscript &transcript)
-{
-	const QString lowerPrompt = prompt.toLower();
-	for (const QString &reference : importantNamedReferences(transcript)) {
-		const QString lowerReference = reference.toLower();
-		if (lowerPrompt.contains(lowerReference))
-			return true;
-
-		const QStringList parts = reference.split(QLatin1Char(' '), Qt::SkipEmptyParts);
-		if (parts.size() >= 2) {
-			const QString shortReference =
-				QStringList{parts.at(0), parts.at(1)}.join(QStringLiteral(" ")).toLower();
-			if (lowerPrompt.contains(shortReference))
-				return true;
-		}
-	}
-
-	return false;
-}
-
-static QString firstCleanTopicKeyword(const CurationSettings &curationSettings)
-{
-	for (QString keyword : curationSettings.topicKeywords) {
-		keyword = keyword.simplified();
-		if (keyword.isEmpty())
-			continue;
-
-		keyword.replace(QRegularExpression(QStringLiteral("[\r\n\t]+")), QStringLiteral(" "));
-		keyword = keyword.section(QLatin1Char(','), 0, 0).section(QStringLiteral(" and "), 0, 0).trimmed();
-		if (!keyword.isEmpty())
-			return keyword.left(90).trimmed();
-	}
-
-	return {};
-}
-
-static QString deterministicPromptTarget(const QString &generatedPrompt,
-					 const RecordingTranscript &selectedRangeTranscript,
-					 const CurationSettings &curationSettings)
-{
-	QString transcriptText;
-	for (const TranscriptSegment &segment : selectedRangeTranscript.segments) {
-		if (!segment.text.trimmed().isEmpty()) {
-			if (!transcriptText.isEmpty())
-				transcriptText += QLatin1Char(' ');
-			transcriptText += segment.text.trimmed();
-		}
-	}
-
-	const QString combinedLower =
-		(opusPromptPayload(generatedPrompt) + QLatin1Char(' ') + transcriptText).toLower();
-	const QStringList namedReferences = importantNamedReferences(selectedRangeTranscript);
-	const bool needsNamedReference = transcriptHasPronounDependentNamedReference(selectedRangeTranscript) &&
-					 !namedReferences.isEmpty();
-	const bool hasReferenceBackedUnlockMethod = transcriptHasReferenceBackedUnlockMethod(selectedRangeTranscript);
-	const QString namedReference = namedReferences.isEmpty() ? QString() : namedReferences.first();
-	const bool mentionsGerman = combinedLower.contains(QStringLiteral("german"));
-	const bool mentionsUnlock =
-		containsAnyPhrase(combinedLower, {QStringLiteral("unlock"), QStringLiteral("key clicks"),
-						  QStringLiteral("one key"), QStringLiteral("one logic")});
-	const bool mentionsRoutine = containsAnyPhrase(
-		combinedLower, {QStringLiteral("daily loop"), QStringLiteral("routine"),
-				QStringLiteral("spaced repetition"), QStringLiteral("practice with natives")});
-	const bool mentionsRoadmap =
-		containsAnyPhrase(combinedLower, {QStringLiteral("roadmap"), QStringLiteral("8-week"),
-						  QStringLiteral("eight-week"), QStringLiteral("week-by-week")});
-
-	if (hasReferenceBackedUnlockMethod && mentionsGerman)
-		return QStringLiteral("the unlock method for learning German through %1's language-learning approach")
-			.arg(namedReference);
-
-	if (hasReferenceBackedUnlockMethod)
-		return QStringLiteral("the unlock method through %1's language-learning approach").arg(namedReference);
-
-	if (needsNamedReference)
-		return QStringLiteral("the selected idea connected to %1").arg(namedReference);
-
-	if (mentionsUnlock && mentionsGerman)
-		return QStringLiteral("the unlock-based method for learning German");
-
-	if (mentionsRoutine && mentionsGerman)
-		return QStringLiteral("the daily German-learning loop");
-
-	if (mentionsRoadmap && mentionsGerman)
-		return QStringLiteral("one resolved part of the German-learning plan");
-
-	const QString keyword = firstCleanTopicKeyword(curationSettings);
-	if (!keyword.isEmpty())
-		return QStringLiteral("one clear idea about %1").arg(keyword);
-
-	return QStringLiteral("one clear idea from the selected range");
-}
-
-static QString deterministicOpusPromptFallback(const QString &generatedPrompt,
-					       const RecordingTranscript &selectedRangeTranscript,
-					       const CurationSettings &curationSettings)
-{
-	const QString scope = curationScopeForDuration(selectedDurationSec(selectedRangeTranscript, curationSettings));
-	const QString target = deterministicPromptTarget(generatedPrompt, selectedRangeTranscript, curationSettings);
-	const QStringList namedReferences = importantNamedReferences(selectedRangeTranscript);
-	const bool needsNamedReference = transcriptHasPronounDependentNamedReference(selectedRangeTranscript) &&
-					 !namedReferences.isEmpty();
-	const bool hasReferenceBackedUnlockMethod = transcriptHasReferenceBackedUnlockMethod(selectedRangeTranscript);
-
-	QString sentence1;
-	if (scope == QStringLiteral("large_range_multiple_clips"))
-		sentence1 = QStringLiteral("Find multiple strong self-contained clips where the speaker explains %1.")
-				    .arg(target);
-	else if (scope == QStringLiteral("short_range_best_moment"))
-		sentence1 = QStringLiteral("Find the strongest self-contained moment where the speaker explains %1.")
-				    .arg(target);
-	else
-		sentence1 =
-			QStringLiteral("Find one clear self-contained clip where the speaker explains %1.").arg(target);
-
-	QString sentence2;
-	if (hasReferenceBackedUnlockMethod) {
-		sentence2 =
-			QStringLiteral(
-				"Prioritize moments that introduce %1 or the key/unlock metaphor before later pronouns, then show how one piece of language logic becomes easier to understand.")
-				.arg(namedReferences.first());
-	} else if (needsNamedReference) {
-		sentence2 =
-			QStringLiteral(
-				"Prioritize moments that introduce %1 or the target idea before later pronouns and indirect references, then develop one continuous local explanation.")
-				.arg(namedReferences.first());
-	} else if (scope == QStringLiteral("short_range_best_moment")) {
-		sentence2 = QStringLiteral(
-			"Prioritize moments that introduce the idea with enough local context and complete one resolved part of the explanation.");
-	} else {
-		sentence2 = QStringLiteral(
-			"Prioritize moments that introduce the idea with enough local context and develop the same continuous explanation.");
-	}
-
-	const QString sentence3 = QStringLiteral(
-		"Prefer clips that end after the local point is resolved, with clean natural boundaries and without unfinished setup, list items, and mid-thought transitions.");
-
-	return QStringLiteral("%1 %2 %3").arg(sentence1, sentence2, sentence3).trimmed();
 }
 
 static QString formatTranscript(const RecordingTranscript &transcript)
@@ -1196,14 +283,26 @@ static QString renderInputTemplate(QString templateText, const QString &videoPat
 	templateText.replace(QStringLiteral("{{genre}}"), curationSettings.genre.trimmed().isEmpty()
 								  ? QStringLiteral("Auto")
 								  : curationSettings.genre.trimmed());
+	const Curation::Intent intent = Curation::resolveIntent(curationSettings, selectedRangeTranscript);
+	blog(LOG_INFO,
+	     "Resolved GPT curation preset. requested=%s resolved=%s viewerSignals=%s scope=%s selectedSegments=%d selectedDurationSec=%.3f scores={viewer=%.2f,advice=%.2f,emotional=%.2f,explanation=%.2f,story=%.2f,opinion=%.2f,tutorial=%.2f}",
+	     curationSettings.curationPreset.toUtf8().constData(), intent.resolvedPresetId.toUtf8().constData(),
+	     intent.viewerSignals ? "true" : "false", intent.scope.toUtf8().constData(),
+	     static_cast<int>(selectedRangeTranscript.segments.size()), intent.selectedDurationSec,
+	     intent.viewerExchangeScore, intent.adviceScore, intent.emotionalScore, intent.explanationScore,
+	     intent.storyScore, intent.opinionScore, intent.tutorialScore);
+	templateText.replace(QStringLiteral("{{curation_preset}}"),
+			     CurationPreset::labelForId(intent.resolvedPresetId));
+	templateText.replace(QStringLiteral("{{curation_preset_context}}"),
+			     CurationPreset::gptContextForId(intent.resolvedPresetId));
 	templateText.replace(QStringLiteral("{{named_references}}"),
-			     formatImportantNamedReferences(selectedRangeTranscript));
+			     Curation::formatImportantNamedReferences(selectedRangeTranscript));
 	templateText.replace(QStringLiteral("{{source_language}}"), normalizePromptLanguage(sourceLanguage));
 	templateText.replace(QStringLiteral("{{clip_length_preset}}"), curationSettings.clipLengthPreset.trimmed());
-	const double durationSec = selectedDurationSec(selectedRangeTranscript, curationSettings);
+	const double durationSec = Curation::selectedDurationSeconds(selectedRangeTranscript, curationSettings);
 	templateText.replace(QStringLiteral("{{selected_duration_sec}}"), QString::number(durationSec, 'f', 3));
 	templateText.replace(QStringLiteral("{{selected_duration_min}}"), QString::number(durationSec / 60.0, 'f', 2));
-	templateText.replace(QStringLiteral("{{curation_scope}}"), curationScopeForDuration(durationSec));
+	templateText.replace(QStringLiteral("{{curation_scope}}"), Curation::scopeForDuration(durationSec));
 	templateText.replace(QStringLiteral("{{semantic_timeline}}"), formatSemanticTimelineContext(fullTranscript));
 	templateText.replace(QStringLiteral("{{context_transcript}}"),
 			     formatExpandedContextTranscript(fullTranscript, curationSettings));
@@ -1243,17 +342,17 @@ static QString renderRepairTemplate(QString templateText, const QString &generat
 				    const RecordingTranscript &selectedRangeTranscript,
 				    const CurationSettings &curationSettings, const QString &sourceLanguage)
 {
-	const double durationSec = selectedDurationSec(selectedRangeTranscript, curationSettings);
-	templateText.replace(QStringLiteral("{{generated_opus_prompt}}"), opusPromptPayload(generatedPrompt));
+	const double durationSec = Curation::selectedDurationSeconds(selectedRangeTranscript, curationSettings);
+	templateText.replace(QStringLiteral("{{generated_opus_prompt}}"), Curation::opusPromptPayload(generatedPrompt));
 	templateText.replace(QStringLiteral("{{issues}}"), issues.join(QStringLiteral("; ")));
-	templateText.replace(QStringLiteral("{{curation_scope}}"), curationScopeForDuration(durationSec));
+	templateText.replace(QStringLiteral("{{curation_scope}}"), Curation::scopeForDuration(durationSec));
 	templateText.replace(QStringLiteral("{{clip_length_preset}}"), curationSettings.clipLengthPreset.trimmed());
 	templateText.replace(QStringLiteral("{{selected_ranges}}"),
 			     formatSelectedRanges(curationSettings, sourceLanguage));
 	templateText.replace(QStringLiteral("{{topic_keywords}}"),
 			     formatTopicKeywords(curationSettings, sourceLanguage));
 	templateText.replace(QStringLiteral("{{named_references}}"),
-			     formatImportantNamedReferences(selectedRangeTranscript));
+			     Curation::formatImportantNamedReferences(selectedRangeTranscript));
 	templateText.replace(QStringLiteral("{{selected_range_transcript}}"),
 			     formatTranscript(selectedRangeTranscript));
 	return templateText.trimmed();
@@ -1357,23 +456,8 @@ static QString loadTemplateSectionFromRuntimeFile(const QString &sectionName, co
 
 static QString loadTemplateFromRuntimeFile(const QString &sourceLanguage)
 {
-	const QString normalizedLanguage = normalizePromptLanguage(sourceLanguage);
-	const QString sectionName = normalizedLanguage == QStringLiteral("pt") ? QStringLiteral("pt")
-									       : QStringLiteral("en");
-	return loadTemplateSectionFromRuntimeFile(sectionName, QStringLiteral("GPT prompt template"));
-}
-
-static QString fallbackPortugueseInputTextTemplate()
-{
-	return QStringLiteral(
-		"Você é um planejador para prompts ClipAnything do Opus Clip. Retorne somente JSON válido. "
-		"Não escreva o prompt final. O plugin vai renderizar o prompt final em inglês. "
-		"Use os campos: no_strong_clip_found, reason, arc_type, main_target, context_phrase, opening_criteria, "
-		"development_criteria, ending_criteria, boundary_criteria. "
-		"Escolha um único arco discursivo dominante usando gênero e tópicos apenas como sinais fracos, sem catálogo. "
-		"Campos textuais devem ser concisos e em inglês.\n\n"
-		"Scope: {{curation_scope}}\nGenre: {{genre}}\nRanges: {{selected_ranges}}\nTopics: {{topic_keywords}}\n"
-		"Named references: {{named_references}}\nSelected transcript:\n{{selected_range_transcript}}\n");
+	Q_UNUSED(sourceLanguage);
+	return loadTemplateSectionFromRuntimeFile(QStringLiteral("en"), QStringLiteral("GPT prompt template"));
 }
 
 static QString fallbackEnglishInputTextTemplate()
@@ -1384,8 +468,9 @@ static QString fallbackEnglishInputTextTemplate()
 		"Use these fields: no_strong_clip_found, reason, arc_type, main_target, context_phrase, opening_criteria, "
 		"development_criteria, ending_criteria, boundary_criteria. "
 		"Choose one dominant discourse arc, using genre and topics only as weak priors and never as a catalog. "
-		"All text fields must be concise and in English.\n\n"
-		"Scope: {{curation_scope}}\nGenre: {{genre}}\nRanges: {{selected_ranges}}\nTopics: {{topic_keywords}}\n"
+		"For chat, Q&A, or advice, choose one complete exchange instead of a montage of unrelated comments. "
+		"All text fields must be concise and in English. Never copy Portuguese wording from the transcript into JSON fields.\n\n"
+		"Scope: {{curation_scope}}\nGenre: {{genre}}\nPreset: {{curation_preset}}\nPreset context: {{curation_preset_context}}\nRanges: {{selected_ranges}}\nTopics: {{topic_keywords}}\n"
 		"Named references: {{named_references}}\nSelected transcript:\n{{selected_range_transcript}}\n");
 }
 
@@ -1404,6 +489,31 @@ QString GptPromptClient::semanticGateFailureReason(const QString &prompt)
 	if (trimmedPrompt.isEmpty())
 		return QStringLiteral(
 			"No complete self-contained moment with a clear payoff was found in the selected range.");
+
+	return trimmedPrompt;
+}
+
+QString GptPromptClient::promptGenerationBlockedPrompt(const QString &reason)
+{
+	const QString trimmedReason = reason.trimmed();
+	return QString::fromLatin1(PROMPT_GENERATION_BLOCKED_PREFIX) + QLatin1Char(' ') +
+	       (trimmedReason.isEmpty() ? QStringLiteral("The GPT prompt could not be generated.") : trimmedReason);
+}
+
+bool GptPromptClient::isPromptGenerationBlockedPrompt(const QString &prompt)
+{
+	return prompt.trimmed().startsWith(QString::fromLatin1(PROMPT_GENERATION_BLOCKED_PREFIX), Qt::CaseInsensitive);
+}
+
+QString GptPromptClient::promptGenerationBlockedReason(const QString &prompt)
+{
+	QString trimmedPrompt = prompt.trimmed();
+	if (!isPromptGenerationBlockedPrompt(trimmedPrompt))
+		return {};
+
+	trimmedPrompt = trimmedPrompt.mid(QString::fromLatin1(PROMPT_GENERATION_BLOCKED_PREFIX).size()).trimmed();
+	if (trimmedPrompt.isEmpty())
+		return QStringLiteral("The GPT prompt could not be generated.");
 
 	return trimmedPrompt;
 }
@@ -1430,9 +540,7 @@ QString GptPromptClient::defaultInputTextTemplate(const QString &sourceLanguage)
 	if (!runtimeTemplate.trimmed().isEmpty())
 		return runtimeTemplate.trimmed();
 
-	if (normalizedLanguage == QStringLiteral("pt"))
-		return fallbackPortugueseInputTextTemplate();
-
+	Q_UNUSED(normalizedLanguage);
 	return fallbackEnglishInputTextTemplate();
 }
 
@@ -1478,7 +586,7 @@ QString GptPromptClient::buildInputText(const QString &videoPath, const Recordin
 					const CurationSettings &curationSettings) const
 {
 	const QString sourceLanguage = promptSourceLanguageForCuration(curationSettings);
-	return renderInputTemplate(configuredInputTextTemplate(sourceLanguage), videoPath, fullTranscript,
+	return renderInputTemplate(configuredInputTextTemplate(QStringLiteral("en")), videoPath, fullTranscript,
 				   selectedRangeTranscript, curationSettings, sourceLanguage);
 }
 
@@ -1512,8 +620,8 @@ void GptPromptClient::createOpusPromptAsync(const QString &videoPath, const Reco
 	const QString cachedPrompt = GptPromptStore::loadForInput(model, inputText);
 	cancelRequested = false;
 
-	const double selectedSec = selectedDurationSec(selectedRangeTranscript, curationSettings);
-	const QString curationScope = curationScopeForDuration(selectedSec);
+	const double selectedSec = Curation::selectedDurationSeconds(selectedRangeTranscript, curationSettings);
+	const QString curationScope = Curation::scopeForDuration(selectedSec);
 	blog(LOG_INFO,
 	     "GPT curation input prepared. video=%s fullSegments=%d selectedSegments=%d selectedDurationSec=%.3f scope=%s inputChars=%d cacheKey=%s",
 	     videoPath.toUtf8().constData(), static_cast<int>(fullTranscript.segments.size()),
@@ -1522,8 +630,8 @@ void GptPromptClient::createOpusPromptAsync(const QString &videoPath, const Reco
 
 	if (!cachedPrompt.trimmed().isEmpty()) {
 		QStringList cachedIssues;
-		if (!shouldRepairGeneratedPrompt(cachedPrompt, selectedRangeTranscript, curationSettings,
-						 &cachedIssues)) {
+		if (!Curation::shouldRepairPrompt(cachedPrompt, selectedRangeTranscript, curationSettings,
+						  &cachedIssues)) {
 			blog(LOG_INFO,
 			     "GPT prompt cache hit. Skipping OpenAI request. video=%s cacheKey=%s promptChars=%d",
 			     videoPath.toUtf8().constData(), inputCacheKey.toUtf8().constData(),
@@ -1544,7 +652,7 @@ void GptPromptClient::createOpusPromptAsync(const QString &videoPath, const Reco
 	blog(LOG_INFO, "GPT prompt cache miss. Sending OpenAI request. video=%s cacheKey=%s model=%s",
 	     videoPath.toUtf8().constData(), inputCacheKey.toUtf8().constData(), model.trimmed().toUtf8().constData());
 
-	const QJsonObject payload = buildChatCompletionsPayload(model, inputText, 500);
+	const QJsonObject payload = OpenAiChatPayload::build(model, inputText, 500);
 
 	QNetworkReply *reply = network.post(request, QJsonDocument(payload).toJson(QJsonDocument::Compact));
 	reply->setProperty("clipCropperGptInputText", inputText);
@@ -1580,8 +688,25 @@ void GptPromptClient::createOpusPromptAsync(const QString &videoPath, const Reco
 		blog(LOG_INFO, "GPT raw curation response received. status=%d rawChars=%d", status,
 		     rawOutputText.size());
 
-		const QString outputText =
-			normalizeGeneratedOutput(rawOutputText, selectedRangeTranscript, curationSettings).trimmed();
+		const QString normalizedOutputText =
+			Curation::normalizePlanOutput(rawOutputText, selectedRangeTranscript, curationSettings,
+						      loadTemplateSectionFromRuntimeFile)
+				.trimmed();
+		const QString outputText = Curation::applyResolvedPresetPromptGuard(
+						   normalizedOutputText, selectedRangeTranscript, curationSettings)
+						   .trimmed();
+		const Curation::Intent normalizedIntent =
+			Curation::resolveIntent(curationSettings, selectedRangeTranscript, outputText);
+		const bool structuredPlanOutput = rawOutputText.trimmed().startsWith(QLatin1Char('{')) ||
+						  rawOutputText.contains(QStringLiteral("\"main_target\"")) ||
+						  rawOutputText.contains(QStringLiteral("\"plan\""));
+		const bool guardApplied = normalizedOutputText != outputText;
+		blog(LOG_INFO,
+		     "GPT curation prompt normalized. preset=%s scope=%s strategy=%s structuredPlan=%s guardApplied=%s promptChars=%d",
+		     normalizedIntent.resolvedPresetId.toUtf8().constData(),
+		     normalizedIntent.scope.toUtf8().constData(),
+		     Curation::shouldUseMultipleClips(normalizedIntent) ? "multiple" : "single",
+		     structuredPlanOutput ? "true" : "false", guardApplied ? "true" : "false", outputText.size());
 		if (outputText.isEmpty()) {
 			emit promptFailed(QStringLiteral("GPT response did not contain a valid Opus prompt"));
 			return;
@@ -1598,17 +723,17 @@ void GptPromptClient::createOpusPromptAsync(const QString &videoPath, const Reco
 		}
 
 		QStringList qualityIssues;
-		if (shouldRepairGeneratedPrompt(outputText, selectedRangeTranscript, curationSettings,
-						&qualityIssues)) {
+		if (Curation::shouldRepairPrompt(outputText, selectedRangeTranscript, curationSettings,
+						 &qualityIssues)) {
 			blog(LOG_WARNING, "GPT Opus prompt failed predictability checks. issues=%s prompt=%s",
 			     qualityIssues.join(QStringLiteral("; ")).toUtf8().constData(),
 			     outputText.toUtf8().constData());
 
 			if (!gptPromptRepairEnabled()) {
-				const QString fallbackPrompt = deterministicOpusPromptFallback(
+				const QString fallbackPrompt = Curation::deterministicOpusPromptFallback(
 					outputText, selectedRangeTranscript, curationSettings);
 				QStringList fallbackIssues;
-				const bool fallbackStillInvalid = shouldRepairGeneratedPrompt(
+				const bool fallbackStillInvalid = Curation::shouldRepairPrompt(
 					fallbackPrompt, selectedRangeTranscript, curationSettings, &fallbackIssues);
 				blog(LOG_WARNING,
 				     "GPT prompt repair is disabled. Using deterministic local fallback after predictability failure. issues=%s fallbackIssues=%s fallback=%s",
@@ -1631,8 +756,7 @@ void GptPromptClient::createOpusPromptAsync(const QString &videoPath, const Reco
 			repairRequest.setRawHeader("Authorization",
 						   QStringLiteral("Bearer %1").arg(apiKey.trimmed()).toUtf8());
 
-			const QJsonObject repairPayload =
-				buildChatCompletionsPayload(model, repairInputText, 350, false);
+			const QJsonObject repairPayload = OpenAiChatPayload::build(model, repairInputText, 350, false);
 
 			QNetworkReply *repairReply = network.post(
 				repairRequest, QJsonDocument(repairPayload).toJson(QJsonDocument::Compact));
@@ -1659,10 +783,11 @@ void GptPromptClient::createOpusPromptAsync(const QString &videoPath, const Reco
 
 					if (repairError != QNetworkReply::NoError || repairStatus < 200 ||
 					    repairStatus >= 300) {
-						const QString fallbackPrompt = deterministicOpusPromptFallback(
-							outputText, selectedRangeTranscript, curationSettings);
+						const QString fallbackPrompt =
+							Curation::deterministicOpusPromptFallback(
+								outputText, selectedRangeTranscript, curationSettings);
 						QStringList fallbackIssues;
-						const bool fallbackStillInvalid = shouldRepairGeneratedPrompt(
+						const bool fallbackStillInvalid = Curation::shouldRepairPrompt(
 							fallbackPrompt, selectedRangeTranscript, curationSettings,
 							&fallbackIssues);
 						blog(LOG_WARNING,
@@ -1679,14 +804,16 @@ void GptPromptClient::createOpusPromptAsync(const QString &videoPath, const Reco
 
 					const QString rawRepairOutputText = extractOutputText(repairResponse).trimmed();
 					const QString repairedOutputText =
-						normalizeGeneratedOutput(rawRepairOutputText, selectedRangeTranscript,
-									 curationSettings)
+						Curation::normalizePlanOutput(rawRepairOutputText,
+									      selectedRangeTranscript, curationSettings,
+									      loadTemplateSectionFromRuntimeFile)
 							.trimmed();
 					if (repairedOutputText.isEmpty()) {
-						const QString fallbackPrompt = deterministicOpusPromptFallback(
-							outputText, selectedRangeTranscript, curationSettings);
+						const QString fallbackPrompt =
+							Curation::deterministicOpusPromptFallback(
+								outputText, selectedRangeTranscript, curationSettings);
 						QStringList fallbackIssues;
-						const bool fallbackStillInvalid = shouldRepairGeneratedPrompt(
+						const bool fallbackStillInvalid = Curation::shouldRepairPrompt(
 							fallbackPrompt, selectedRangeTranscript, curationSettings,
 							&fallbackIssues);
 						blog(LOG_WARNING,
@@ -1699,15 +826,24 @@ void GptPromptClient::createOpusPromptAsync(const QString &videoPath, const Reco
 						return;
 					}
 
+					const Curation::Intent repairedIntent = Curation::resolveIntent(
+						curationSettings, selectedRangeTranscript, repairedOutputText);
+					blog(LOG_INFO,
+					     "GPT repaired curation prompt normalized. preset=%s scope=%s strategy=%s promptChars=%d",
+					     repairedIntent.resolvedPresetId.toUtf8().constData(),
+					     repairedIntent.scope.toUtf8().constData(),
+					     Curation::shouldUseMultipleClips(repairedIntent) ? "multiple" : "single",
+					     repairedOutputText.size());
+
 					QStringList repairedIssues;
-					const bool repairedStillNeedsRepair =
-						shouldRepairGeneratedPrompt(repairedOutputText, selectedRangeTranscript,
-									    curationSettings, &repairedIssues);
+					const bool repairedStillNeedsRepair = Curation::shouldRepairPrompt(
+						repairedOutputText, selectedRangeTranscript, curationSettings,
+						&repairedIssues);
 					if (repairedStillNeedsRepair) {
-						const QString fallbackPrompt = deterministicOpusPromptFallback(
+						const QString fallbackPrompt = Curation::deterministicOpusPromptFallback(
 							repairedOutputText, selectedRangeTranscript, curationSettings);
 						QStringList fallbackIssues;
-						const bool fallbackStillInvalid = shouldRepairGeneratedPrompt(
+						const bool fallbackStillInvalid = Curation::shouldRepairPrompt(
 							fallbackPrompt, selectedRangeTranscript, curationSettings,
 							&fallbackIssues);
 						blog(LOG_WARNING,
