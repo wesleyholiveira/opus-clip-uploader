@@ -12,6 +12,7 @@ extern "C" {
 }
 #endif
 
+#include <QBuffer>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -19,11 +20,18 @@ extern "C" {
 #include <QJsonObject>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QTimer>
 #include <QUrl>
 #include <QStringList>
+#include <QVariant>
 
 #include <algorithm>
 #include <utility>
+
+namespace {
+constexpr int OpusProjectStatusPollDelayMs = 30000;
+constexpr int OpusProjectStatusMaxAttempts = 240;
+}
 
 static QString obsText(const char *key)
 {
@@ -42,12 +50,26 @@ OpusClipClient::OpusClipClient(QString apiKey, QString brandTemplateId, QString 
 		this->sourceLang = "auto";
 }
 
+void OpusClipClient::setWaitForProjectCompletionBeforeFinish(bool enabled)
+{
+	waitForProjectCompletionBeforeFinish = enabled;
+}
+
+void OpusClipClient::releaseCurrentUploadPayload()
+{
+	QByteArray emptyPayload;
+	currentUploadPayload.swap(emptyPayload);
+}
+
 void OpusClipClient::cancel()
 {
 	cancelRequested = true;
 
 	if (currentUploadFile)
 		currentUploadFile->close();
+	if (currentUploadBuffer)
+		currentUploadBuffer->close();
+	releaseCurrentUploadPayload();
 
 	if (currentReply) {
 		currentReply->abort();
@@ -59,6 +81,10 @@ void OpusClipClient::cancel()
 
 void OpusClipClient::emitCanceledIfNeeded()
 {
+	if (currentUploadBuffer)
+		currentUploadBuffer->close();
+	releaseCurrentUploadPayload();
+
 	if (terminalSignalEmitted)
 		return;
 
@@ -71,6 +97,10 @@ void OpusClipClient::emitCanceledIfNeeded()
 void OpusClipClient::fail(const QString &message, int code, long httpStatus, const QByteArray &body)
 {
 	Q_UNUSED(code);
+
+	if (currentUploadBuffer)
+		currentUploadBuffer->close();
+	releaseCurrentUploadPayload();
 
 	if (terminalSignalEmitted)
 		return;
@@ -108,6 +138,31 @@ void OpusClipClient::uploadFileResumableAndCreateProjectAsync(const QString &fil
 	}
 
 	createUploadLink(filePath);
+}
+
+void OpusClipClient::uploadDataResumableAndCreateProjectAsync(QByteArray data, const QString &fileName,
+							      const QString &mimeType)
+{
+	createdProjectIds.clear();
+	cancelRequested = false;
+	terminalSignalEmitted = false;
+	releaseCurrentUploadPayload();
+
+	Q_UNUSED(fileName);
+	Q_UNUSED(mimeType);
+
+	if (apiKey.trimmed().isEmpty()) {
+		fail(QStringLiteral("Opus Clip API key is empty"));
+		return;
+	}
+
+	if (data.isEmpty()) {
+		fail(QStringLiteral("Invalid in-memory video payload"));
+		return;
+	}
+
+	currentUploadPayload = std::move(data);
+	createUploadLinkForData();
 }
 
 void OpusClipClient::createUploadLink(const QString &filePath)
@@ -176,6 +231,62 @@ void OpusClipClient::createUploadLink(const QString &filePath)
 	});
 }
 
+void OpusClipClient::createUploadLinkForData()
+{
+	QNetworkRequest request{QUrl(QString("%1/api/upload-links").arg(OpusApi::BaseUrl))};
+	request.setRawHeader("Accept", "application/json");
+	request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+	request.setRawHeader("Authorization", QString("Bearer %1").arg(apiKey).toUtf8());
+
+	QJsonObject video;
+	video.insert("usecase", "LocalUpload");
+
+	QJsonObject payload;
+	payload.insert("video", video);
+
+	const QByteArray body = QJsonDocument(payload).toJson(QJsonDocument::Compact);
+
+	QNetworkReply *reply = network.post(request, body);
+	currentReply = reply;
+
+	connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+		const QByteArray response = reply->readAll();
+		const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+		const QNetworkReply::NetworkError error = reply->error();
+
+		if (currentReply == reply)
+			currentReply = nullptr;
+
+		if (cancelRequested || error == QNetworkReply::OperationCanceledError) {
+			reply->deleteLater();
+			emitCanceledIfNeeded();
+			return;
+		}
+
+		reply->deleteLater();
+
+		if (error != QNetworkReply::NoError || status < 200 || status >= 300) {
+			fail(QString("Failed to create Opus upload link: %1 - %2")
+				     .arg(reply->errorString(), QString::fromUtf8(response)),
+			     -1, status);
+			return;
+		}
+
+		const QJsonDocument doc = QJsonDocument::fromJson(response);
+		const QJsonObject root = doc.object();
+
+		const QString uploadUrl = root.value("url").toString();
+		const QString uploadId = root.value("uploadId").toString();
+
+		if (uploadUrl.trimmed().isEmpty() || uploadId.trimmed().isEmpty()) {
+			fail(QString("Invalid Opus upload-links response: %1").arg(QString::fromUtf8(response)), -1, status);
+			return;
+		}
+
+		startResumableSessionForData(uploadUrl, uploadId);
+	});
+}
+
 void OpusClipClient::startResumableSession(const QString &filePath, const QString &uploadUrl, const QString &uploadId)
 {
 	QNetworkRequest request{QUrl(uploadUrl)};
@@ -224,6 +335,48 @@ void OpusClipClient::startResumableSession(const QString &filePath, const QStrin
 		}
 
 		uploadFileToResumableLocation(filePath, location, uploadId);
+	});
+}
+
+void OpusClipClient::startResumableSessionForData(const QString &uploadUrl, const QString &uploadId)
+{
+	QNetworkRequest request{QUrl(uploadUrl)};
+	request.setRawHeader("x-goog-resumable", "start");
+	request.setHeader(QNetworkRequest::ContentLengthHeader, 0);
+
+	QNetworkReply *reply = network.post(request, QByteArray());
+	currentReply = reply;
+
+	connect(reply, &QNetworkReply::finished, this, [this, reply, uploadId]() {
+		const QByteArray response = reply->readAll();
+		const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+		const QNetworkReply::NetworkError error = reply->error();
+		const QString location = QString::fromUtf8(reply->rawHeader("location"));
+
+		if (currentReply == reply)
+			currentReply = nullptr;
+
+		if (cancelRequested || error == QNetworkReply::OperationCanceledError) {
+			reply->deleteLater();
+			emitCanceledIfNeeded();
+			return;
+		}
+
+		reply->deleteLater();
+
+		if (error != QNetworkReply::NoError || status < 200 || status >= 300) {
+			fail(QString("Failed to start GCS resumable session: %1 - %2")
+				     .arg(reply->errorString(), QString::fromUtf8(response)),
+			     -1, status);
+			return;
+		}
+
+		if (location.trimmed().isEmpty()) {
+			fail(QStringLiteral("GCS resumable session did not return location header"), -1, status);
+			return;
+		}
+
+		uploadDataToResumableLocation(location, uploadId);
 	});
 }
 
@@ -295,6 +448,68 @@ void OpusClipClient::uploadFileToResumableLocation(const QString &filePath, cons
 	});
 }
 
+void OpusClipClient::uploadDataToResumableLocation(const QString &location, const QString &uploadId)
+{
+	auto *buffer = new QBuffer(&currentUploadPayload, this);
+
+	if (!buffer->open(QIODevice::ReadOnly)) {
+		buffer->deleteLater();
+		releaseCurrentUploadPayload();
+		fail(QStringLiteral("Failed to open in-memory video payload for upload"));
+		return;
+	}
+
+	QNetworkRequest request{QUrl(location)};
+	request.setHeader(QNetworkRequest::ContentTypeHeader, "application/octet-stream");
+	request.setHeader(QNetworkRequest::ContentLengthHeader, static_cast<qint64>(currentUploadPayload.size()));
+
+	QNetworkReply *reply = network.put(request, buffer);
+	currentReply = reply;
+	currentUploadBuffer = buffer;
+
+	connect(reply, &QNetworkReply::uploadProgress, this, [this](qint64 bytesSent, qint64 bytesTotal) {
+		if (bytesTotal <= 0)
+			return;
+
+		const int uploadProgress = static_cast<int>((bytesSent * 50) / bytesTotal);
+		emit progressChanged(qBound(0, uploadProgress, 50), obsText("Status.UploadingVideo"));
+	});
+
+	connect(reply, &QNetworkReply::finished, this, [this, reply, buffer, uploadId]() {
+		const QByteArray response = reply->readAll();
+		const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+		const QNetworkReply::NetworkError error = reply->error();
+
+		buffer->close();
+		if (currentUploadBuffer == buffer)
+			currentUploadBuffer = nullptr;
+		if (currentReply == reply)
+			currentReply = nullptr;
+
+		if (cancelRequested || error == QNetworkReply::OperationCanceledError) {
+			buffer->deleteLater();
+			releaseCurrentUploadPayload();
+			reply->deleteLater();
+			emitCanceledIfNeeded();
+			return;
+		}
+
+		buffer->deleteLater();
+		releaseCurrentUploadPayload();
+		reply->deleteLater();
+
+		if (error != QNetworkReply::NoError || status < 200 || status >= 300) {
+			fail(QString("Failed to upload video to GCS resumable location: %1 - %2")
+				     .arg(reply->errorString(), QString::fromUtf8(response)),
+			     -1, status);
+			return;
+		}
+
+		emit progressChanged(50, obsText("Status.UploadCompleteCreatingProjects"));
+		createNextClipProject(uploadId, 0);
+	});
+}
+
 QVector<ClipDuration> OpusClipClient::projectRanges() const
 {
 	QVector<ClipDuration> ranges = curationSettings.clipDurations;
@@ -311,6 +526,129 @@ QVector<ClipDuration> OpusClipClient::projectRanges() const
 	}
 
 	return validRanges;
+}
+
+
+QString OpusClipClient::projectStageFromResponse(const QByteArray &body) const
+{
+	const QJsonDocument doc = QJsonDocument::fromJson(body);
+	if (!doc.isObject())
+		return {};
+
+	const QJsonObject root = doc.object();
+	const QString directStage = root.value(QStringLiteral("stage")).toString().trimmed();
+	if (!directStage.isEmpty())
+		return directStage.toUpper();
+
+	const QJsonObject project = root.value(QStringLiteral("project")).toObject();
+	const QString projectStage = project.value(QStringLiteral("stage")).toString().trimmed();
+	if (!projectStage.isEmpty())
+		return projectStage.toUpper();
+
+	const QJsonObject data = root.value(QStringLiteral("data")).toObject();
+	const QString dataStage = data.value(QStringLiteral("stage")).toString().trimmed();
+	if (!dataStage.isEmpty())
+		return dataStage.toUpper();
+
+	return {};
+}
+
+bool OpusClipClient::isTerminalProjectStage(const QString &stage) const
+{
+	const QString value = stage.trimmed().toUpper();
+	return value == QStringLiteral("COMPLETE") || value == QStringLiteral("STALLED") ||
+	       value == QStringLiteral("FAILED") || value == QStringLiteral("ERROR") ||
+	       value == QStringLiteral("CANCELED") || value == QStringLiteral("CANCELLED") ||
+	       value == QStringLiteral("DELETED") || value == QStringLiteral("PURGED");
+}
+
+bool OpusClipClient::isSuccessfulProjectStage(const QString &stage) const
+{
+	return stage.trimmed().toUpper() == QStringLiteral("COMPLETE");
+}
+
+void OpusClipClient::pollProjectUntilTerminal(const QString &uploadId, const QString &projectId, int projectIndex,
+						      int totalProjects, int attempt)
+{
+	if (terminalSignalEmitted || cancelRequested) {
+		emitCanceledIfNeeded();
+		return;
+	}
+
+	if (attempt >= OpusProjectStatusMaxAttempts) {
+		blog(LOG_WARNING,
+		     "[clip-cropper] Timed out waiting for Opus project processing to finish. projectId=%s attempts=%d",
+		     projectId.toUtf8().constData(), attempt);
+		createNextClipProject(uploadId, projectIndex + 1);
+		return;
+	}
+
+	emit progressChanged(50 + static_cast<int>(((projectIndex + 1) * 50.0) / std::max(1, totalProjects)),
+			     QStringLiteral("Waiting for Opus project %1/%2 to finish processing...")
+				     .arg(projectIndex + 1)
+				     .arg(totalProjects));
+
+	QUrl url(QStringLiteral("%1/api/clip-projects/%2")
+			 .arg(OpusApi::BaseUrl, QString::fromUtf8(QUrl::toPercentEncoding(projectId))));
+	QNetworkRequest request{url};
+	request.setRawHeader("Accept", "application/json");
+	request.setRawHeader("Authorization", QString("Bearer %1").arg(apiKey).toUtf8());
+
+	QNetworkReply *reply = network.get(request);
+	currentReply = reply;
+
+	connect(reply, &QNetworkReply::finished, this,
+		[this, reply, uploadId, projectId, projectIndex, totalProjects, attempt]() {
+			const QByteArray response = reply->readAll();
+			const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+			const QNetworkReply::NetworkError error = reply->error();
+			const QString errorString = reply->errorString();
+
+			if (currentReply == reply)
+				currentReply = nullptr;
+
+			if (cancelRequested || error == QNetworkReply::OperationCanceledError) {
+				reply->deleteLater();
+				emitCanceledIfNeeded();
+				return;
+			}
+
+			reply->deleteLater();
+
+			if (error != QNetworkReply::NoError || status < 200 || status >= 300) {
+				blog(LOG_WARNING,
+				     "[clip-cropper] Could not poll Opus project status. projectId=%s status=%d error=%s response=%s attempt=%d/%d",
+				     projectId.toUtf8().constData(), status, errorString.toUtf8().constData(),
+				     response.constData(), attempt + 1, OpusProjectStatusMaxAttempts);
+				QTimer::singleShot(OpusProjectStatusPollDelayMs, this,
+						   [this, uploadId, projectId, projectIndex, totalProjects, attempt]() {
+							   pollProjectUntilTerminal(uploadId, projectId, projectIndex, totalProjects,
+											    attempt + 1);
+						   });
+				return;
+			}
+
+			const QString stage = projectStageFromResponse(response);
+			blog(LOG_INFO, "[clip-cropper] Polled Opus project status. projectId=%s stage=%s attempt=%d/%d",
+			     projectId.toUtf8().constData(), stage.toUtf8().constData(), attempt + 1,
+			     OpusProjectStatusMaxAttempts);
+
+			if (isTerminalProjectStage(stage)) {
+				if (!isSuccessfulProjectStage(stage)) {
+					blog(LOG_WARNING,
+					     "[clip-cropper] Opus project reached non-success terminal stage. projectId=%s stage=%s. Continuing candidate queue.",
+					     projectId.toUtf8().constData(), stage.toUtf8().constData());
+				}
+				createNextClipProject(uploadId, projectIndex + 1);
+				return;
+			}
+
+			QTimer::singleShot(OpusProjectStatusPollDelayMs, this,
+					   [this, uploadId, projectId, projectIndex, totalProjects, attempt]() {
+						   pollProjectUntilTerminal(uploadId, projectId, projectIndex, totalProjects,
+									    attempt + 1);
+					   });
+		});
 }
 
 void OpusClipClient::createNextClipProject(const QString &uploadId, int projectIndex)
@@ -426,6 +764,11 @@ void OpusClipClient::createClipProject(const QString &uploadId, const ClipDurati
 
 		emit progressChanged(50 + static_cast<int>(((projectIndex + 1) * 50.0) / std::max(1, totalProjects)),
 				     obsText("Status.CreatedClipProject").arg(projectIndex + 1).arg(totalProjects));
+
+		if (waitForProjectCompletionBeforeFinish) {
+			pollProjectUntilTerminal(uploadId, projectId, projectIndex, totalProjects, 0);
+			return;
+		}
 
 		createNextClipProject(uploadId, projectIndex + 1);
 	});

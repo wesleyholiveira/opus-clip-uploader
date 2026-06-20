@@ -1,6 +1,8 @@
 #pragma once
 
+#include <QByteArray>
 #include <QObject>
+#include <QPointer>
 #include <QString>
 #include <QStringList>
 #include <QVector>
@@ -40,10 +42,12 @@ private:
 	};
 
 	struct PreparedUploadItem {
-		QString filePath;
+		QByteArray data;
 		QString fileName;
 		QString mimeType;
 		CurationSettings curationSettings;
+		double sourceStartSec = 0.0;
+		double sourceEndSec = 0.0;
 	};
 
 	QString apiKey;
@@ -58,16 +62,21 @@ private:
 	OpusClipClient *client = nullptr;
 	QProcess *currentProcess = nullptr;
 	std::atomic_bool cancelRequested{false};
-	QVector<PreparedUploadItem> independentUploadItems;
+	QVector<ClipDuration> independentUploadRanges;
 	QStringList independentProjectIds;
+	QVector<QPointer<OpusClipClient>> independentActiveClients;
 	int independentUploadIndex = 0;
 
 	ResampleResult prepareUploadVideo();
-	QVector<PreparedUploadItem> prepareIndependentRangeUploadVideos();
-	void startIndependentRangeUploads(QVector<PreparedUploadItem> items);
+	PreparedUploadItem prepareIndependentRangeUploadVideo(const ClipDuration &range, int index, int total);
+	void startIndependentRangeUploads(QVector<ClipDuration> ranges);
 	void startNextIndependentRangeUpload();
+	void removeIndependentActiveClient(OpusClipClient *opusClient);
+	int activeIndependentClientCount() const;
 	void startOpusUpload(const QString &uploadFilePath, const QString &uploadFileName,
 			     const QString &uploadMimeType, const CurationSettings &settings, bool hasResamplePhase);
 	bool runProcess(const QString &program, const QStringList &arguments, int progressStart, int progressEnd,
 			const QString &message, QString *lastOutput = nullptr);
+	bool runProcessCaptureStdout(const QString &program, const QStringList &arguments, int progressStart, int progressEnd,
+				     const QString &message, QByteArray *stdoutData, QString *lastErrorOutput = nullptr);
 };

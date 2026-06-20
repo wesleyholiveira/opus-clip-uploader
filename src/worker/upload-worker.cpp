@@ -35,6 +35,7 @@ extern "C" {
 namespace {
 constexpr const char *ConfigUploadResampleThresholdPercent = "upload_resample_threshold_percent";
 constexpr double DefaultResampleThresholdPercent = 60.0;
+constexpr int OpusIndependentProjectPoolSize = 4;
 
 static QString obsText(const char *key)
 {
@@ -78,6 +79,15 @@ QStringList ffmpegExecutableCandidates()
 	candidates.removeAll(QString());
 	candidates.removeDuplicates();
 	return candidates;
+}
+
+void releaseByteArrayStorage(QByteArray *data)
+{
+	if (!data)
+		return;
+
+	QByteArray empty;
+	data->swap(empty);
 }
 
 QString resolveFfmpegExecutable()
@@ -433,17 +443,7 @@ void UploadWorker::run()
 
 	const QVector<ClipDuration> ranges = validRanges(curationSettings);
 	if (curationSettings.uploadClipRangesIndependently && ranges.size() > 1) {
-		QVector<PreparedUploadItem> items = prepareIndependentRangeUploadVideos();
-		if (cancelRequested.load()) {
-			emit failed(obsText("Message.UploadCanceled"));
-			return;
-		}
-
-		if (!items.isEmpty()) {
-			startIndependentRangeUploads(std::move(items));
-			return;
-		}
-
+		startIndependentRangeUploads(ranges);
 		return;
 	}
 
@@ -466,6 +466,13 @@ void UploadWorker::cancel()
 
 	if (client) {
 		OpusClipClient *target = client;
+		QMetaObject::invokeMethod(target, [target]() { target->cancel(); }, Qt::QueuedConnection);
+	}
+
+	for (const QPointer<OpusClipClient> &activeClient : independentActiveClients) {
+		if (!activeClient)
+			continue;
+		OpusClipClient *target = activeClient.data();
 		QMetaObject::invokeMethod(target, [target]() { target->cancel(); }, Qt::QueuedConnection);
 	}
 }
@@ -526,189 +533,286 @@ bool UploadWorker::runProcess(const QString &program, const QStringList &argumen
 	return true;
 }
 
-QVector<UploadWorker::PreparedUploadItem> UploadWorker::prepareIndependentRangeUploadVideos()
+bool UploadWorker::runProcessCaptureStdout(const QString &program, const QStringList &arguments, int progressStart,
+						   int progressEnd, const QString &message, QByteArray *stdoutData,
+						   QString *lastErrorOutput)
 {
-	QVector<PreparedUploadItem> items;
-	const QVector<ClipDuration> ranges = validRanges(curationSettings);
-	if (ranges.size() <= 1)
-		return items;
+	if (!stdoutData)
+		return false;
+
+	releaseByteArrayStorage(stdoutData);
+
+	QProcess process;
+	currentProcess = &process;
+	process.setProgram(program);
+	process.setArguments(arguments);
+	process.setProcessChannelMode(QProcess::SeparateChannels);
+
+	emit progressChanged(progressStart, message);
+	process.start();
+	if (!process.waitForStarted(5000)) {
+		currentProcess = nullptr;
+		releaseByteArrayStorage(stdoutData);
+		return false;
+	}
+
+	QByteArray errorOutput;
+	int progress = progressStart;
+	const int cappedProgressEnd = std::max(progressStart, progressEnd - 1);
+
+	while (!process.waitForFinished(250)) {
+		stdoutData->append(process.readAllStandardOutput());
+		errorOutput.append(process.readAllStandardError());
+		if (errorOutput.size() > 12000)
+			errorOutput.remove(0, errorOutput.size() - 12000);
+
+		if (cancelRequested.load()) {
+			process.kill();
+			process.waitForFinished(3000);
+			currentProcess = nullptr;
+			releaseByteArrayStorage(stdoutData);
+			return false;
+		}
+
+		if (progress < cappedProgressEnd) {
+			++progress;
+			emit progressChanged(progress, message);
+		}
+	}
+
+	stdoutData->append(process.readAllStandardOutput());
+	errorOutput.append(process.readAllStandardError());
+	if (errorOutput.size() > 12000)
+		errorOutput.remove(0, errorOutput.size() - 12000);
+
+	currentProcess = nullptr;
+	if (lastErrorOutput)
+		*lastErrorOutput = QString::fromUtf8(errorOutput);
+
+	if (cancelRequested.load()) {
+		releaseByteArrayStorage(stdoutData);
+		return false;
+	}
+
+	if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0 || stdoutData->isEmpty()) {
+		releaseByteArrayStorage(stdoutData);
+		return false;
+	}
+
+	emit progressChanged(progressEnd, message);
+	return true;
+}
+
+UploadWorker::PreparedUploadItem UploadWorker::prepareIndependentRangeUploadVideo(const ClipDuration &range, int index, int total)
+{
+	PreparedUploadItem item;
+	const double durationSec = std::max(0.0, range.endSec - range.startSec);
+	if (durationSec <= 0.0)
+		return item;
 
 	const QString ffmpeg = resolveFfmpegExecutable();
 	if (ffmpeg.trimmed().isEmpty()) {
 		emit failed(QStringLiteral(
 			"ffmpeg executable was not found. Set CLIP_CROPPER_FFMPEG_PATH or install the bundled runtime."));
-		return items;
+		return item;
 	}
 
-	blog(LOG_INFO, "[clip-cropper] Independent candidate uploads enabled. source=%s ranges=%d",
-	     filePath.toUtf8().constData(), static_cast<int>(ranges.size()));
+	const int safeRangeCount = std::max(1, total);
+	const int progressStart = static_cast<int>((index * 48.0) / safeRangeCount);
+	const int progressEnd = static_cast<int>(((index + 1) * 48.0) / safeRangeCount);
 
-	items.reserve(ranges.size());
-	const int rangeCount = static_cast<int>(ranges.size());
-	for (int i = 0; i < rangeCount; ++i) {
+	QByteArray payload;
+	QString output;
+	const bool ok = runProcessCaptureStdout(ffmpeg,
+						 QStringList{QStringLiteral("-hide_banner"),
+							     QStringLiteral("-nostdin"),
+							     QStringLiteral("-ss"),
+							     QString::number(range.startSec, 'f', 3),
+							     QStringLiteral("-t"),
+							     QString::number(durationSec, 'f', 3),
+							     QStringLiteral("-i"),
+							     filePath,
+							     QStringLiteral("-map"),
+							     QStringLiteral("0:v:0"),
+							     QStringLiteral("-map"),
+							     QStringLiteral("0:a?"),
+							     QStringLiteral("-sn"),
+							     QStringLiteral("-dn"),
+							     QStringLiteral("-c:v"),
+							     QStringLiteral("libx264"),
+							     QStringLiteral("-preset"),
+							     QStringLiteral("veryfast"),
+							     QStringLiteral("-crf"),
+							     QStringLiteral("23"),
+							     QStringLiteral("-c:a"),
+							     QStringLiteral("aac"),
+							     QStringLiteral("-b:a"),
+							     QStringLiteral("160k"),
+							     QStringLiteral("-movflags"),
+							     QStringLiteral("frag_keyframe+empty_moov+default_base_moof"),
+							     QStringLiteral("-f"),
+							     QStringLiteral("mp4"),
+							     QStringLiteral("pipe:1")},
+						 progressStart, progressEnd,
+						 obsText("Status.ResamplingVideo").arg(index + 1).arg(total), &payload, &output);
+
+	if (!ok) {
 		if (cancelRequested.load())
-			break;
+			return item;
 
-		const ClipDuration range = ranges.at(i);
-		const double durationSec = std::max(0.0, range.endSec - range.startSec);
-		if (durationSec <= 0.0)
-			continue;
-
-		const QString outputPath = uniqueResampledVideoPath(filePath);
-		const int safeRangeCount = std::max(1, rangeCount);
-		const int progressStart = static_cast<int>((i * 48.0) / safeRangeCount);
-		const int progressEnd = static_cast<int>(((i + 1) * 48.0) / safeRangeCount);
-
-		QString output;
-		const bool ok = runProcess(ffmpeg,
-					   QStringList{QStringLiteral("-hide_banner"),
-						       QStringLiteral("-nostdin"),
-						       QStringLiteral("-y"),
-						       QStringLiteral("-ss"),
-						       QString::number(range.startSec, 'f', 3),
-						       QStringLiteral("-t"),
-						       QString::number(durationSec, 'f', 3),
-						       QStringLiteral("-i"),
-						       filePath,
-						       QStringLiteral("-map"),
-						       QStringLiteral("0:v:0"),
-						       QStringLiteral("-map"),
-						       QStringLiteral("0:a?"),
-						       QStringLiteral("-sn"),
-						       QStringLiteral("-dn"),
-						       QStringLiteral("-c:v"),
-						       QStringLiteral("libx264"),
-						       QStringLiteral("-preset"),
-						       QStringLiteral("veryfast"),
-						       QStringLiteral("-crf"),
-						       QStringLiteral("23"),
-						       QStringLiteral("-c:a"),
-						       QStringLiteral("aac"),
-						       QStringLiteral("-b:a"),
-						       QStringLiteral("160k"),
-						       QStringLiteral("-movflags"),
-						       QStringLiteral("+faststart"),
-						       outputPath},
-					   progressStart, progressEnd,
-					   obsText("Status.ResamplingVideo").arg(i + 1).arg(ranges.size()), &output);
-
-		if (!ok) {
-			if (cancelRequested.load())
-				break;
-
-			blog(LOG_ERROR,
-			     "[clip-cropper] ffmpeg failed while preparing independent candidate upload. output=%s",
-			     output.toUtf8().constData());
-			emit failed(
-				QStringLiteral("Failed to create isolated candidate video with ffmpeg: %1").arg(output));
-			return {};
-		}
-
-		CurationSettings itemSettings = curationSettings;
-		itemSettings.clipDurations.clear();
-		itemSettings.clipDurations.append({0.0, durationSec});
-		itemSettings.rangeStartSec = 0.0;
-		itemSettings.rangeEndSec = durationSec;
-		itemSettings.originalVideoDurationSec = durationSec;
-		itemSettings.uploadClipRangesIndependently = false;
-
-		saveMarkersForVideoPath(outputPath, itemSettings.clipDurations);
-		saveReviewSettingsForVideoPath(outputPath, itemSettings);
-		saveTranscriptCacheForResampledVideo(filePath, outputPath, QVector<ClipDuration>{range},
-						     curationSettings);
-
-		PreparedUploadItem item;
-		item.filePath = outputPath;
-		item.fileName = QFileInfo(outputPath).fileName();
-		item.mimeType = QStringLiteral("video/mp4");
-		item.curationSettings = itemSettings;
-		items.append(item);
-
-		blog(LOG_INFO,
-		     "[clip-cropper] Prepared isolated candidate upload %d/%d. sourceRange=%.2f-%.2f output=%s durationSec=%.2f",
-		     i + 1, rangeCount, range.startSec, range.endSec, outputPath.toUtf8().constData(), durationSec);
+		blog(LOG_ERROR,
+		     "[clip-cropper] ffmpeg failed while preparing in-memory independent candidate upload. output=%s",
+		     output.toUtf8().constData());
+		emit failed(QStringLiteral("Failed to create in-memory isolated candidate video with ffmpeg: %1").arg(output));
+		return item;
 	}
 
-	if (cancelRequested.load())
-		return {};
+	CurationSettings itemSettings = curationSettings;
+	itemSettings.clipDurations.clear();
+	itemSettings.clipDurations.append({0.0, durationSec});
+	itemSettings.rangeStartSec = 0.0;
+	itemSettings.rangeEndSec = durationSec;
+	itemSettings.originalVideoDurationSec = durationSec;
+	itemSettings.uploadClipRangesIndependently = false;
 
-	return items;
+	item.data = std::move(payload);
+	item.fileName = QStringLiteral("%1-candidate-%2.mp4")
+				.arg(QFileInfo(filePath).completeBaseName().trimmed().isEmpty() ? QStringLiteral("video") : QFileInfo(filePath).completeBaseName().trimmed())
+				.arg(index + 1);
+	item.mimeType = QStringLiteral("video/mp4");
+	item.curationSettings = itemSettings;
+	item.sourceStartSec = range.startSec;
+	item.sourceEndSec = range.endSec;
+
+	blog(LOG_INFO,
+	     "[clip-cropper] Prepared in-memory isolated candidate upload %d/%d. sourceRange=%.2f-%.2f bytes=%lld durationSec=%.2f",
+	     index + 1, total, range.startSec, range.endSec, static_cast<long long>(item.data.size()), durationSec);
+
+	return item;
 }
 
-void UploadWorker::startIndependentRangeUploads(QVector<PreparedUploadItem> items)
+void UploadWorker::startIndependentRangeUploads(QVector<ClipDuration> ranges)
 {
-	independentUploadItems = std::move(items);
+	independentUploadRanges = std::move(ranges);
 	independentProjectIds.clear();
+	independentActiveClients.clear();
 	independentUploadIndex = 0;
 
-	if (independentUploadItems.isEmpty())
+	if (independentUploadRanges.isEmpty())
 		return;
+
+	blog(LOG_INFO,
+	     "[clip-cropper] Independent candidate uploads enabled. source=%s ranges=%d mode=in_memory poolSize=%d",
+	     filePath.toUtf8().constData(), static_cast<int>(static_cast<long long>(independentUploadRanges.size())),
+	     OpusIndependentProjectPoolSize);
 
 	emit progressChanged(50, obsText("Status.ResampledVideoReady"));
 	startNextIndependentRangeUpload();
 }
 
+int UploadWorker::activeIndependentClientCount() const
+{
+	int count = 0;
+	for (const QPointer<OpusClipClient> &activeClient : independentActiveClients) {
+		if (activeClient)
+			++count;
+	}
+	return count;
+}
+
+void UploadWorker::removeIndependentActiveClient(OpusClipClient *opusClient)
+{
+	independentActiveClients.erase(std::remove_if(independentActiveClients.begin(), independentActiveClients.end(),
+						     [opusClient](const QPointer<OpusClipClient> &activeClient) {
+							     return !activeClient || activeClient.data() == opusClient;
+						     }),
+					      independentActiveClients.end());
+}
+
 void UploadWorker::startNextIndependentRangeUpload()
 {
 	if (cancelRequested.load()) {
+		for (const QPointer<OpusClipClient> &activeClient : independentActiveClients) {
+			if (activeClient)
+				activeClient->cancel();
+		}
 		emit failed(obsText("Message.UploadCanceled"));
 		return;
 	}
 
-	if (independentUploadIndex >= independentUploadItems.size()) {
-		emit finished(independentProjectIds.join(QStringLiteral(", ")));
-		return;
-	}
+	const int totalUploads = std::max(1, static_cast<int>(static_cast<long long>(independentUploadRanges.size())));
 
-	const int currentIndex = independentUploadIndex;
-	const int totalUploads = std::max(1, static_cast<int>(independentUploadItems.size()));
-	const PreparedUploadItem item = independentUploadItems.at(static_cast<long long>(currentIndex));
+	while (activeIndependentClientCount() < OpusIndependentProjectPoolSize &&
+	       static_cast<long long>(independentUploadIndex) < static_cast<long long>(independentUploadRanges.size())) {
+		const int currentIndex = independentUploadIndex;
+		PreparedUploadItem item = prepareIndependentRangeUploadVideo(independentUploadRanges.at(currentIndex), currentIndex, totalUploads);
+		if (cancelRequested.load()) {
+			emit failed(obsText("Message.UploadCanceled"));
+			return;
+		}
+		if (item.data.isEmpty())
+			return;
 
-	blog(LOG_INFO, "[clip-cropper] Starting independent Opus candidate upload %d/%d. file=%s range=%.2f-%.2f",
-	     currentIndex + 1, totalUploads, item.filePath.toUtf8().constData(), item.curationSettings.rangeStartSec,
-	     item.curationSettings.rangeEndSec);
+		++independentUploadIndex;
 
-	auto *opusClient = new OpusClipClient(apiKey, brandTemplateId, sourceLang, item.curationSettings, this);
-	client = opusClient;
-	const QPointer<OpusClipClient> safeClient(opusClient);
-	const int progressStart = 50 + static_cast<int>((currentIndex * 50.0) / totalUploads);
-	const int progressEnd = 50 + static_cast<int>(((currentIndex + 1) * 50.0) / totalUploads);
-	const int progressSpan = std::max(1, progressEnd - progressStart);
+		blog(LOG_INFO,
+		     "[clip-cropper] Starting independent Opus candidate upload %d/%d. mode=in_memory bytes=%lld range=%.2f-%.2f activePool=%d/%d",
+		     currentIndex + 1, totalUploads, static_cast<long long>(item.data.size()), item.sourceStartSec, item.sourceEndSec,
+		     activeIndependentClientCount() + 1, OpusIndependentProjectPoolSize);
 
-	connect(opusClient, &OpusClipClient::progressChanged, this,
-		[this, progressStart, progressSpan, currentIndex, totalUploads](int progress, const QString &message) {
-			const int mappedProgress =
-				progressStart + static_cast<int>((qBound(0, progress, 100) * progressSpan) / 100.0);
-			emit progressChanged(qBound(0, mappedProgress, 100), obsText("Status.UploadPhase")
-										     .arg(QStringLiteral("%1/%2 %3")
-												  .arg(currentIndex + 1)
-												  .arg(totalUploads)
-												  .arg(message)));
+		auto *opusClient = new OpusClipClient(apiKey, brandTemplateId, sourceLang, item.curationSettings, this);
+		opusClient->setWaitForProjectCompletionBeforeFinish(true);
+		client = opusClient;
+		independentActiveClients.append(QPointer<OpusClipClient>(opusClient));
+		const QPointer<OpusClipClient> safeClient(opusClient);
+		const int progressStart = 50 + static_cast<int>((currentIndex * 50.0) / totalUploads);
+		const int progressEnd = 50 + static_cast<int>(((currentIndex + 1) * 50.0) / totalUploads);
+		const int progressSpan = std::max(1, progressEnd - progressStart);
+
+		connect(opusClient, &OpusClipClient::progressChanged, this,
+			[this, progressStart, progressSpan, currentIndex, totalUploads](int progress, const QString &message) {
+				const int mappedProgress = progressStart +
+					static_cast<int>((qBound(0, progress, 100) * progressSpan) / 100.0);
+				emit progressChanged(qBound(0, mappedProgress, 100),
+						     obsText("Status.UploadPhase")
+							     .arg(QStringLiteral("%1/%2 %3")
+								  .arg(currentIndex + 1)
+								  .arg(totalUploads)
+								  .arg(message)));
+			});
+
+		connect(opusClient, &OpusClipClient::uploadFinished, this, [this, safeClient](const OpusUploadResult &result) {
+			independentProjectIds.append(QString::fromStdString(result.projectId));
+			removeIndependentActiveClient(safeClient.data());
+			if (client == safeClient.data())
+				client = nullptr;
+			if (safeClient)
+				safeClient->deleteLater();
+			startNextIndependentRangeUpload();
 		});
 
-	connect(opusClient, &OpusClipClient::uploadFinished, this, [this, safeClient](const OpusUploadResult &result) {
-		independentProjectIds.append(QString::fromStdString(result.projectId));
-		++independentUploadIndex;
-		if (client == safeClient.data())
-			client = nullptr;
-		if (safeClient)
-			safeClient->deleteLater();
-		startNextIndependentRangeUpload();
-	});
+		connect(opusClient, &OpusClipClient::uploadFailed, this, [this, safeClient](const OpusUploadResult &result) {
+			QString message = QString::fromUtf8(result.error.message.c_str());
+			if (result.httpStatus > 0)
+				message += QString(" (HTTP %1)").arg(result.httpStatus);
 
-	connect(opusClient, &OpusClipClient::uploadFailed, this, [this, safeClient](const OpusUploadResult &result) {
-		QString message = QString::fromUtf8(result.error.message.c_str());
-		if (result.httpStatus > 0)
-			message += QString(" (HTTP %1)").arg(result.httpStatus);
+			emit failed(message);
+			removeIndependentActiveClient(safeClient.data());
+			if (client == safeClient.data())
+				client = nullptr;
+			if (safeClient)
+				safeClient->deleteLater();
+		});
 
-		emit failed(message);
-		if (client == safeClient.data())
-			client = nullptr;
-		if (safeClient)
-			safeClient->deleteLater();
-	});
+		opusClient->uploadDataResumableAndCreateProjectAsync(std::move(item.data), item.fileName, item.mimeType);
+	}
 
-	opusClient->uploadFileResumableAndCreateProjectAsync(item.filePath, item.fileName, item.mimeType);
+	if (static_cast<long long>(independentUploadIndex) >= static_cast<long long>(independentUploadRanges.size()) &&
+	    activeIndependentClientCount() == 0) {
+		independentUploadRanges.clear();
+		independentActiveClients.clear();
+		emit finished(independentProjectIds.join(QStringLiteral(", ")));
+	}
 }
 
 UploadWorker::ResampleResult UploadWorker::prepareUploadVideo()

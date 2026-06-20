@@ -3,6 +3,7 @@
 #include "ui/ui-common.hpp"
 
 #include "curation/range/curation-range-strategy.hpp"
+#include "curation/curation-preset.hpp"
 
 #include <obs-module.h>
 #include <plugin-support.h>
@@ -229,6 +230,58 @@ static const char *range_resolution_mode_name(CurationRangeStrategyResolution::M
 	}
 
 	return "unknown";
+}
+
+static double total_curation_duration_seconds(const CurationSettings &settings)
+{
+	double totalSec = 0.0;
+	if (!settings.clipDurations.isEmpty()) {
+		for (const ClipDuration &range : settings.clipDurations)
+			totalSec += std::max(0.0, range.endSec - range.startSec);
+		return totalSec;
+	}
+
+	return std::max(0.0, settings.rangeEndSec - settings.rangeStartSec);
+}
+
+static bool should_preselect_viewer_candidates_for_gpt_context(const CurationSettings &settings)
+{
+	const QString presetId = CurationPreset::normalizeId(settings.curationPreset);
+	if (presetId != QStringLiteral("viewer_message_response"))
+		return false;
+
+	if (!settings.aiPrompt.trimmed().isEmpty())
+		return false;
+
+	return total_curation_duration_seconds(settings) >= 600.0;
+}
+
+static CurationSettings gpt_context_settings_for_large_viewer_discovery(const QString &videoPath,
+									 const RecordingTranscript &transcript,
+									 const CurationSettings &settings)
+{
+	if (!should_preselect_viewer_candidates_for_gpt_context(settings))
+		return settings;
+
+	static const QString discoveryPrompt = QStringLiteral(
+		"Find one continuous, unbroken clip built from one complete response to a single viewer message.");
+
+	const CurationRangeStrategyResolver resolver;
+	const CurationRangeStrategyResolution resolution = resolver.resolve(transcript, settings, discoveryPrompt);
+	if (resolution.mode != CurationRangeStrategyResolution::Mode::CandidateRanges || resolution.ranges.isEmpty())
+		return settings;
+
+	CurationSettings adjusted = resolver.apply(settings, resolution);
+	adjusted.uploadClipRangesIndependently = false;
+
+	blog(LOG_INFO,
+	     "[clip-cropper] Preselected viewer-message candidate ranges for GPT context. video=%s strategy=%s mode=%s reason=%s originalSelectedSec=%.2f promptRanges=%d ranges=%s details=%s",
+	     videoPath.toUtf8().constData(), resolution.strategyName.toUtf8().constData(),
+	     range_resolution_mode_name(resolution.mode), resolution.reason.toUtf8().constData(),
+	     total_curation_duration_seconds(settings), static_cast<int>(resolution.ranges.size()),
+	     ranges_log(resolution.ranges).toUtf8().constData(), resolution.details.toUtf8().constData());
+
+	return adjusted;
 }
 
 static GeneratedCurationPromptResult result_with_strategy_ranges(const QString &videoPath,
@@ -581,10 +634,10 @@ static void generate_gpt_prompt_with_progress_dialog_async(QWidget *parent, cons
 			 });
 
 	blog(LOG_INFO,
-	     "Sending transcript context to GPT after review. video=%s fullSegments=%d selectedSegments=%d model=%s",
+	     "Sending compact transcript context to GPT after review. video=%s originalSegments=%d promptSegments=%d model=%s",
 	     videoPath.toUtf8().constData(), transcript.segments.size(), promptTranscript.segments.size(),
 	     get_openai_model().toUtf8().constData());
-	client->createOpusPromptAsync(videoPath, transcript, promptTranscript, curationSettings);
+	client->createOpusPromptAsync(videoPath, promptTranscript, promptTranscript, curationSettings);
 }
 
 void generate_custom_prompt_for_curation_async(QWidget *parent, const QString &videoPath,
@@ -667,6 +720,9 @@ void generate_custom_prompt_for_curation_result_async(QWidget *parent, const QSt
 			return;
 		}
 
+		const CurationSettings gptContextSettings =
+			gpt_context_settings_for_large_viewer_discovery(videoPath, transcript, curationSettings);
+
 		auto finishWithFocus = [videoPath, transcript, curationSettings,
 					    finish](QString prompt) mutable {
 			GeneratedCurationPromptResult result = result_with_strategy_ranges(videoPath, transcript,
@@ -674,8 +730,9 @@ void generate_custom_prompt_for_curation_result_async(QWidget *parent, const QSt
 			finish(std::move(result));
 		};
 
-		generate_gpt_prompt_with_progress_dialog_async(parent, videoPath, transcript, curationSettings,
+		generate_gpt_prompt_with_progress_dialog_async(parent, videoPath, transcript, gptContextSettings,
 								     std::move(finishWithFocus));
+
 	};
 
 	blog(LOG_INFO, "Loading transcript after review before GPT curation prompt generation: %s",

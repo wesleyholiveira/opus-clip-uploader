@@ -5,6 +5,7 @@
 
 #include <QObject>
 #include <QByteArray>
+#include <QBuffer>
 #include <QFile>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
@@ -21,6 +22,8 @@ public:
 	void cancel();
 	void uploadFileResumableAndCreateProjectAsync(const QString &filePath, const QString &fileName,
 						      const QString &mimeType);
+	void uploadDataResumableAndCreateProjectAsync(QByteArray data, const QString &fileName, const QString &mimeType);
+	void setWaitForProjectCompletionBeforeFinish(bool enabled);
 
 signals:
 	void progressChanged(int progress, const QString &message);
@@ -31,6 +34,8 @@ private:
 	QNetworkAccessManager network;
 	QPointer<QNetworkReply> currentReply;
 	QPointer<QFile> currentUploadFile;
+	QPointer<QBuffer> currentUploadBuffer;
+	QByteArray currentUploadPayload;
 	QString apiKey;
 	QString brandTemplateId;
 	QString sourceLang;
@@ -38,12 +43,21 @@ private:
 	QStringList createdProjectIds;
 	bool cancelRequested = false;
 	bool terminalSignalEmitted = false;
+	bool waitForProjectCompletionBeforeFinish = false;
 
 	void createUploadLink(const QString &filePath);
+	void createUploadLinkForData();
 	void startResumableSession(const QString &filePath, const QString &uploadUrl, const QString &uploadId);
+	void startResumableSessionForData(const QString &uploadUrl, const QString &uploadId);
 	void uploadFileToResumableLocation(const QString &filePath, const QString &location, const QString &uploadId);
+	void uploadDataToResumableLocation(const QString &location, const QString &uploadId);
+	void releaseCurrentUploadPayload();
 	void createNextClipProject(const QString &uploadId, int projectIndex);
 	void createClipProject(const QString &uploadId, const ClipDuration &range, int projectIndex, int totalProjects);
+	void pollProjectUntilTerminal(const QString &uploadId, const QString &projectId, int projectIndex, int totalProjects, int attempt);
+	QString projectStageFromResponse(const QByteArray &body) const;
+	bool isTerminalProjectStage(const QString &stage) const;
+	bool isSuccessfulProjectStage(const QString &stage) const;
 	QVector<ClipDuration> projectRanges() const;
 
 	void fail(const QString &message, int code = -1, long httpStatus = 0, const QByteArray &body = {});

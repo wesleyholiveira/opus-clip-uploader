@@ -39,7 +39,7 @@ static constexpr const char *PROMPT_GENERATION_BLOCKED_PREFIX = "GPT_PROMPT_BLOC
 static constexpr const char *OPUS_PROMPT_PREFIX = "OPUS_PROMPT:";
 static constexpr const char *REPAIR_TEMPLATE_SECTION = "repair_opus_prompt";
 
-static constexpr const char *CONFIG_GPT_INPUT_TEMPLATE_PREFIX = "gpt.input_text_template.v52.";
+static constexpr const char *CONFIG_GPT_INPUT_TEMPLATE_PREFIX = "gpt.input_text_template.v55.";
 static constexpr const char *CONFIG_OPUS_SOURCE_LANGUAGE = "opus_source_lang";
 static constexpr const char *CONFIG_GPT_PROMPT_REPAIR_MODE = "gpt.prompt_repair_mode";
 static constexpr const char *CONFIG_GPT_TRANSCRIPT_CONTEXT_PADDING_SEC = "gpt_transcript_context_padding_sec";

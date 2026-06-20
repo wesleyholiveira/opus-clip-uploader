@@ -22,22 +22,63 @@ static constexpr double MIN_TARGET_ANCHOR_CONFIDENCE = 0.55;
 static constexpr double PREAMBLE_ONLY_SEGMENT_OFFSET_SEC = 2.5;
 
 static constexpr double VIEWER_CANDIDATE_PADDING_BEFORE_SEC = 0.35;
-static constexpr double VIEWER_CANDIDATE_DEFAULT_AFTER_SEC = 28.0;
-static constexpr double VIEWER_CANDIDATE_EMOTIONAL_AFTER_SEC = 34.0;
-static constexpr double VIEWER_CANDIDATE_ADVICE_AFTER_SEC = 30.0;
-static constexpr double VIEWER_CANDIDATE_MIN_DURATION_SEC = 18.0;
-static constexpr double VIEWER_CANDIDATE_BOUNDARY_MIN_DURATION_SEC = 7.0;
-static constexpr double VIEWER_CANDIDATE_MAX_DURATION_SEC = 42.0;
-static constexpr double VIEWER_CANDIDATE_MIN_SCORE = 0.55;
-static constexpr double VIEWER_CANDIDATE_SECONDARY_MIN_SCORE = 0.55;
-static constexpr double VIEWER_CANDIDATE_HIGH_CONFIDENCE_BEST_SCORE = 1.80;
-static constexpr double VIEWER_CANDIDATE_SECONDARY_RELATIVE_TO_BEST = 0.25;
 static constexpr double VIEWER_CANDIDATE_OVERLAP_TOLERANCE_SEC = 8.0;
 static constexpr double VIEWER_CANDIDATE_SAME_CUE_DEDUPE_WINDOW_SEC = 45.0;
 static constexpr double VIEWER_CANDIDATE_NEXT_CUE_PADDING_SEC = 0.35;
 static constexpr double VIEWER_CANDIDATE_NEXT_CUE_MIN_GAP_SEC = 10.0;
 static constexpr double VIEWER_CANDIDATE_ANCHOR_CUE_MISMATCH_PENALTY = 0.45;
-static constexpr int MAX_LOGGED_CANDIDATES = 5;
+static constexpr double VIEWER_CANDIDATE_QUOTA_ABSOLUTE_MIN_DURATION_SEC = 9.0;
+static constexpr double VIEWER_CANDIDATE_CONTEXT_PRELUDE_LOOKBACK_SEC = 36.0;
+static constexpr double VIEWER_CANDIDATE_QUOTA_EMOTIONAL_MIN_SCORE = 0.20;
+static constexpr double VIEWER_CANDIDATE_LARGE_DISCOVERY_SEC = 1800.0;
+static constexpr double VIEWER_CANDIDATE_MEDIUM_DISCOVERY_SEC = 600.0;
+static constexpr int VIEWER_CANDIDATE_SHORT_MAX_PROJECTS = 3;
+static constexpr int VIEWER_CANDIDATE_MEDIUM_MAX_PROJECTS = 6;
+static constexpr int VIEWER_CANDIDATE_LARGE_MAX_PROJECTS = 12;
+static constexpr int VIEWER_CANDIDATE_HUGE_MAX_PROJECTS = 16;
+
+struct CandidateDiscoveryProfile {
+	QString name;
+	int maxCandidates = VIEWER_CANDIDATE_SHORT_MAX_PROJECTS;
+	double defaultAfterSec = 28.0;
+	double emotionalAfterSec = 34.0;
+	double adviceAfterSec = 30.0;
+	double minDurationSec = 18.0;
+	double boundaryMinDurationSec = 7.0;
+	double maxDurationSec = 42.0;
+	double minScore = 0.55;
+	double poolMinScore = 0.50;
+	double quotaMinScore = 0.50;
+	double secondaryMinScore = 0.55;
+	double secondaryRelativeToBest = 0.25;
+	double temporalQuotaWindowSec = 0.0;
+	int temporalQuotaMinCandidates = 0;
+};
+
+double rangeDurationSec(const ClipDuration &range)
+{
+	return std::max(0.0, range.endSec - range.startSec);
+}
+
+CandidateDiscoveryProfile discoveryProfileForRange(const ClipDuration &range)
+{
+	const double durationSec = rangeDurationSec(range);
+	if (durationSec >= 7200.0) {
+		return {QStringLiteral("huge_discovery"), VIEWER_CANDIDATE_HUGE_MAX_PROJECTS, 42.0, 48.0, 50.0, 22.0,
+			9.0, 64.0, 0.42, 0.28, 0.30, 0.42, 0.12, 600.0, 1};
+	}
+	if (durationSec >= VIEWER_CANDIDATE_LARGE_DISCOVERY_SEC) {
+		return {QStringLiteral("large_discovery"), VIEWER_CANDIDATE_LARGE_MAX_PROJECTS, 40.0, 46.0, 48.0, 22.0,
+			9.0, 60.0, 0.42, 0.28, 0.30, 0.42, 0.14, 300.0, 1};
+	}
+	if (durationSec >= VIEWER_CANDIDATE_MEDIUM_DISCOVERY_SEC) {
+		return {QStringLiteral("medium_discovery"), VIEWER_CANDIDATE_MEDIUM_MAX_PROJECTS, 34.0, 42.0, 42.0,
+			20.0, 8.0, 52.0, 0.46, 0.30, 0.32, 0.46, 0.18, 300.0, 1};
+	}
+
+	return {QStringLiteral("precision"), VIEWER_CANDIDATE_SHORT_MAX_PROJECTS, 28.0, 34.0, 30.0, 18.0, 7.0,
+		42.0, 0.55, 0.50, 0.50, 0.55, 0.25, 0.0, 0};
+}
 
 QString stripDiacritics(const QString &value)
 {
@@ -333,6 +374,11 @@ int priorityPositionForPhrases(const QString &normalizedSegment, const QStringLi
 int meaningfulStartPosition(const QString &normalizedSegment, const QStringList &terms)
 {
 	static const QStringList strongestMessageStarts{
+		QStringLiteral("so aposta"),
+		QStringLiteral("so apostam"),
+		QStringLiteral("aposta quem quer"),
+		QStringLiteral("apostam a quem quer"),
+		QStringLiteral("a pessoa aposta"),
 		QStringLiteral("eu perdi meu pai"),
 		QStringLiteral("perdi meu pai"),
 		QStringLiteral("eu perdi minha mae"),
@@ -350,6 +396,11 @@ int meaningfulStartPosition(const QString &normalizedSegment, const QStringList 
 	int position = earliestTermPosition(normalizedSegment, terms);
 
 	static const QStringList usefulMessageStarts{
+		QStringLiteral("nao sei se eu tenho"),
+		QStringLiteral("nao sei se tenho"),
+		QStringLiteral("nao sei se e"),
+		QStringLiteral("depressao ou ansiedade"),
+		QStringLiteral("depressao e ansiedade"),
 		QStringLiteral("mano como"),
 		QStringLiteral("como eu posso"),
 		QStringLiteral("como posso"),
@@ -357,6 +408,8 @@ int meaningfulStartPosition(const QString &normalizedSegment, const QStringList 
 		QStringLiteral("eu gostava"),
 		QStringLiteral("por que"),
 		QStringLiteral("lembra"),
+		QStringLiteral("nao sei"),
+		QStringLiteral("na ansiedade"),
 	};
 
 	const int usefulPosition = firstPositionForPhrases(normalizedSegment, usefulMessageStarts);
@@ -459,6 +512,7 @@ struct CandidateRangeScore {
 	QStringList emotionalCues;
 	QString anchorText;
 	QString sampleText;
+	QString fullText;
 	QString cueSignature;
 	bool startAdjusted = false;
 	bool anchorCueAligned = true;
@@ -531,17 +585,17 @@ QStringList genericAnchorTermsForSegment(const QString &text)
 	return terms;
 }
 
-double candidateAfterSeconds(double emotionalScore, double adviceScore)
+double candidateAfterSeconds(const CandidateDiscoveryProfile &profile, double emotionalScore, double adviceScore)
 {
 	if (emotionalScore >= 0.55)
-		return VIEWER_CANDIDATE_EMOTIONAL_AFTER_SEC;
+		return profile.emotionalAfterSec;
 	if (adviceScore >= 0.35)
-		return VIEWER_CANDIDATE_ADVICE_AFTER_SEC;
-	return VIEWER_CANDIDATE_DEFAULT_AFTER_SEC;
+		return profile.adviceAfterSec;
+	return profile.defaultAfterSec;
 }
 
 CandidateRangeScore scoreCandidateRange(const RecordingTranscript &transcript, const ClipDuration &range,
-						 const AnchorStartEstimate &anchor)
+						 const AnchorStartEstimate &anchor, const CandidateDiscoveryProfile &profile)
 {
 	CandidateRangeScore score;
 	score.range = range;
@@ -549,6 +603,7 @@ CandidateRangeScore scoreCandidateRange(const RecordingTranscript &transcript, c
 	score.startAdjusted = anchor.adjusted;
 
 	const QString candidateText = textForRange(transcript, range);
+	score.fullText = candidateText;
 	score.sampleText = sampleForLog(candidateText);
 	score.emotionalScore = Curation::emotionalScoreForText(candidateText, &score.emotionalCues);
 	score.adviceScore = Curation::adviceScoreForText(candidateText);
@@ -556,7 +611,7 @@ CandidateRangeScore scoreCandidateRange(const RecordingTranscript &transcript, c
 	score.cueSignature = cueSignatureForCues(score.emotionalCues);
 	score.anchorCueAligned = score.emotionalCues.isEmpty() || textContainsCue(anchor.anchorText, score.emotionalCues);
 
-	const double compactnessBonus = std::max(0.0, 1.0 - ((range.endSec - range.startSec) / VIEWER_CANDIDATE_MAX_DURATION_SEC)) * 0.08;
+	const double compactnessBonus = std::max(0.0, 1.0 - ((range.endSec - range.startSec) / profile.maxDurationSec)) * 0.08;
 	const double mismatchPenalty = score.anchorCueAligned ? 0.0 : VIEWER_CANDIDATE_ANCHOR_CUE_MISMATCH_PENALTY;
 	score.score = std::clamp((score.emotionalScore * 2.4) + (score.adviceScore * 0.8) + score.questionScore + compactnessBonus - mismatchPenalty,
 				       0.0, 3.6);
@@ -586,15 +641,16 @@ bool hasStrongViewerIssueSignal(const CandidateRangeScore &candidate)
 	return false;
 }
 
-bool shouldKeepSecondaryCandidate(const CandidateRangeScore &candidate, const CandidateRangeScore &bestCandidate)
+bool shouldKeepSecondaryCandidate(const CandidateRangeScore &candidate, const CandidateRangeScore &bestCandidate,
+					  const CandidateDiscoveryProfile &profile)
 {
 	if (!candidate.anchorCueAligned)
 		return false;
 
-	const double relativeMinimum = bestCandidate.score >= VIEWER_CANDIDATE_HIGH_CONFIDENCE_BEST_SCORE
-		? bestCandidate.score * VIEWER_CANDIDATE_SECONDARY_RELATIVE_TO_BEST
-		: VIEWER_CANDIDATE_SECONDARY_MIN_SCORE;
-	const double minimumScore = std::max(VIEWER_CANDIDATE_SECONDARY_MIN_SCORE, relativeMinimum);
+	const double relativeMinimum = bestCandidate.score >= 1.80
+		? bestCandidate.score * profile.secondaryRelativeToBest
+		: profile.secondaryMinScore;
+	const double minimumScore = std::max(profile.secondaryMinScore, relativeMinimum);
 
 	if (candidate.score < minimumScore && candidate.adviceScore < 0.25)
 		return false;
@@ -666,37 +722,505 @@ CandidateAnchorChoice bestAnchorInsideRange(const RecordingTranscript &transcrip
 }
 
 ClipDuration buildCandidateRange(const ClipDuration &manualRange, const AnchorStartEstimate &anchor,
-					  double emotionalScore, double adviceScore)
+					  double emotionalScore, double adviceScore, const CandidateDiscoveryProfile &profile)
 {
-	const double afterSec = candidateAfterSeconds(emotionalScore, adviceScore);
-	const double startSec = std::clamp(anchor.startSec - VIEWER_CANDIDATE_PADDING_BEFORE_SEC,
-					       manualRange.startSec, manualRange.endSec);
+	const double afterSec = candidateAfterSeconds(profile, emotionalScore, adviceScore);
+	const double beforePaddingSec = anchor.adjusted ? 0.08 : VIEWER_CANDIDATE_PADDING_BEFORE_SEC;
+	const double startSec = std::clamp(anchor.startSec - beforePaddingSec, manualRange.startSec, manualRange.endSec);
 	const double desiredEndSec = std::min(manualRange.endSec, anchor.startSec + afterSec);
-	const double minEndSec = std::min(manualRange.endSec, startSec + VIEWER_CANDIDATE_MIN_DURATION_SEC);
+	const double minEndSec = std::min(manualRange.endSec, startSec + profile.minDurationSec);
 	double endSec = std::min(manualRange.endSec, std::max(desiredEndSec, minEndSec));
 
-	if ((endSec - startSec) > VIEWER_CANDIDATE_MAX_DURATION_SEC)
-		endSec = std::min(manualRange.endSec, startSec + VIEWER_CANDIDATE_MAX_DURATION_SEC);
+	if ((endSec - startSec) > profile.maxDurationSec)
+		endSec = std::min(manualRange.endSec, startSec + profile.maxDurationSec);
 
 	return {startSec, endSec};
 }
 
-ClipDuration trimCandidateBeforeNextCue(const RecordingTranscript &transcript, const ClipDuration &range, double anchorStartSec)
+bool looksLikeSameExchangeContinuation(const QString &text)
 {
+	const QString normalized = normalizedText(text);
+	if (normalized.isEmpty())
+		return false;
+
+	static const QStringList continuationStarts{
+		QStringLiteral("mas "),
+		QStringLiteral("porque "),
+		QStringLiteral("imagina"),
+		QStringLiteral("uma coisa"),
+		QStringLiteral("outra coisa"),
+		QStringLiteral("por exemplo"),
+		QStringLiteral("entao assim"),
+		QStringLiteral("e se"),
+		QStringLiteral("so que"),
+		QStringLiteral("olha so"),
+		QStringLiteral("tipo assim"),
+	};
+
+	for (const QString &marker : continuationStarts) {
+		if (normalized.startsWith(marker))
+			return true;
+	}
+
+	static const QStringList continuationContains{
+		QStringLiteral("ja parou pra pensar"),
+		QStringLiteral("voce ja parou pra pensar"),
+		QStringLiteral("ce ja parou pra pensar"),
+		QStringLiteral("ja parou para pensar"),
+		QStringLiteral("parou pra pensar"),
+		QStringLiteral("parou para pensar"),
+		QStringLiteral("voce ja parou"),
+		QStringLiteral("ce ja parou"),
+		QStringLiteral("na minha opiniao"),
+		QStringLiteral("moralmente incorreto"),
+		QStringLiteral("legalmente correto"),
+		QStringLiteral("felipe"),
+		QStringLiteral("entendendo"),
+		QStringLiteral("entendeu"),
+	};
+
+	for (const QString &marker : continuationContains) {
+		if (normalized.contains(marker))
+			return true;
+	}
+
+	return false;
+}
+
+bool looksLikeMentalHealthContext(const QString &text)
+{
+	const QString normalized = normalizedText(text);
+	if (normalized.isEmpty())
+		return false;
+
+	static const QStringList strongMarkers{
+		QStringLiteral("depress"),
+		QStringLiteral("ansiedade"),
+		QStringLiteral("ansioso"),
+		QStringLiteral("saude mental"),
+		QStringLiteral("psicolog"),
+		QStringLiteral("terapia"),
+		QStringLiteral("crise"),
+		QStringLiteral("fobia social"),
+		QStringLiteral("tdah"),
+		QStringLiteral("transtorno"),
+		QStringLiteral("diagnostic"),
+	};
+
+	for (const QString &marker : strongMarkers) {
+		if (normalized.contains(marker))
+			return true;
+	}
+
+	static const QStringList uncertainFirstPersonMarkers{
+		QStringLiteral("nao sei se"),
+		QStringLiteral("eu nao sei se"),
+		QStringLiteral("nao sei se eu"),
+		QStringLiteral("acho que tenho"),
+		QStringLiteral("acho que eu tenho"),
+		QStringLiteral("sera que eu tenho"),
+		QStringLiteral("eu acho que"),
+		QStringLiteral("eu tenho medo"),
+		QStringLiteral("eu sinto que"),
+		QStringLiteral("sinto que"),
+		QStringLiteral("me sinto"),
+		QStringLiteral("eu to com"),
+		QStringLiteral("to com"),
+		QStringLiteral("estou com"),
+	};
+
+	for (const QString &marker : uncertainFirstPersonMarkers) {
+		if (normalized.contains(marker))
+			return true;
+	}
+
+	return false;
+}
+
+bool looksLikeGamblingContext(const QString &text)
+{
+	const QString normalized = normalizedText(text);
+	if (normalized.isEmpty())
+		return false;
+
+	static const QStringList markers{
+		QStringLiteral("aposta"),
+		QStringLiteral("apostam"),
+		QStringLiteral("apostar"),
+		QStringLiteral("vicio"),
+		QStringLiteral("cassino"),
+		QStringLiteral("jogo de azar"),
+		QStringLiteral("bet"),
+		QStringLiteral("publicidade"),
+		QStringLiteral("influencia"),
+		QStringLiteral("influenciador"),
+		QStringLiteral("receber um valor"),
+		QStringLiteral("moralmente"),
+		QStringLiteral("legalmente"),
+		QStringLiteral("felipe"),
+	};
+
+	for (const QString &marker : markers) {
+		if (normalized.contains(marker))
+			return true;
+	}
+
+	return false;
+}
+
+bool normalizedContainsAny(const QString &normalized, const QStringList &markers)
+{
+	for (const QString &marker : markers) {
+		if (normalized.contains(marker))
+			return true;
+	}
+
+	return false;
+}
+
+QSet<QString> semanticCategoriesForText(const QString &text)
+{
+	const QString normalized = normalizedText(text);
+	QSet<QString> categories;
+	if (normalized.isEmpty())
+		return categories;
+
+	if (looksLikeMentalHealthContext(normalized))
+		categories.insert(QStringLiteral("mental_health"));
+	if (looksLikeGamblingContext(normalized))
+		categories.insert(QStringLiteral("gambling"));
+
+	if (normalizedContainsAny(normalized, {QStringLiteral("esquecer"), QStringLiteral("garota"),
+						     QStringLiteral("relacionamento"), QStringLiteral("namor"),
+						     QStringLiteral("gostei"), QStringLiteral("termin"),
+						     QStringLiteral("ficante")}))
+		categories.insert(QStringLiteral("relationship"));
+
+	if (normalizedContainsAny(normalized, {QStringLiteral("aumento"), QStringLiteral("chefe"),
+						     QStringLiteral("empresa"), QStringLiteral("trabalho"),
+						     QStringLiteral("salario"), QStringLiteral("merecedor")}))
+		categories.insert(QStringLiteral("career"));
+
+	if (normalizedContainsAny(normalized, {QStringLiteral("usado"), QStringLiteral("me sinto"),
+						     QStringLiteral("sinto que"), QStringLiteral("valor"),
+						     QStringLiteral("amizade"), QStringLiteral("amigo")}))
+		categories.insert(QStringLiteral("self_worth"));
+
+	if (normalizedContainsAny(normalized, {QStringLiteral("perdi meu pai"), QStringLiteral("pai pra aposta"),
+						     QStringLiteral("minha mae"), QStringLiteral("padrasto"),
+						     QStringLiteral("familia")}))
+		categories.insert(QStringLiteral("family"));
+
+	if (normalizedContainsAny(normalized, {QStringLiteral("convite"), QStringLiteral("lobby"),
+						     QStringLiteral("alice"), QStringLiteral("aceita esse"),
+						     QStringLiteral("cancela"), QStringLiteral("entrar na sala")}))
+		categories.insert(QStringLiteral("stream_operation"));
+
+	if (normalizedContainsAny(normalized, {QStringLiteral("boa noite"), QStringLiteral("bom dia"),
+						     QStringLiteral("boa tarde"), QStringLiteral("seja bem vindo"),
+						     QStringLiteral("bem vindo"), QStringLiteral("salve"),
+						     QStringLiteral("e ai "), QStringLiteral("oi ")}))
+		categories.insert(QStringLiteral("greeting"));
+
+	if (normalizedContainsAny(normalized, {QStringLiteral("block blast"), QStringLiteral("sand bricks"),
+						     QStringLiteral("jogo parecido"), QStringLiteral("partida"),
+						     QStringLiteral("personagem"), QStringLiteral("tela de jogo")}))
+		categories.insert(QStringLiteral("gameplay"));
+
+	return categories;
+}
+
+bool isNoiseCategory(const QString &category)
+{
+	return category == QStringLiteral("stream_operation") || category == QStringLiteral("greeting") ||
+	       category == QStringLiteral("gameplay");
+}
+
+QSet<QString> contentCategoriesForText(const QString &text)
+{
+	QSet<QString> categories = semanticCategoriesForText(text);
+	for (auto it = categories.begin(); it != categories.end();) {
+		if (isNoiseCategory(*it))
+			it = categories.erase(it);
+		else
+			++it;
+	}
+
+	return categories;
+}
+
+QSet<QString> contentTokensForText(const QString &text)
+{
+	static const QSet<QString> stopWords{
+		QStringLiteral("acho"), QStringLiteral("assim"), QStringLiteral("aqui"), QStringLiteral("aquela"),
+		QStringLiteral("aquele"), QStringLiteral("cara"), QStringLiteral("mano"), QStringLiteral("tipo"),
+		QStringLiteral("voce"), QStringLiteral("voces"), QStringLiteral("porque"), QStringLiteral("entao"),
+		QStringLiteral("tambem"), QStringLiteral("como"), QStringLiteral("quando"), QStringLiteral("onde"),
+		QStringLiteral("isso"), QStringLiteral("esse"), QStringLiteral("essa"), QStringLiteral("esses"),
+		QStringLiteral("essas"), QStringLiteral("para"), QStringLiteral("pela"), QStringLiteral("pelo"),
+		QStringLiteral("tava"), QStringLiteral("estava"), QStringLiteral("agora"), QStringLiteral("muito"),
+		QStringLiteral("mesmo"), QStringLiteral("meio"), QStringLiteral("ne"), QStringLiteral("ta"),
+	};
+
+	QSet<QString> tokens;
+	for (const QString &token : normalizedText(text).split(QLatin1Char(' '), Qt::SkipEmptyParts)) {
+		if (token.size() < 4 || stopWords.contains(token))
+			continue;
+		tokens.insert(token);
+	}
+
+	return tokens;
+}
+
+double lexicalTopicOverlap(const QString &text, const QString &contextText)
+{
+	const QSet<QString> left = contentTokensForText(text);
+	const QSet<QString> right = contentTokensForText(contextText);
+	if (left.isEmpty() || right.isEmpty())
+		return 0.0;
+
+	int intersection = 0;
+	for (const QString &token : left) {
+		if (right.contains(token))
+			++intersection;
+	}
+
+	const int denominator = std::max(1, std::min(static_cast<int>(left.size()), static_cast<int>(right.size())));
+	return static_cast<double>(intersection) / static_cast<double>(denominator);
+}
+
+bool hasSharedSemanticTopic(const QString &text, const QString &contextText)
+{
+	const QSet<QString> textCategories = contentCategoriesForText(text);
+	const QSet<QString> contextCategories = contentCategoriesForText(contextText);
+	for (const QString &category : textCategories) {
+		if (contextCategories.contains(category))
+			return true;
+	}
+
+	return lexicalTopicOverlap(text, contextText) >= 0.25;
+}
+
+bool hasNoiseOnlySemanticTopic(const QString &text)
+{
+	const QSet<QString> categories = semanticCategoriesForText(text);
+	if (categories.isEmpty())
+		return false;
+
+	for (const QString &category : categories) {
+		if (!isNoiseCategory(category))
+			return false;
+	}
+
+	return true;
+}
+
+bool looksLikeHardTopicShift(const QString &text, const QString &contextText)
+{
+	const QString normalized = normalizedText(text);
+	if (normalized.isEmpty())
+		return false;
+
+	if (hasNoiseOnlySemanticTopic(text) && !hasSharedSemanticTopic(text, contextText))
+		return true;
+
+	const QSet<QString> textCategories = contentCategoriesForText(text);
+	const QSet<QString> contextCategories = contentCategoriesForText(contextText);
+	if (!textCategories.isEmpty() && !contextCategories.isEmpty() && !hasSharedSemanticTopic(text, contextText))
+		return true;
+
+	if (looksLikeQuestionOrViewerMessage(text) && !hasSharedSemanticTopic(text, contextText) &&
+	    !looksLikeSameExchangeContinuation(text))
+		return true;
+
+	return false;
+}
+
+bool looksLikeSameTopicContinuation(const QString &text, const QString &contextText)
+{
+	const QString normalized = normalizedText(text);
+	const QString context = normalizedText(contextText);
+	if (normalized.isEmpty() || context.isEmpty())
+		return false;
+
+	if (hasSharedSemanticTopic(normalized, context))
+		return true;
+	if (looksLikeGamblingContext(context) && looksLikeGamblingContext(normalized))
+		return true;
+	if (looksLikeMentalHealthContext(context) && looksLikeMentalHealthContext(normalized))
+		return true;
+
+	return false;
+}
+
+bool anchorLooksLikeMentalHealth(const QString &anchorText)
+{
+	const QString anchor = normalizedText(anchorText);
+	return anchor.contains(QStringLiteral("ansiedade")) || anchor.contains(QStringLiteral("depress")) ||
+	       anchor.contains(QStringLiteral("tdah")) || anchor.contains(QStringLiteral("fobia social"));
+}
+
+bool looksLikeViewerContextPrelude(const QString &previousText, const QString &anchorText)
+{
+	const QString previous = normalizedText(previousText);
+	const QString anchor = normalizedText(anchorText);
+	if (previous.isEmpty() || anchor.isEmpty())
+		return false;
+
+	if (previous.contains(QStringLiteral("seja bem vindo")) || previous.contains(QStringLiteral("bem vindo")) ||
+	    previous.contains(QStringLiteral("salve")))
+		return false;
+
+	if (anchorLooksLikeMentalHealth(anchorText) && looksLikeMentalHealthContext(previousText))
+		return true;
+
+	const bool anchorIsRelationship = anchor.contains(QStringLiteral("esquecer")) || anchor.contains(QStringLiteral("garota")) ||
+					  anchor.contains(QStringLiteral("relacionamento"));
+	if (anchorIsRelationship && (previous.contains(QStringLiteral("gostei")) || previous.contains(QStringLiteral("relacionamento")) ||
+				       previous.contains(QStringLiteral("garota"))))
+		return true;
+
+	return false;
+}
+
+ClipDuration expandCandidateStartForViewerContext(const RecordingTranscript &transcript, const ClipDuration &range,
+							  const AnchorStartEstimate &anchor, const ClipDuration &manualRange)
+{
+	double startSec = range.startSec;
+	const bool mentalHealthAnchor = anchorLooksLikeMentalHealth(anchor.anchorText);
+	const double lookbackSec = mentalHealthAnchor ? VIEWER_CANDIDATE_CONTEXT_PRELUDE_LOOKBACK_SEC : 18.0;
+
+	// Whisper can split the viewer setup and the detected anchor across adjacent
+	// segments, or keep both inside one segment. Search the whole local prelude
+	// window and choose the earliest segment that still looks like the same
+	// viewer issue instead of returning on the first matching segment.
+	for (const TranscriptSegment &segment : transcript.segments) {
+		if (segment.endSec < range.startSec - lookbackSec)
+			continue;
+		if (segment.startSec > range.startSec + 0.75)
+			break;
+		if (segment.endSec < range.startSec - lookbackSec)
+			continue;
+		if (!looksLikeViewerContextPrelude(segment.text, anchor.anchorText))
+			continue;
+
+		startSec = std::min(startSec, std::max(manualRange.startSec, segment.startSec - 0.10));
+	}
+
+	return {startSec, range.endSec};
+}
+
+ClipDuration trimCandidateBeforeNextCue(const RecordingTranscript &transcript, const ClipDuration &range, double anchorStartSec,
+						 const CandidateDiscoveryProfile &profile)
+{
+	QString rangeContext = textForRange(transcript, {range.startSec, std::min(range.endSec, anchorStartSec + 6.0)});
+	if (rangeContext.trimmed().isEmpty())
+		rangeContext = textForRange(transcript, range);
+
 	for (const TranscriptSegment &segment : transcript.segments) {
 		if (!segmentOverlapsRange(segment, range) || segment.text.trimmed().isEmpty())
 			continue;
-		if (segment.startSec <= anchorStartSec + VIEWER_CANDIDATE_NEXT_CUE_MIN_GAP_SEC)
-			continue;
-		if (!hasStrongLocalCue(segment.text))
+		if (segment.startSec <= anchorStartSec + 1.75)
 			continue;
 
+		const bool hardTopicShift = looksLikeHardTopicShift(segment.text, rangeContext);
+		if (!hardTopicShift && segment.startSec <= anchorStartSec + VIEWER_CANDIDATE_NEXT_CUE_MIN_GAP_SEC)
+			continue;
+
+		const bool newStrongCue = hasStrongLocalCue(segment.text);
+		if (!hardTopicShift && !newStrongCue)
+			continue;
+		if (!hardTopicShift &&
+		    (looksLikeSameExchangeContinuation(segment.text) || looksLikeSameTopicContinuation(segment.text, rangeContext))) {
+			rangeContext.append(QLatin1Char(' '));
+			rangeContext.append(segment.text);
+			continue;
+		}
+
 		const double trimmedEndSec = segment.startSec - VIEWER_CANDIDATE_NEXT_CUE_PADDING_SEC;
-		if (trimmedEndSec > range.startSec + VIEWER_CANDIDATE_BOUNDARY_MIN_DURATION_SEC)
+		if (trimmedEndSec > range.startSec + profile.boundaryMinDurationSec)
 			return {range.startSec, std::min(range.endSec, trimmedEndSec)};
 	}
 
 	return range;
+}
+
+bool looksLikeExplanatoryGamblingOpinion(const QString &text)
+{
+	const QString normalized = normalizedText(text);
+	if (!looksLikeGamblingContext(normalized))
+		return false;
+	if (normalized.contains(QStringLiteral("perdi meu pai")) || normalized.contains(QStringLiteral("pai pra aposta")))
+		return false;
+
+	static const QStringList opinionMarkers{
+		QStringLiteral("na minha opiniao"),
+		QStringLiteral("moralmente"),
+		QStringLiteral("legalmente"),
+		QStringLiteral("vicio"),
+		QStringLiteral("felipe"),
+		QStringLiteral("publicidade"),
+		QStringLiteral("influencia"),
+	};
+
+	for (const QString &marker : opinionMarkers) {
+		if (normalized.contains(marker))
+			return true;
+	}
+
+	return false;
+}
+
+ClipDuration extendCandidateForOpenExplanation(const RecordingTranscript &transcript, const ClipDuration &range,
+					       const ClipDuration &manualRange, const CandidateDiscoveryProfile &profile)
+{
+	QString extensionContext = textForRange(transcript, range);
+	const QString candidateText = normalizedText(extensionContext);
+	const bool explanatoryGamblingOpinion = looksLikeExplanatoryGamblingOpinion(candidateText);
+	const bool shouldExtend = explanatoryGamblingOpinion || looksLikeSameExchangeContinuation(candidateText) ||
+				  looksLikeGamblingContext(candidateText) || looksLikeMentalHealthContext(candidateText);
+	if (!shouldExtend)
+		return range;
+
+	double endSec = range.endSec;
+	const double maxEndSec = std::min(manualRange.endSec, range.startSec + profile.maxDurationSec);
+	const double minimumExplanatoryEndSec = explanatoryGamblingOpinion ? std::min(maxEndSec, range.startSec + 24.0) : range.endSec;
+	for (const TranscriptSegment &segment : transcript.segments) {
+		if (segment.endSec <= endSec + 0.05)
+			continue;
+		if (segment.startSec > maxEndSec)
+			break;
+		if (segment.endSec <= range.startSec + 0.05)
+			continue;
+
+		const bool overlapsCurrentEnd = segment.startSec < endSec + 1.25;
+		const bool closeContinuationGap = explanatoryGamblingOpinion && segment.startSec < endSec + 3.0 &&
+						  endSec < minimumExplanatoryEndSec;
+		const bool hardTopicShift = looksLikeHardTopicShift(segment.text, extensionContext);
+		const bool isContinuation = !hardTopicShift &&
+			(looksLikeSameExchangeContinuation(segment.text) ||
+			 looksLikeSameTopicContinuation(segment.text, extensionContext) ||
+			 (explanatoryGamblingOpinion && looksLikeGamblingContext(segment.text)));
+		if (hardTopicShift)
+			break;
+		if (!overlapsCurrentEnd && !isContinuation && !closeContinuationGap)
+			break;
+		if (hasStrongLocalCue(segment.text) && !isContinuation && !closeContinuationGap)
+			break;
+
+		endSec = std::min(maxEndSec, std::max(endSec, segment.endSec));
+		extensionContext.append(QLatin1Char(' '));
+		extensionContext.append(segment.text);
+
+		const QString normalizedSegment = normalizedText(segment.text);
+		const bool reachedMinimumExplanation = !explanatoryGamblingOpinion || endSec >= minimumExplanatoryEndSec - 0.01;
+		if (reachedMinimumExplanation &&
+		    (normalizedSegment.contains(QStringLiteral("entendeu")) || normalizedSegment.contains(QStringLiteral("sacou")) ||
+		     normalizedSegment.contains(QStringLiteral("por isso"))))
+			break;
+	}
+
+	return {range.startSec, std::max(range.endSec, endSec)};
 }
 
 bool sameSemanticCue(const CandidateRangeScore &left, const CandidateRangeScore &right)
@@ -713,9 +1237,209 @@ bool sameSemanticCue(const CandidateRangeScore &left, const CandidateRangeScore 
 	return false;
 }
 
+bool temporalQuotaEnabled(const CandidateDiscoveryProfile &profile)
+{
+	return profile.temporalQuotaWindowSec > 0.0 && profile.temporalQuotaMinCandidates > 0 &&
+	       profile.maxCandidates > VIEWER_CANDIDATE_SHORT_MAX_PROJECTS;
+}
+
+int temporalBucketIndex(const ClipDuration &manualRange, const CandidateDiscoveryProfile &profile, double startSec)
+{
+	if (profile.temporalQuotaWindowSec <= 0.0)
+		return 0;
+
+	const double offsetSec = std::max(0.0, startSec - manualRange.startSec);
+	return std::max(0, static_cast<int>(std::floor(offsetSec / profile.temporalQuotaWindowSec)));
+}
+
+bool hasBacklogOrGreetingAnchor(const CandidateRangeScore &candidate)
+{
+	const QString normalizedAnchor = normalizedText(candidate.anchorText);
+	const QString normalizedSample = normalizedText(candidate.fullText.isEmpty() ? candidate.sampleText : candidate.fullText);
+	const QString combined = QStringLiteral("%1 %2").arg(normalizedAnchor, normalizedSample).trimmed();
+
+	if (combined.isEmpty())
+		return false;
+
+	static const QStringList backlogMarkers{
+		QStringLiteral("nao sei como e que ele ta"),
+		QStringLiteral("nao sei como ele ta"),
+		QStringLiteral("j2 tambem"),
+		QStringLiteral("o j2"),
+		QStringLiteral("ta indo ai"),
+		QStringLiteral("nao sei nem se ele"),
+		QStringLiteral("seja bem vindo"),
+		QStringLiteral("bem vindo"),
+		QStringLiteral("pessoa sem nick"),
+		QStringLiteral("sem nick"),
+		QStringLiteral("estamos entendidos"),
+		QStringLiteral("e tambem seguir"),
+		QStringLiteral("tambem seguir"),
+		QStringLiteral("ok estamos"),
+		QStringLiteral("salve"),
+		QStringLiteral("boa noite"),
+		QStringLiteral("bom dia"),
+		QStringLiteral("boa tarde"),
+		QStringLiteral("convite errado"),
+		QStringLiteral("mandei o convite"),
+		QStringLiteral("nao aceita esse"),
+		QStringLiteral("nao aceita esse nao"),
+		QStringLiteral("cancela cancela"),
+		QStringLiteral("alice"),
+		QStringLiteral("block blast"),
+		QStringLiteral("sand bricks"),
+		QStringLiteral("jogo parecido"),
+	};
+
+	for (const QString &marker : backlogMarkers) {
+		if (combined.contains(marker))
+			return true;
+	}
+
+	return normalizedAnchor.startsWith(QStringLiteral("e ai ")) || normalizedAnchor == QStringLiteral("e ai") ||
+	       normalizedAnchor.startsWith(QStringLiteral("ok "));
+}
+
+bool hasConcreteViewerQuestion(const CandidateRangeScore &candidate)
+{
+	const QString normalizedAnchor = normalizedText(candidate.anchorText);
+	const QString normalizedSample = normalizedText(candidate.fullText.isEmpty() ? candidate.sampleText : candidate.fullText);
+	const QString combined = QStringLiteral("%1 %2").arg(normalizedAnchor, normalizedSample).trimmed();
+
+	static const QStringList concreteQuestionMarkers{
+		QStringLiteral("como posso"),
+		QStringLiteral("como eu posso"),
+		QStringLiteral("o que eu faco"),
+		QStringLiteral("o que faco"),
+		QStringLiteral("por que"),
+		QStringLiteral("ansiedade"),
+		QStringLiteral("depress"),
+		QStringLiteral("aumento"),
+		QStringLiteral("chefe"),
+		QStringLiteral("esquecer"),
+		QStringLiteral("relacionamento"),
+		QStringLiteral("conselho"),
+		QStringLiteral("me sinto"),
+		QStringLiteral("tenho"),
+		QStringLiteral("perdi"),
+		QStringLiteral("lembra"),
+		QStringLiteral("nao sei se"),
+		QStringLiteral("nao sei o que"),
+		QStringLiteral("nao sei como fazer"),
+		QStringLiteral("na ansiedade"),
+	};
+
+	for (const QString &marker : concreteQuestionMarkers) {
+		if (combined.contains(marker))
+			return true;
+	}
+
+	return false;
+}
+
+bool hasUsableDiscoverySignal(const CandidateRangeScore &candidate)
+{
+	if (candidate.adviceScore >= 0.25 && (candidate.questionScore > 0.0 || hasConcreteViewerQuestion(candidate)))
+		return true;
+	if (candidate.emotionalScore >= VIEWER_CANDIDATE_QUOTA_EMOTIONAL_MIN_SCORE)
+		return true;
+	if (candidate.emotionalScore >= 0.08 && candidate.questionScore > 0.0 && hasConcreteViewerQuestion(candidate))
+		return true;
+	if (candidate.questionScore > 0.0 && hasConcreteViewerQuestion(candidate))
+		return true;
+	return false;
+}
+
+bool shouldKeepTemporalQuotaCandidate(const CandidateRangeScore &candidate, const CandidateDiscoveryProfile &profile)
+{
+	if (!candidate.anchorCueAligned)
+		return false;
+	if (candidate.score < profile.quotaMinScore)
+		return false;
+
+	const double durationSec = rangeDurationSec(candidate.range);
+	const double minDurationSec = std::max(VIEWER_CANDIDATE_QUOTA_ABSOLUTE_MIN_DURATION_SEC, profile.boundaryMinDurationSec);
+	if (durationSec < minDurationSec)
+		return false;
+
+	if (hasBacklogOrGreetingAnchor(candidate))
+		return false;
+
+	const bool weakQuestionOnly = candidate.questionScore > 0.0 && candidate.emotionalScore < 0.10 &&
+				      candidate.adviceScore < 0.25;
+	if (weakQuestionOnly && !hasConcreteViewerQuestion(candidate))
+		return false;
+
+	return hasUsableDiscoverySignal(candidate);
+}
+
+bool candidateAlreadyCovered(const CandidateRangeScore &candidate, const QVector<CandidateRangeScore> &selected)
+{
+	for (const CandidateRangeScore &selectedCandidate : selected) {
+		const bool duplicateCue = sameSemanticCue(candidate, selectedCandidate) &&
+			(std::fabs(candidate.range.startSec - selectedCandidate.range.startSec) <
+				 VIEWER_CANDIDATE_SAME_CUE_DEDUPE_WINDOW_SEC ||
+			 rangesOverlapTooMuch(candidate.range, selectedCandidate.range));
+		if (duplicateCue || rangesOverlapTooMuch(candidate.range, selectedCandidate.range))
+			return true;
+	}
+
+	return false;
+}
+
+bool appendDistinctCandidate(QVector<CandidateRangeScore> &selected, const CandidateRangeScore &candidate, int maxCandidates)
+{
+	if (selected.size() >= maxCandidates)
+		return false;
+	if (candidateAlreadyCovered(candidate, selected))
+		return false;
+
+	selected.append(candidate);
+	return true;
+}
+
+int appendTemporalQuotaCandidates(const QVector<CandidateRangeScore> &allCandidates, const ClipDuration &manualRange,
+					 const CandidateDiscoveryProfile &profile, QVector<CandidateRangeScore> &selected, int *qualityRejected)
+{
+	if (qualityRejected)
+		*qualityRejected = 0;
+
+	if (!temporalQuotaEnabled(profile) || allCandidates.isEmpty())
+		return 0;
+
+	const double durationSec = rangeDurationSec(manualRange);
+	const int bucketCount = std::max(1, static_cast<int>(std::ceil(durationSec / profile.temporalQuotaWindowSec)));
+	int appended = 0;
+
+	for (int bucket = 0; bucket < bucketCount && selected.size() < profile.maxCandidates; ++bucket) {
+		int bucketSelected = 0;
+		for (const CandidateRangeScore &candidate : allCandidates) {
+			if (selected.size() >= profile.maxCandidates)
+				break;
+			if (temporalBucketIndex(manualRange, profile, candidate.range.startSec) != bucket)
+				continue;
+			if (!shouldKeepTemporalQuotaCandidate(candidate, profile)) {
+				if (qualityRejected)
+					++(*qualityRejected);
+				continue;
+			}
+			if (!appendDistinctCandidate(selected, candidate, profile.maxCandidates))
+				continue;
+
+			++bucketSelected;
+			++appended;
+			if (bucketSelected >= profile.temporalQuotaMinCandidates)
+				break;
+		}
+	}
+
+	return appended;
+}
+
 QVector<ClipDuration> genericCandidateRanges(const RecordingTranscript &transcript, const ClipDuration &manualRange,
 					      QString *summary)
 {
+	const CandidateDiscoveryProfile profile = discoveryProfileForRange(manualRange);
 	QVector<CandidateRangeScore> allCandidates;
 
 	for (const TranscriptSegment &segment : transcript.segments) {
@@ -728,22 +1452,25 @@ QVector<ClipDuration> genericCandidateRanges(const RecordingTranscript &transcri
 		const AnchorStartEstimate initialAnchor = estimatedAnchorStart(segment, terms);
 		const double segmentEmotional = Curation::emotionalScoreForText(segment.text);
 		const double segmentAdvice = Curation::adviceScoreForText(segment.text);
-		ClipDuration range = buildCandidateRange(manualRange, initialAnchor, segmentEmotional, segmentAdvice);
+		ClipDuration range = buildCandidateRange(manualRange, initialAnchor, segmentEmotional, segmentAdvice, profile);
 		if (range.endSec <= range.startSec)
 			continue;
 
 		const CandidateAnchorChoice aligned = bestAnchorInsideRange(transcript, range, initialAnchor);
-		range = buildCandidateRange(manualRange, aligned.anchor, aligned.emotionalScore, aligned.adviceScore);
+		range = buildCandidateRange(manualRange, aligned.anchor, aligned.emotionalScore, aligned.adviceScore, profile);
+		range = expandCandidateStartForViewerContext(transcript, range, aligned.anchor, manualRange);
+		range = extendCandidateForOpenExplanation(transcript, range, manualRange, profile);
 		const double endSecBeforeBoundaryTrim = range.endSec;
-		range = trimCandidateBeforeNextCue(transcript, range, aligned.anchor.startSec);
+		range = trimCandidateBeforeNextCue(transcript, range, aligned.anchor.startSec, profile);
+		range = extendCandidateForOpenExplanation(transcript, range, manualRange, profile);
 		const bool boundaryTrimmed = range.endSec < endSecBeforeBoundaryTrim - 0.01;
 		if (range.endSec <= range.startSec)
 			continue;
 
-		CandidateRangeScore scored = scoreCandidateRange(transcript, range, aligned.anchor);
+		CandidateRangeScore scored = scoreCandidateRange(transcript, range, aligned.anchor, profile);
 		scored.boundaryTrimmed = boundaryTrimmed;
 		scored.startAdjusted = scored.startAdjusted || aligned.realigned;
-		if (scored.score < VIEWER_CANDIDATE_MIN_SCORE)
+		if (scored.score < profile.poolMinScore)
 			continue;
 
 		allCandidates.append(scored);
@@ -756,31 +1483,43 @@ QVector<ClipDuration> genericCandidateRanges(const RecordingTranscript &transcri
 	});
 
 	QVector<CandidateRangeScore> selected;
-	selected.reserve(std::min(static_cast<long long>(MAX_LOGGED_CANDIDATES), static_cast<long long>(allCandidates.size())));
-	for (const CandidateRangeScore &candidate : allCandidates) {
-		if (!selected.isEmpty() && !shouldKeepSecondaryCandidate(candidate, selected.first()))
-			continue;
+	selected.reserve(std::min(static_cast<long long>(profile.maxCandidates), static_cast<long long>(allCandidates.size())));
+	int quotaRejected = 0;
+	const int quotaSelected = appendTemporalQuotaCandidates(allCandidates, manualRange, profile, selected, &quotaRejected);
 
-		bool overlapsSelected = false;
-		for (const CandidateRangeScore &selectedCandidate : selected) {
-			const bool duplicateCue = sameSemanticCue(candidate, selectedCandidate) &&
-				(std::fabs(candidate.range.startSec - selectedCandidate.range.startSec) < VIEWER_CANDIDATE_SAME_CUE_DEDUPE_WINDOW_SEC ||
-				 rangesOverlapTooMuch(candidate.range, selectedCandidate.range));
-			if (duplicateCue || rangesOverlapTooMuch(candidate.range, selectedCandidate.range)) {
-				overlapsSelected = true;
+	if (!allCandidates.isEmpty()) {
+		const CandidateRangeScore bestCandidate = allCandidates.first();
+		for (const CandidateRangeScore &candidate : allCandidates) {
+			if (selected.size() >= profile.maxCandidates)
 				break;
-			}
+			if (candidate.score < profile.minScore)
+				continue;
+			if (temporalQuotaEnabled(profile) && !shouldKeepTemporalQuotaCandidate(candidate, profile))
+				continue;
+			if (!selected.isEmpty() && !shouldKeepSecondaryCandidate(candidate, bestCandidate, profile))
+				continue;
+			appendDistinctCandidate(selected, candidate, profile.maxCandidates);
 		}
-		if (overlapsSelected)
-			continue;
-
-		selected.append(candidate);
-		if (selected.size() >= MAX_LOGGED_CANDIDATES)
-			break;
 	}
 
-	if (summary)
-		*summary = candidateSummary(selected);
+	std::sort(selected.begin(), selected.end(), [](const CandidateRangeScore &left, const CandidateRangeScore &right) {
+		if (std::fabs(left.score - right.score) > 0.0001)
+			return left.score > right.score;
+		return left.range.startSec < right.range.startSec;
+	});
+
+	if (summary) {
+		const QString selectedSummary = candidateSummary(selected);
+		*summary = QStringLiteral("profile=%1 maxProjects=%2 rawCandidates=%3 quotaWindowSec=%4 quotaSelected=%5 quotaRejected=%6 selected=%7; %8")
+				   .arg(profile.name)
+				   .arg(profile.maxCandidates)
+				   .arg(allCandidates.size())
+				   .arg(profile.temporalQuotaWindowSec, 0, 'f', 0)
+				   .arg(quotaSelected)
+				   .arg(quotaRejected)
+				   .arg(selected.size())
+				   .arg(selectedSummary);
+	}
 
 	QVector<ClipDuration> ranges;
 	ranges.reserve(selected.size());
