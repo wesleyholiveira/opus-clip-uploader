@@ -391,7 +391,7 @@ static void transcribe_video_with_progress_dialog_async(QWidget *parent, const Q
 	RecordingTranscript cached = TranscriptStore::loadForVideoPath(videoPath, normalizedLanguage);
 	if (!cached.segments.isEmpty()) {
 		blog(LOG_INFO,
-		     "Transcript cache hit before GPT curation prompt. Skipping Whisper/GPU transcription. video=%s segments=%d language=%s cacheKey=%s",
+		     "Transcript cache hit before local curation scoring/GPT prompt. Skipping Whisper/GPU transcription. video=%s segments=%d language=%s cacheKey=%s",
 		     videoPath.toUtf8().constData(), static_cast<int>(cached.segments.size()),
 		     normalizedLanguage.toUtf8().constData(),
 		     TranscriptStore::keyForVideoPath(videoPath, normalizedLanguage).toUtf8().constData());
@@ -412,7 +412,7 @@ static void transcribe_video_with_progress_dialog_async(QWidget *parent, const Q
 			TranscriptStore::loadForVideoRanges(videoPath, normalizedLanguage, transcriptionRanges);
 		if (!rangeCached.segments.isEmpty()) {
 			blog(LOG_INFO,
-			     "Context-range transcript cache hit before GPT curation prompt. Skipping Whisper/GPU transcription. video=%s segments=%d language=%s paddingSec=%.0f cacheKey=%s",
+			     "Context-range transcript cache hit before local curation scoring/GPT prompt. Skipping Whisper/GPU transcription. video=%s segments=%d language=%s paddingSec=%.0f cacheKey=%s",
 			     videoPath.toUtf8().constData(), static_cast<int>(rangeCached.segments.size()),
 			     normalizedLanguage.toUtf8().constData(), contextPaddingSec,
 			     TranscriptStore::keyForVideoRanges(videoPath, normalizedLanguage, transcriptionRanges)
@@ -432,7 +432,7 @@ static void transcribe_video_with_progress_dialog_async(QWidget *parent, const Q
 			? QStringLiteral("<none>")
 			: TranscriptStore::keyForVideoRanges(videoPath, normalizedLanguage, transcriptionRanges);
 	blog(LOG_INFO,
-	     "Transcript cache miss before GPT curation prompt. Starting Whisper/GPU transcription if available. video=%s language=%s cacheKey=%s contextRangeCacheKey=%s selectedRanges=%d contextRanges=%d paddingSec=%.0f",
+	     "Transcript cache miss before local curation scoring/GPT prompt. Starting Whisper/GPU transcription if available. video=%s language=%s cacheKey=%s contextRangeCacheKey=%s selectedRanges=%d contextRanges=%d paddingSec=%.0f",
 	     videoPath.toUtf8().constData(), normalizedLanguage.toUtf8().constData(),
 	     TranscriptStore::keyForVideoPath(videoPath, normalizedLanguage).toUtf8().constData(),
 	     contextRangeCacheKey.toUtf8().constData(), static_cast<int>(ranges.size()),
@@ -505,7 +505,7 @@ static void transcribe_video_with_progress_dialog_async(QWidget *parent, const Q
 		cancelRequested->store(true);
 		if (safeProgress)
 			safeProgress->setLabelText(obsText("Status.CancelingOperation"));
-		blog(LOG_INFO, "User canceled on-demand transcription before GPT curation prompt: %s",
+		blog(LOG_INFO, "User canceled on-demand transcription before local curation scoring/GPT prompt: %s",
 		     videoPath.toUtf8().constData());
 	};
 
@@ -555,6 +555,30 @@ static void transcribe_video_with_progress_dialog_async(QWidget *parent, const Q
 		});
 
 	thread->start();
+}
+
+void ensure_transcript_for_curation_async(QWidget *parent, const QString &videoPath,
+					 const CurationSettings &curationSettings, bool transcribeOnDemand,
+					 std::function<void(RecordingTranscript, bool)> finishedCallback)
+{
+	const QString transcriptionLanguage = normalize_transcription_language(curationSettings.transcriptionLanguage);
+	if (transcribeOnDemand) {
+		transcribe_video_with_progress_dialog_async(parent, videoPath, transcriptionLanguage, curationSettings,
+							    std::move(finishedCallback));
+		return;
+	}
+
+	const RecordingTranscript transcript = TranscriptStore::loadForVideoPath(videoPath, transcriptionLanguage);
+	blog(transcript.segments.isEmpty() ? LOG_WARNING : LOG_INFO,
+	     "Transcript cache %s before local curation scoring. video=%s segments=%d language=%s cacheKey=%s",
+	     transcript.segments.isEmpty() ? "miss" : "hit", videoPath.toUtf8().constData(),
+	     static_cast<int>(transcript.segments.size()), transcriptionLanguage.toUtf8().constData(),
+	     TranscriptStore::keyForVideoPath(videoPath, transcriptionLanguage).toUtf8().constData());
+
+	if (finishedCallback)
+		invoke_finished(parent, [transcript, finishedCallback = std::move(finishedCallback)]() mutable {
+			finishedCallback(transcript, false);
+		});
 }
 
 static void generate_gpt_prompt_with_progress_dialog_async(QWidget *parent, const QString &videoPath,
@@ -735,7 +759,7 @@ void generate_custom_prompt_for_curation_result_async(QWidget *parent, const QSt
 
 	};
 
-	blog(LOG_INFO, "Loading transcript after review before GPT curation prompt generation: %s",
+	blog(LOG_INFO, "Loading transcript after review before local curation scoring/GPT prompt generation: %s",
 	     videoPath.toUtf8().constData());
 	const QString transcriptionLanguage = normalize_transcription_language(curationSettings.transcriptionLanguage);
 	const RecordingTranscript transcript = TranscriptStore::loadForVideoPath(videoPath, transcriptionLanguage);

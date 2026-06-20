@@ -212,7 +212,7 @@ void open_video_editor_impl(void *private_data)
 		QPointer<QWidget> reviewParent(dialog.parentWidget());
 		dialog.hide();
 
-		auto openReview = [editorDialog, reviewParent, videoPath]() {
+		auto openReview = [editorDialog, reviewParent, videoPath](const CurationSettings &initialSettings) {
 			QWidget *parentWidget = reviewParent
 							? reviewParent.data()
 							: reinterpret_cast<QWidget *>(obs_frontend_get_main_window());
@@ -220,7 +220,7 @@ void open_video_editor_impl(void *private_data)
 			blog(LOG_INFO, "Opening upload review dialog before GPT/Opus upload flow: %s",
 			     videoPath.toUtf8().constData());
 
-			UploadReviewDialog reviewDialog(videoPath, parentWidget);
+			UploadReviewDialog reviewDialog(videoPath, initialSettings, false, parentWidget);
 			if (reviewDialog.exec() == QDialog::Accepted) {
 				blog(LOG_INFO,
 				     "Upload review accepted. Generating GPT prompt after review ranges were confirmed: %s",
@@ -236,7 +236,7 @@ void open_video_editor_impl(void *private_data)
 				editorDialog->accept();
 		};
 
-		openReview();
+		openReview(CurationSettings{});
 	});
 
 	QTimer::singleShot(0, editor, [editor]() { editor->toggleFullScreen(); });

@@ -16,9 +16,14 @@ set(CLIP_CROPPER_LLAMA_CPP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/deps/llama.cpp" CACH
 
 option(CLIP_CROPPER_STATIC_DEPS "Build third-party dependencies added by this project as static libraries when possible" ON)
 option(CLIP_CROPPER_STATIC_QT "Require and link a static Qt build instead of installing Qt runtime DLLs" OFF)
+option(CLIP_CROPPER_DEPLOY_QT_RUNTIME "Install Qt runtime DLLs/plugins when Qt is linked dynamically" ON)
 option(CLIP_CROPPER_STATIC_MSVC_RUNTIME "Use the static MSVC runtime (/MT) for targets created by this project" OFF)
 option(CLIP_CROPPER_STATIC_CUDA_RUNTIME "Use the static CUDA runtime when CUDA support is enabled" ON)
+option(CLIP_CROPPER_GGML_NATIVE "Build GGML with native CPU optimizations for the current build machine" OFF)
 
+# Configure global dependency options before importing any third-party project.
+# This is important because whisper.cpp and llama.cpp both read GGML_* cache
+# variables while their targets are being created.
 if (CLIP_CROPPER_STATIC_DEPS)
 	set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build third-party dependencies as static libraries" FORCE)
 	set(CURL_USE_STATIC_LIBS ON CACHE BOOL "Prefer static libcurl when FindCURL is used in module mode" FORCE)
@@ -30,6 +35,61 @@ endif ()
 
 if (ENABLE_WHISPER_CUDA AND CLIP_CROPPER_STATIC_CUDA_RUNTIME)
 	set(CMAKE_CUDA_RUNTIME_LIBRARY Static CACHE STRING "Use the static CUDA runtime" FORCE)
+endif ()
+
+set(GGML_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
+set(WHISPER_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
+set(WHISPER_USE_SYSTEM_GGML OFF CACHE BOOL "" FORCE)
+set(GGML_NATIVE ${CLIP_CROPPER_GGML_NATIVE} CACHE BOOL "Build GGML with native CPU optimizations" FORCE)
+set(GGML_BACKEND_DL OFF CACHE BOOL "Link GGML backends into the plugin instead of loading backend DLLs" FORCE)
+
+if (ENABLE_WHISPER_CUDA)
+	message(STATUS "Whisper/GGML CUDA backend requested")
+	set(GGML_CUDA ON CACHE BOOL "Enable GGML CUDA backend" FORCE)
+
+	if (NOT CMAKE_CUDA_ARCHITECTURES)
+		# RTX 3070 Ti is Ampere / sm_86. Keep this deterministic because CI runners
+		# usually cannot detect a native NVIDIA GPU architecture.
+		set(CMAKE_CUDA_ARCHITECTURES 86 CACHE STRING "CUDA architectures for whisper.cpp/ggml" FORCE)
+		message(STATUS "Defaulting CMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES}")
+	endif ()
+
+	if (MSVC)
+		# CUDA 12.8 does not officially recognize Visual Studio 18 / MSVC 14.50 yet.
+		set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -allow-unsupported-compiler")
+		set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcudafe --diag_suppress=177")
+		set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcudafe --diag_suppress=221")
+		set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcudafe --diag_suppress=550")
+	endif ()
+else ()
+	message(STATUS "Whisper/GGML CUDA backend disabled")
+	set(GGML_CUDA OFF CACHE BOOL "Enable GGML CUDA backend" FORCE)
+endif ()
+
+if (MSVC)
+	foreach (flag_var
+		CMAKE_CUDA_FLAGS
+		CMAKE_CUDA_FLAGS_DEBUG
+		CMAKE_CUDA_FLAGS_RELEASE
+		CMAKE_CUDA_FLAGS_RELWITHDEBINFO
+		CMAKE_CUDA_FLAGS_MINSIZEREL
+	)
+		string(REPLACE "/W3" "" ${flag_var} "${${flag_var}}")
+		string(REPLACE "/utf-8" "" ${flag_var} "${${flag_var}}")
+		string(REPLACE "/Brepro" "" ${flag_var} "${${flag_var}}")
+		string(REPLACE "/permissive-" "" ${flag_var} "${${flag_var}}")
+		string(REPLACE "/Gy" "" ${flag_var} "${${flag_var}}")
+		string(REPLACE "/GL" "" ${flag_var} "${${flag_var}}")
+		string(REPLACE "/Oi" "" ${flag_var} "${${flag_var}}")
+	endforeach ()
+endif ()
+
+if (APPLE)
+	set(GGML_METAL OFF CACHE BOOL "" FORCE)
+	set(WHISPER_COREML OFF CACHE BOOL "" FORCE)
+	set(GGML_ACCELERATE ON CACHE BOOL "" FORCE)
+	set(CMAKE_OBJC_FLAGS "${CMAKE_OBJC_FLAGS} -fno-objc-arc")
+	set(CMAKE_OBJCXX_FLAGS "${CMAKE_OBJCXX_FLAGS} -fno-objc-arc")
 endif ()
 
 if (UNIX AND NOT APPLE)
@@ -125,6 +185,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 	src/ui/upload-confirm-dialog.cpp
 	src/ui/gpt-review-prompt.cpp
 	src/ui/gpt-review-prompt.hpp
+	src/ui/review-scoring-preparation.cpp
+	src/ui/review-scoring-preparation.hpp
 	src/ui/video-editor-actions.cpp
 	src/ui/advanced-settings-tree.cpp
 	src/ui/advanced-settings-tree.hpp
@@ -498,81 +560,14 @@ set_target_properties_plugin(${CMAKE_PROJECT_NAME}
 set(WHISPER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(WHISPER_BUILD_SERVER OFF CACHE BOOL "" FORCE)
-set(WHISPER_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
-set(GGML_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
-set(WHISPER_USE_SYSTEM_GGML OFF CACHE BOOL "" FORCE)
-set(GGML_NATIVE ON CACHE BOOL "" FORCE)
 
+# These were already configured near the top of the file, before llama.cpp and
+# whisper.cpp are imported. Keep this section limited to Whisper-specific knobs
+# so CUDA/GGML options cannot be applied too late.
 target_compile_definitions(${CMAKE_PROJECT_NAME}
 	PRIVATE
 	CLIP_CROPPER_WHISPER_CUDA_REQUESTED=$<IF:$<BOOL:${ENABLE_WHISPER_CUDA}>,1,0>
 )
-
-if (ENABLE_WHISPER_CUDA)
-	message(STATUS "Whisper CUDA/GPU backend requested")
-	set(GGML_CUDA ON CACHE BOOL "" FORCE)
-
-	if (NOT CMAKE_CUDA_ARCHITECTURES)
-		# GitHub-hosted Ubuntu runners do not expose a real NVIDIA GPU, so CUDA's
-		# `native` architecture detection falls back with noisy nvcc warnings. Use
-		# a deterministic Ampere target by default; callers can still override this
-		# through -DCMAKE_CUDA_ARCHITECTURES=... when needed.
-		set(CMAKE_CUDA_ARCHITECTURES 86 CACHE STRING "CUDA architectures for whisper.cpp/ggml" FORCE)
-		message(STATUS "Defaulting CMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES}")
-	endif ()
-
-	if (MSVC)
-		# CUDA 12.8 does not officially recognize Visual Studio 18 / MSVC 14.50 yet.
-		# Keep this at the root level so local builds and CI use the same reproducible flags
-		# without editing deps/whisper.cpp.
-		set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -allow-unsupported-compiler")
-
-		# ggml-cuda currently appends `-Werror all-warnings`, so these NVCC diagnostics
-		# become hard errors with newer CUDA/MSVC combinations.
-		set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcudafe --diag_suppress=221")
-		set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcudafe --diag_suppress=177")
-	endif ()
-else ()
-	message(STATUS "Whisper CUDA/GPU backend disabled")
-	set(GGML_CUDA OFF CACHE BOOL "" FORCE)
-endif ()
-
-if (CLIP_CROPPER_STATIC_DEPS)
-	set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-endif ()
-
-if (MSVC)
-	foreach (flag_var
-		CMAKE_CUDA_FLAGS
-		CMAKE_CUDA_FLAGS_DEBUG
-		CMAKE_CUDA_FLAGS_RELEASE
-		CMAKE_CUDA_FLAGS_RELWITHDEBINFO
-		CMAKE_CUDA_FLAGS_MINSIZEREL
-	)
-		string(REPLACE "/W3" "" ${flag_var} "${${flag_var}}")
-		string(REPLACE "/utf-8" "" ${flag_var} "${${flag_var}}")
-		string(REPLACE "/Brepro" "" ${flag_var} "${${flag_var}}")
-		string(REPLACE "/permissive-" "" ${flag_var} "${${flag_var}}")
-		string(REPLACE "/Gy" "" ${flag_var} "${${flag_var}}")
-		string(REPLACE "/GL" "" ${flag_var} "${${flag_var}}")
-		string(REPLACE "/Oi" "" ${flag_var} "${${flag_var}}")
-	endforeach ()
-endif ()
-
-set(GGML_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
-set(WHISPER_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
-
-if (MSVC AND ENABLE_WHISPER_CUDA)
-	set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -allow-unsupported-compiler -Xcudafe --diag_suppress=177 -Xcudafe --diag_suppress=221 -Xcudafe --diag_suppress=550")
-endif ()
-
-if (APPLE)
-	set(GGML_METAL OFF CACHE BOOL "" FORCE)
-	set(WHISPER_COREML OFF CACHE BOOL "" FORCE)
-	set(GGML_ACCELERATE ON CACHE BOOL "" FORCE)
-	set(CMAKE_OBJC_FLAGS "${CMAKE_OBJC_FLAGS} -fno-objc-arc")
-	set(CMAKE_OBJCXX_FLAGS "${CMAKE_OBJCXX_FLAGS} -fno-objc-arc")
-endif ()
 
 option(CLANGD_LIGHT_MODE "Do not build heavy third-party deps for clangd" OFF)
 
@@ -665,7 +660,7 @@ if (WIN32)
 	)
 endif ()
 
-if (WIN32 AND ENABLE_QT AND NOT CLIP_CROPPER_STATIC_QT)
+if (WIN32 AND ENABLE_QT AND CLIP_CROPPER_DEPLOY_QT_RUNTIME AND NOT CLIP_CROPPER_STATIC_QT)
 	install(FILES ${QT_RUNTIME_DLLS}
 		DESTINATION "obs-plugins/64bit"
 	)

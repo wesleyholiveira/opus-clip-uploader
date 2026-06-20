@@ -1,6 +1,7 @@
 #pragma once
 
 #include "models/curation-settings.hpp"
+#include "models/transcript.hpp"
 
 #include <QString>
 
@@ -12,6 +13,11 @@ struct GeneratedCurationPromptResult {
 	QString prompt;
 	CurationSettings curationSettings;
 };
+
+
+void ensure_transcript_for_curation_async(QWidget *parent, const QString &videoPath,
+					 const CurationSettings &curationSettings, bool transcribeOnDemand,
+					 std::function<void(RecordingTranscript, bool)> finishedCallback);
 
 void generate_custom_prompt_for_curation_async(QWidget *parent, const QString &videoPath,
 					       const CurationSettings &curationSettings, bool transcribeOnDemand,

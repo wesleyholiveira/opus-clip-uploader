@@ -152,7 +152,8 @@ static void generate_prompt_and_upload(QWidget *parent, const QStringList &paths
 	generate_custom_prompt_for_curation_result_async(parent, paths.first(), curationSettings, true, startUpload);
 }
 
-static void open_review_and_upload(QWidget *parent, const QStringList &paths, const QString &apiKey)
+static void open_review_and_upload_with_settings(QWidget *parent, const QStringList &paths, const QString &apiKey,
+							  const CurationSettings &initialSettings)
 {
 	if (paths.isEmpty()) {
 		clear_pending_recording_paths();
@@ -162,7 +163,7 @@ static void open_review_and_upload(QWidget *parent, const QStringList &paths, co
 	blog(LOG_INFO, "Opening upload review dialog before GPT/Opus upload flow: %s",
 	     paths.first().toUtf8().constData());
 
-	UploadReviewDialog reviewDialog(paths.first(), parent);
+	UploadReviewDialog reviewDialog(paths.first(), initialSettings, false, parent);
 
 	if (reviewDialog.exec() != QDialog::Accepted) {
 		blog(LOG_INFO, "Upload review canceled before GPT/Opus upload flow: %s",
@@ -175,6 +176,16 @@ static void open_review_and_upload(QWidget *parent, const QStringList &paths, co
 	blog(LOG_INFO, "Upload review accepted. Generating GPT prompt after review ranges were confirmed: %s",
 	     paths.first().toUtf8().constData());
 	generate_prompt_and_upload(parent, paths, apiKey, curationSettings);
+}
+
+static void open_review_and_upload(QWidget *parent, const QStringList &paths, const QString &apiKey)
+{
+	if (paths.isEmpty()) {
+		clear_pending_recording_paths();
+		return;
+	}
+
+	open_review_and_upload_with_settings(parent, paths, apiKey, CurationSettings{});
 }
 
 void open_confirm_dialog_impl(void *private_data)

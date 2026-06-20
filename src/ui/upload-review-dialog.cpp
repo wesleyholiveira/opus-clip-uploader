@@ -9,6 +9,7 @@ extern "C" {
 #endif
 
 #include "ui/advanced-settings-tree.hpp"
+#include "ui/review-scoring-preparation.hpp"
 #include "ui/ui-common.hpp"
 #include "ui/video-marker-editor.hpp"
 #include "curation/curation-preset.hpp"
@@ -28,6 +29,7 @@ extern "C" {
 #include <QLabel>
 #include <QLineEdit>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QPushButton>
 #include <QTableWidget>
 #include <QTableWidgetItem>
@@ -96,6 +98,21 @@ static QString reviewRangeKeyFromMarkers(QVector<double> markers)
 	}
 
 	return values.isEmpty() ? QStringLiteral("no_markers") : values.join(QStringLiteral("_"));
+}
+
+
+static QVector<double> markerPositionsFromRanges(const QVector<ClipDuration> &ranges)
+{
+	QVector<double> markers;
+	markers.reserve(ranges.size() * 2);
+	for (const ClipDuration &range : ranges) {
+		if (!std::isfinite(range.startSec) || !std::isfinite(range.endSec) || range.endSec <= range.startSec)
+			continue;
+		markers.append(std::max(0.0, range.startSec));
+		markers.append(std::max(0.0, range.endSec));
+	}
+	std::sort(markers.begin(), markers.end());
+	return markers;
 }
 
 static QString reviewRangeKeyFromRanges(const QVector<ClipDuration> &ranges)
@@ -263,6 +280,12 @@ UploadReviewDialog::UploadReviewDialog(const QString &videoPath, const CurationS
 	customPromptInput->setMinimumHeight(advancedSettingsOnly ? 280 : 110);
 	customPromptInput->setPlaceholderText(obsText("Placeholder.CustomPrompt"));
 
+	if (!advancedSettingsOnly) {
+		suggestClipRangesButton = new QPushButton(obsText("Button.SuggestBestClips"), this);
+		connect(suggestClipRangesButton, &QPushButton::clicked, this,
+			&UploadReviewDialog::requestSemanticClipSuggestions);
+	}
+
 	QHBoxLayout *languageRow = nullptr;
 	if (!advancedSettingsOnly) {
 		languageRow = new QHBoxLayout();
@@ -273,6 +296,10 @@ UploadReviewDialog::UploadReviewDialog(const QString &videoPath, const CurationS
 		languageRow->addSpacing(16);
 		languageRow->addWidget(new QLabel(obsText("Settings.TranscriptionLanguage"), this));
 		languageRow->addWidget(transcriptionLanguageInput);
+		if (suggestClipRangesButton) {
+			languageRow->addSpacing(16);
+			languageRow->addWidget(suggestClipRangesButton);
+		}
 		languageRow->addStretch();
 	}
 
@@ -296,6 +323,12 @@ UploadReviewDialog::UploadReviewDialog(const QString &videoPath, const CurationS
 		advancedTree->setMinimumHeight(360);
 	} else {
 		loadSavedCurationOptions();
+		if (videoEditor && !initialSettings.clipDurations.isEmpty()) {
+			videoEditor->setMarkerPositions(markerPositionsFromRanges(initialSettings.clipDurations));
+			refreshClipTable(videoEditor->clipRanges());
+			blog(LOG_INFO, "Applied semantic review suggestion ranges in review dialog. video=%s ranges=%d",
+			     videoPath.toUtf8().constData(), static_cast<int>(initialSettings.clipDurations.size()));
+		}
 	}
 
 	auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
@@ -380,6 +413,58 @@ void UploadReviewDialog::applyCurationSettings(const CurationSettings &settings)
 
 	if (customPromptInput)
 		customPromptInput->setPlainText(settings.aiPrompt.trimmed());
+}
+
+void UploadReviewDialog::requestSemanticClipSuggestions()
+{
+	if (advancedSettingsOnly || !videoEditor || semanticSuggestionInProgress)
+		return;
+
+	const CurationSettings reviewSettings = curationSettings();
+	semanticSuggestionInProgress = true;
+	if (suggestClipRangesButton) {
+		suggestClipRangesButton->setEnabled(false);
+		suggestClipRangesButton->setText(obsText("Status.SuggestingBestClips"));
+	}
+
+	blog(LOG_INFO,
+	     "Starting semantic review suggestions from review dialog. video=%s sourceLanguage=%s transcriptionLanguage=%s",
+	     videoPath.toUtf8().constData(), reviewSettings.sourceLanguage.toUtf8().constData(),
+	     reviewSettings.transcriptionLanguage.toUtf8().constData());
+
+	QPointer<UploadReviewDialog> safeThis(this);
+	prepare_review_scoring_async(
+		this, videoPath, reviewSettings,
+		[safeThis](ReviewScoringPreparationResult result) mutable {
+			if (!safeThis)
+				return;
+
+			safeThis->semanticSuggestionInProgress = false;
+			if (safeThis->suggestClipRangesButton) {
+				safeThis->suggestClipRangesButton->setEnabled(true);
+				safeThis->suggestClipRangesButton->setText(obsText("Button.SuggestBestClips"));
+			}
+
+			safeThis->applySemanticClipSuggestionResult(result);
+		});
+}
+
+void UploadReviewDialog::applySemanticClipSuggestionResult(const ReviewScoringPreparationResult &result)
+{
+	if (result.attempted) {
+		blog(LOG_INFO,
+		     "Semantic review suggestions returned to review dialog. video=%s applied=%s canceled=%s summary=%s",
+		     videoPath.toUtf8().constData(), result.applied ? "true" : "false",
+		     result.canceled ? "true" : "false", result.summary.toUtf8().constData());
+	}
+
+	if (!result.applied || !videoEditor)
+		return;
+
+	videoEditor->setMarkerPositions(markerPositionsFromRanges(result.settings.clipDurations));
+	refreshClipTable(videoEditor->clipRanges());
+	blog(LOG_INFO, "Applied semantic review suggestion ranges from review dialog. video=%s ranges=%d",
+	     videoPath.toUtf8().constData(), static_cast<int>(result.settings.clipDurations.size()));
 }
 
 void UploadReviewDialog::updateCreditEstimate(const QVector<ClipDuration> &ranges)

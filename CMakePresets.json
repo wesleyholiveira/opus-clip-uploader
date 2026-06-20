@@ -115,7 +115,7 @@
         "CMAKE_EXPORT_COMPILE_COMMANDS": true,
         "CMAKE_SUPPRESS_REGENERATION": true,
         "CLIP_CROPPER_USE_LLAMA_CPP": false,
-        "CLIP_CROPPER_LLAMA_CPP_DIR": "%CD%\\deps\\llama.cpp"
+        "CLIP_CROPPER_LLAMA_CPP_DIR": "${sourceDir}/deps/llama.cpp"
       }
     },
     {
@@ -135,14 +135,27 @@
       "inherits": "windows-ninja-cuda-x64",
       "binaryDir": "${sourceDir}/build_cuda_static_deps",
       "cacheVariables": {
-        "BUILD_SHARED_LIBS": "ON",
+        "BUILD_SHARED_LIBS": "OFF",
+
+        "ENABLE_WHISPER_CUDA": "ON",
+        "GGML_CUDA": "ON",
+        "GGML_BACKEND_DL": "OFF",
+        "GGML_NATIVE": "OFF",
+        "CMAKE_CUDA_ARCHITECTURES": "86",
+
+        "CMAKE_COMPILE_WARNING_AS_ERROR": "OFF",
+
         "CLIP_CROPPER_STATIC_DEPS": "ON",
         "CLIP_CROPPER_USE_LLAMA_CPP": "ON",
         "CLIP_CROPPER_LLAMA_CPP_DIR": "${sourceDir}/deps/llama.cpp",
+
         "CLIP_CROPPER_STATIC_CUDA_RUNTIME": "ON",
         "CMAKE_CUDA_RUNTIME_LIBRARY": "Static",
+
         "CLIP_CROPPER_STATIC_QT": "OFF",
+        "CLIP_CROPPER_DEPLOY_QT_RUNTIME": "ON",
         "CLIP_CROPPER_STATIC_MSVC_RUNTIME": "OFF",
+
         "VCPKG_TARGET_TRIPLET": "x64-windows-static-md"
       }
     },
