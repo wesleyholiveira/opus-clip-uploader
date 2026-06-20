@@ -2,6 +2,9 @@
 
 #include "curation/curation-preset.hpp"
 #include "curation/scoring/clip-scoring-pipeline.hpp"
+#include "curation/scoring/embedding-semantic-reranker.hpp"
+#include "curation/scoring/llama-server-embedding-provider.hpp"
+#include "curation/scoring/semantic-embedding-settings.hpp"
 #include "curation/scoring/text-analysis.hpp"
 
 #include <QRegularExpression>
@@ -10,6 +13,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 
 namespace {
 
@@ -356,13 +360,27 @@ QVector<ClipDuration> genericCandidateRanges(const RecordingTranscript &transcri
 	options.ranking.minFinalScore = profile.minFinalScore;
 	options.ranking.overlapToleranceSec = 8.0;
 
+	std::unique_ptr<Curation::Scoring::SemanticEmbeddingProvider> embeddingProvider;
+	std::unique_ptr<Curation::Scoring::SemanticReranker> semanticReranker;
+	const Curation::Scoring::LlamaServerEmbeddingProviderOptions llamaOptions =
+		Curation::Scoring::llamaServerEmbeddingOptionsFromConfig();
+	if (llamaOptions.enabled) {
+		embeddingProvider = std::make_unique<Curation::Scoring::LlamaServerEmbeddingProvider>(llamaOptions);
+		options.embeddingProvider = embeddingProvider.get();
+		semanticReranker = std::make_unique<Curation::Scoring::EmbeddingSemanticReranker>(embeddingProvider.get());
+		options.reranker = semanticReranker.get();
+	}
+
 	const Curation::Scoring::ClipScoringPipeline pipeline;
 	const Curation::Scoring::ClipScoringResult scoring = pipeline.score(transcript, options);
 	if (summary) {
-		*summary = QStringLiteral("profile=%1 maxProjects=%2 selected=%3; %4")
+		const QString embeddingStatus = options.embeddingProvider ? QStringLiteral("llama_server")
+								      : QStringLiteral("disabled");
+		*summary = QStringLiteral("profile=%1 maxProjects=%2 selected=%3 embedding=%4; %5")
 			   .arg(profile.name)
 			   .arg(profile.maxCandidates)
 			   .arg(scoring.candidates.size())
+			   .arg(embeddingStatus)
 			   .arg(scoring.summary);
 	}
 	return scoring.ranges();

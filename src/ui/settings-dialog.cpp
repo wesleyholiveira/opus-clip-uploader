@@ -3,6 +3,7 @@
 #include "ui/ui-common.hpp"
 
 #include "gpt/gpt-prompt-client.hpp"
+#include "curation/scoring/semantic-embedding-settings.hpp"
 
 #include <obs-frontend-api.h>
 #include <obs-module.h>
@@ -183,6 +184,48 @@ void open_settings_impl(void *private_data)
 	gptContextPaddingInput->setToolTip(obsText("Tooltip.GptTranscriptContextPaddingSec"));
 	treeWidget->setItemWidget(gptContextPaddingItem, 1, gptContextPaddingInput);
 
+	auto *localEmbeddingBackendItem = new QTreeWidgetItem(advancedItem);
+	localEmbeddingBackendItem->setText(0, obsText("Settings.LocalEmbeddingBackend"));
+
+	QComboBox *localEmbeddingBackendInput = new QComboBox(treeWidget);
+	localEmbeddingBackendInput->addItem(obsText("Combobox.Disabled"),
+						 QString::fromLatin1(Curation::Scoring::LOCAL_EMBEDDING_BACKEND_DISABLED));
+	localEmbeddingBackendInput->addItem(QStringLiteral("llama-server HTTP"),
+						 QString::fromLatin1(Curation::Scoring::LOCAL_EMBEDDING_BACKEND_LLAMA_SERVER));
+	set_combo_current_data(localEmbeddingBackendInput, Curation::Scoring::localEmbeddingBackendFromConfig(), 0);
+	treeWidget->setItemWidget(localEmbeddingBackendItem, 1, localEmbeddingBackendInput);
+
+	auto *localEmbeddingEndpointItem = new QTreeWidgetItem(advancedItem);
+	localEmbeddingEndpointItem->setText(0, obsText("Settings.LocalEmbeddingEndpoint"));
+
+	QLineEdit *localEmbeddingEndpointInput = new QLineEdit(treeWidget);
+	localEmbeddingEndpointInput->setPlaceholderText(QStringLiteral("http://127.0.0.1:8080/v1/embeddings"));
+	localEmbeddingEndpointInput->setText(PluginConfig::getValue(
+		QString::fromLatin1(Curation::Scoring::CONFIG_LOCAL_EMBEDDING_ENDPOINT),
+		QStringLiteral("http://127.0.0.1:8080/v1/embeddings")));
+	treeWidget->setItemWidget(localEmbeddingEndpointItem, 1, localEmbeddingEndpointInput);
+
+	auto *localEmbeddingModelItem = new QTreeWidgetItem(advancedItem);
+	localEmbeddingModelItem->setText(0, obsText("Settings.LocalEmbeddingModel"));
+
+	QLineEdit *localEmbeddingModelInput = new QLineEdit(treeWidget);
+	localEmbeddingModelInput->setPlaceholderText(QStringLiteral("qwen3-embedding-0.6b-q8_0"));
+	localEmbeddingModelInput->setText(PluginConfig::getValue(
+		QString::fromLatin1(Curation::Scoring::CONFIG_LOCAL_EMBEDDING_MODEL_ID),
+		QStringLiteral("qwen3-embedding-0.6b-q8_0")));
+	treeWidget->setItemWidget(localEmbeddingModelItem, 1, localEmbeddingModelInput);
+
+	auto updateLocalEmbeddingFields = [localEmbeddingBackendInput, localEmbeddingEndpointInput, localEmbeddingModelInput]() {
+		const bool enabled = localEmbeddingBackendInput->currentData().toString() ==
+			QString::fromLatin1(Curation::Scoring::LOCAL_EMBEDDING_BACKEND_LLAMA_SERVER);
+		localEmbeddingEndpointInput->setEnabled(enabled);
+		localEmbeddingModelInput->setEnabled(enabled);
+	};
+
+	QObject::connect(localEmbeddingBackendInput, qOverload<int>(&QComboBox::currentIndexChanged), &dialog,
+			 [&updateLocalEmbeddingFields](int) { updateLocalEmbeddingFields(); });
+	updateLocalEmbeddingFields();
+
 	auto *purgeCachesItem = new QTreeWidgetItem(advancedItem);
 	purgeCachesItem->setText(0, obsText("Settings.PurgePluginCaches"));
 
@@ -285,7 +328,8 @@ void open_settings_impl(void *private_data)
 	QObject::connect(
 		btn, &QPushButton::clicked,
 		[&dialog, apiKeyInput, openAiApiKeyInput, whisperModelInput, brandTemplateIdInput,
-		 resampleThresholdInput, gptContextPaddingInput, openAiModelInput, gptDefaultPromptInput]() {
+		 resampleThresholdInput, gptContextPaddingInput, localEmbeddingBackendInput, localEmbeddingEndpointInput,
+		 localEmbeddingModelInput, openAiModelInput, gptDefaultPromptInput]() {
 			PluginConfig::setValue("opus_api_key", apiKeyInput->text().trimmed());
 			PluginConfig::setValue("opus_brand_template_id", brandTemplateIdInput->text().trimmed());
 			PluginConfig::setValue("openai_api_key", openAiApiKeyInput->text().trimmed());
@@ -310,6 +354,12 @@ void open_settings_impl(void *private_data)
 					       QString::number(resampleThresholdInput->value(), 'f', 0));
 			PluginConfig::setValue(QString::fromLatin1(CONFIG_GPT_TRANSCRIPT_CONTEXT_PADDING_SEC),
 					       QString::number(gptContextPaddingInput->value(), 'f', 0));
+			PluginConfig::setValue(QString::fromLatin1(Curation::Scoring::CONFIG_LOCAL_EMBEDDING_BACKEND),
+					       localEmbeddingBackendInput->currentData().toString().trimmed());
+			PluginConfig::setValue(QString::fromLatin1(Curation::Scoring::CONFIG_LOCAL_EMBEDDING_ENDPOINT),
+					       localEmbeddingEndpointInput->text().trimmed());
+			PluginConfig::setValue(QString::fromLatin1(Curation::Scoring::CONFIG_LOCAL_EMBEDDING_MODEL_ID),
+					       localEmbeddingModelInput->text().trimmed());
 
 			blog(LOG_INFO, "Clip Cropper settings saved. Opus Clip settings updated.");
 

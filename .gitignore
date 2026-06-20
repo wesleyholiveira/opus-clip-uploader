@@ -1,6 +1,8 @@
 # Exclude everything
 /*
 
+!.gitmodules
+
 # Except for default project files
 !/.github
 !/build-aux
@@ -26,6 +28,12 @@
 
 # Exclude CMake build number cache
 /cmake/.CMakeBuildNumber
-deps/
-!models/
-models/*.bin
+!/deps/
+/deps/*
+!/deps/llama.cpp
+!/deps/whisper.cpp
+
+!/models/
+/models/**
+!/models/**/
+!/models/**/.gitkeep

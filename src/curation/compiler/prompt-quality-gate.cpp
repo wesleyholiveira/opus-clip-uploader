@@ -5,6 +5,8 @@
 
 #include <QRegularExpression>
 
+using namespace Curation;
+
 namespace {
 
 static constexpr const char *OPUS_PROMPT_PREFIX = "OPUS_PROMPT:";
@@ -77,9 +79,7 @@ bool promptConstrainsSingleExchange(const QString &lowerPrompt)
 
 } // namespace
 
-namespace Curation {
-
-QString opusPromptPayload(const QString &prompt)
+QString Curation::opusPromptPayload(const QString &prompt)
 {
 	const QString value = lineValueForPrefix(prompt, OPUS_PROMPT_PREFIX);
 	if (!value.trimmed().isEmpty())
@@ -88,7 +88,7 @@ QString opusPromptPayload(const QString &prompt)
 	return prompt.trimmed();
 }
 
-QStringList promptQualityIssues(const QString &prompt, const RecordingTranscript &selectedRangeTranscript,
+QStringList Curation::promptQualityIssues(const QString &prompt, const RecordingTranscript &selectedRangeTranscript,
 					const CurationSettings &curationSettings)
 {
 	QStringList issues;
@@ -215,7 +215,7 @@ QStringList promptQualityIssues(const QString &prompt, const RecordingTranscript
 	return issues;
 }
 
-bool shouldRepairPrompt(const QString &prompt, const RecordingTranscript &selectedRangeTranscript,
+bool Curation::shouldRepairPrompt(const QString &prompt, const RecordingTranscript &selectedRangeTranscript,
 			const CurationSettings &curationSettings, QStringList *issues)
 {
 	const QStringList detectedIssues = promptQualityIssues(prompt, selectedRangeTranscript, curationSettings);
@@ -223,5 +223,3 @@ bool shouldRepairPrompt(const QString &prompt, const RecordingTranscript &select
 		*issues = detectedIssues;
 	return !detectedIssues.isEmpty();
 }
-
-} // namespace Curation

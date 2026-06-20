@@ -9,7 +9,7 @@ QVector<ClipCandidate> ClipRanker::rank(QVector<ClipCandidate> candidates, const
 {
 	candidates.erase(std::remove_if(candidates.begin(), candidates.end(), [&options](const ClipCandidate &candidate) {
 		return candidate.range.endSec <= candidate.range.startSec || candidate.text.trimmed().isEmpty() ||
-		       candidate.rejectedAsNoise || candidate.scores.final < options.minFinalScore;
+		       candidate.rejectedAsNoise || candidate.rejectedByQualityGate || candidate.scores.final < options.minFinalScore;
 	}), candidates.end());
 
 	std::sort(candidates.begin(), candidates.end(), [](const ClipCandidate &left, const ClipCandidate &right) {

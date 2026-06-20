@@ -20,7 +20,14 @@ struct ClipCandidateScores {
 	double tutorial = 0.0;
 	double viewerResponse = 0.0;
 	double semanticTarget = 0.0;
+	double embeddingTarget = 0.0;
+	double semanticViewerMessage = 0.0;
+	double semanticDirectAnswer = 0.0;
+	double semanticNoise = 0.0;
+	double semanticTopicShift = 0.0;
 	double topicContinuity = 0.0;
+	double reranker = 0.0;
+	double qualityGate = 0.0;
 	double noise = 0.0;
 	double final = 0.0;
 };
@@ -38,7 +45,12 @@ struct ClipCandidate {
 	bool startsNearViewerCue = false;
 	bool endsBeforeNextCue = false;
 	bool hasReliableMainTarget = false;
+	bool semanticScoringAvailable = false;
+	bool rerankerAvailable = false;
+	bool qualityGateChecked = false;
 	bool rejectedAsNoise = false;
+	bool rejectedByQualityGate = false;
+	QString rejectionReason;
 };
 
 struct ClipScoringResult {

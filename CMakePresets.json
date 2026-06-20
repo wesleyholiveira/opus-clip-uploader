@@ -113,7 +113,9 @@
         "ENABLE_WHISPER_CUDA": true,
         "CMAKE_COMPILE_WARNING_AS_ERROR": false,
         "CMAKE_EXPORT_COMPILE_COMMANDS": true,
-        "CMAKE_SUPPRESS_REGENERATION": true
+        "CMAKE_SUPPRESS_REGENERATION": true,
+        "CLIP_CROPPER_USE_LLAMA_CPP": false,
+        "CLIP_CROPPER_LLAMA_CPP_DIR": "%CD%\\deps\\llama.cpp"
       }
     },
     {
@@ -125,6 +127,41 @@
         "ENABLE_WHISPER_CUDA": true,
         "CMAKE_COMPILE_WARNING_AS_ERROR": false,
         "CMAKE_EXPORT_COMPILE_COMMANDS": true
+      }
+    },
+    {
+      "name": "windows-ninja-cuda-x64-static-deps",
+      "displayName": "Windows Ninja CUDA x64 Static Deps",
+      "inherits": "windows-ninja-cuda-x64",
+      "binaryDir": "${sourceDir}/build_cuda_static_deps",
+      "cacheVariables": {
+        "BUILD_SHARED_LIBS": "ON",
+        "CLIP_CROPPER_STATIC_DEPS": "ON",
+        "CLIP_CROPPER_USE_LLAMA_CPP": "ON",
+        "CLIP_CROPPER_LLAMA_CPP_DIR": "${sourceDir}/deps/llama.cpp",
+        "CLIP_CROPPER_STATIC_CUDA_RUNTIME": "ON",
+        "CMAKE_CUDA_RUNTIME_LIBRARY": "Static",
+        "CLIP_CROPPER_STATIC_QT": "OFF",
+        "CLIP_CROPPER_STATIC_MSVC_RUNTIME": "OFF",
+        "VCPKG_TARGET_TRIPLET": "x64-windows-static-md"
+      }
+    },
+    {
+      "name": "windows-ninja-cuda-x64-static-qt",
+      "inherits": "windows-ninja-cuda-x64-static-deps",
+      "cacheVariables": {
+        "CLIP_CROPPER_STATIC_QT": "ON",
+        "CMAKE_PREFIX_PATH": "C:/Qt/6.6.2/msvc2022_64_static",
+        "Qt6_DIR": "C:/Qt/6.6.2/msvc2022_64_static/lib/cmake/Qt6"
+      }
+    },
+    {
+      "name": "windows-ninja-cuda-x64-static-deps-mt",
+      "inherits": "windows-ninja-cuda-x64-static-deps",
+      "cacheVariables": {
+        "CLIP_CROPPER_STATIC_MSVC_RUNTIME": "ON",
+        "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded$<$<CONFIG:Debug>:Debug>",
+        "VCPKG_TARGET_TRIPLET": "x64-windows-static"
       }
     }
   ],
@@ -151,6 +188,12 @@
     {
       "name": "ubuntu-ninja-cuda-x86_64",
       "configurePreset": "ubuntu-ninja-cuda-x86_64"
+    },
+    {
+      "name": "windows-ninja-cuda-x64-static-deps",
+      "displayName": "Build Windows Ninja CUDA x64 Static Deps",
+      "configurePreset": "windows-ninja-cuda-x64-static-deps",
+      "configuration": "RelWithDebInfo"
     }
   ]
 }

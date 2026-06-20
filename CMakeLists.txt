@@ -11,6 +11,27 @@ option(ENABLE_QT "Use Qt functionality" ON)
 option(USE_FLATPAK_PATH "Use Flatpak OBS path" OFF)
 option(ENABLE_WHISPER_CUDA "Enable Whisper CUDA backend" OFF)
 
+option(CLIP_CROPPER_USE_LLAMA_CPP "Build the optional llama.cpp backend for local embeddings/reranking" OFF)
+set(CLIP_CROPPER_LLAMA_CPP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/deps/llama.cpp" CACHE PATH "Path to the llama.cpp dependency")
+
+option(CLIP_CROPPER_STATIC_DEPS "Build third-party dependencies added by this project as static libraries when possible" ON)
+option(CLIP_CROPPER_STATIC_QT "Require and link a static Qt build instead of installing Qt runtime DLLs" OFF)
+option(CLIP_CROPPER_STATIC_MSVC_RUNTIME "Use the static MSVC runtime (/MT) for targets created by this project" OFF)
+option(CLIP_CROPPER_STATIC_CUDA_RUNTIME "Use the static CUDA runtime when CUDA support is enabled" ON)
+
+if (CLIP_CROPPER_STATIC_DEPS)
+	set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build third-party dependencies as static libraries" FORCE)
+	set(CURL_USE_STATIC_LIBS ON CACHE BOOL "Prefer static libcurl when FindCURL is used in module mode" FORCE)
+endif ()
+
+if (MSVC AND CLIP_CROPPER_STATIC_MSVC_RUNTIME)
+	set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE STRING "Use the static MSVC runtime" FORCE)
+endif ()
+
+if (ENABLE_WHISPER_CUDA AND CLIP_CROPPER_STATIC_CUDA_RUNTIME)
+	set(CMAKE_CUDA_RUNTIME_LIBRARY Static CACHE STRING "Use the static CUDA runtime" FORCE)
+endif ()
+
 if (UNIX AND NOT APPLE)
 	# whisper.cpp/ggml are built as static libraries and linked into the OBS plugin
 	# shared module. Linux linkers require those static objects to be built with
@@ -120,6 +141,14 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 	src/curation/analysis/named-reference-detector.hpp
 	src/curation/compiler/opus-prompt-compiler.cpp
 	src/curation/compiler/opus-prompt-compiler.hpp
+	src/curation/compiler/prompt-compiler-internal.hpp
+	src/curation/compiler/prompt-compiler-text.cpp
+	src/curation/compiler/prompt-compiler-viewer.cpp
+	src/curation/compiler/prompt-compiler-target.cpp
+	src/curation/compiler/opus-prompt-plan-renderer.cpp
+	src/curation/compiler/opus-prompt-output-normalizer.cpp
+	src/curation/compiler/opus-prompt-fallback.cpp
+	src/curation/compiler/opus-prompt-guard.cpp
 	src/curation/compiler/prompt-quality-gate.cpp
 	src/curation/compiler/prompt-quality-gate.hpp
 	src/curation/range/curation-range-strategy.cpp
@@ -139,6 +168,24 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 	src/curation/scoring/cheap-clip-scorer.hpp
 	src/curation/scoring/clip-ranker.cpp
 	src/curation/scoring/clip-ranker.hpp
+	src/curation/scoring/semantic-model.cpp
+	src/curation/scoring/semantic-model.hpp
+	src/curation/scoring/embedding-cache.cpp
+	src/curation/scoring/embedding-cache.hpp
+	src/curation/scoring/embedding-semantic-reranker.cpp
+	src/curation/scoring/embedding-semantic-reranker.hpp
+	src/curation/scoring/llama-server-embedding-provider.cpp
+	src/curation/scoring/llama-server-embedding-provider.hpp
+	src/curation/scoring/semantic-embedding-settings.cpp
+	src/curation/scoring/semantic-embedding-settings.hpp
+	src/curation/scoring/semantic-prototypes.cpp
+	src/curation/scoring/semantic-prototypes.hpp
+	src/curation/scoring/semantic-clip-scorer.cpp
+	src/curation/scoring/semantic-clip-scorer.hpp
+	src/curation/scoring/semantic-reranker.cpp
+	src/curation/scoring/semantic-reranker.hpp
+	src/curation/scoring/candidate-quality-gate.cpp
+	src/curation/scoring/candidate-quality-gate.hpp
 	src/curation/scoring/clip-scoring-pipeline.cpp
 	src/curation/scoring/clip-scoring-pipeline.hpp
 	src/curation/prompt/curation-prompt-recipe.cpp
@@ -217,6 +264,41 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
 	CURL::libcurl
 )
 
+if (CLIP_CROPPER_USE_LLAMA_CPP)
+	if (EXISTS "${CLIP_CROPPER_LLAMA_CPP_DIR}/CMakeLists.txt")
+		message(STATUS "llama.cpp backend enabled at ${CLIP_CROPPER_LLAMA_CPP_DIR}")
+
+		if (CLIP_CROPPER_STATIC_DEPS)
+			set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+		endif ()
+
+		set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+		set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+		set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+		set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+		set(LLAMA_CURL OFF CACHE BOOL "" FORCE)
+		set(LLAMA_USE_SYSTEM_GGML OFF CACHE BOOL "" FORCE)
+
+		add_subdirectory("${CLIP_CROPPER_LLAMA_CPP_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/deps/llama.cpp" EXCLUDE_FROM_ALL)
+
+		target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE CLIP_CROPPER_WITH_LLAMA_CPP=1)
+		target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
+			"${CLIP_CROPPER_LLAMA_CPP_DIR}/include"
+			"${CLIP_CROPPER_LLAMA_CPP_DIR}/ggml/include"
+		)
+
+		if (TARGET llama)
+			target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE llama)
+		else ()
+			message(FATAL_ERROR "llama.cpp was added, but the expected target 'llama' was not created")
+		endif ()
+	else ()
+		message(FATAL_ERROR "CLIP_CROPPER_USE_LLAMA_CPP is ON, but deps/llama.cpp was not initialized")
+	endif ()
+else ()
+	message(STATUS "llama.cpp backend disabled. Initialize deps/llama.cpp and enable CLIP_CROPPER_USE_LLAMA_CPP when wiring a concrete embedding provider.")
+endif ()
+
 if (ENABLE_FRONTEND_API)
 	file(GLOB_RECURSE OBS_FRONTEND_API_CONFIG
 		"${CMAKE_SOURCE_DIR}/.deps/*obs-frontend-apiConfig.cmake"
@@ -292,60 +374,81 @@ if (ENABLE_QT)
 
 	if (WIN32)
 		get_target_property(QT_CORE_LOCATION Qt6::Core LOCATION)
-		get_filename_component(QT_BIN_DIR "${QT_CORE_LOCATION}" DIRECTORY)
-		get_filename_component(QT_ROOT_DIR "${QT_BIN_DIR}" DIRECTORY)
+		message(STATUS "Qt6::Core location = ${QT_CORE_LOCATION}")
 
-		set(QT_RUNTIME_DLLS
-			"$<TARGET_FILE:Qt6::Core>"
-			"$<TARGET_FILE:Qt6::Gui>"
-			"$<TARGET_FILE:Qt6::Widgets>"
-			"$<TARGET_FILE:Qt6::Network>"
-			"$<TARGET_FILE:Qt6::Multimedia>"
-			"$<TARGET_FILE:Qt6::MultimediaWidgets>"
-		)
-
-		file(GLOB QT_TLS_BACKENDS
-			"${QT_ROOT_DIR}/plugins/tls/qschannelbackend.dll"
-			"${QT_ROOT_DIR}/plugins/tls/qcertonlybackend.dll"
-			"${QT_BIN_DIR}/../plugins/tls/qschannelbackend.dll"
-			"${QT_BIN_DIR}/../plugins/tls/qcertonlybackend.dll"
-		)
-
-		file(GLOB QT_PLATFORM_PLUGINS
-			"${QT_ROOT_DIR}/plugins/platforms/qwindows.dll"
-			"${QT_BIN_DIR}/../plugins/platforms/qwindows.dll"
-		)
-
-		file(GLOB QT_MULTIMEDIA_PLUGINS
-			"${QT_ROOT_DIR}/plugins/multimedia/*.dll"
-			"${QT_BIN_DIR}/../plugins/multimedia/*.dll"
-		)
-
-		file(GLOB QT_IMAGEFORMAT_PLUGINS
-			"${QT_ROOT_DIR}/plugins/imageformats/*.dll"
-			"${QT_BIN_DIR}/../plugins/imageformats/*.dll"
-		)
-
-		file(GLOB QT_ICONENGINE_PLUGINS
-			"${QT_ROOT_DIR}/plugins/iconengines/*.dll"
-			"${QT_BIN_DIR}/../plugins/iconengines/*.dll"
-		)
-
-		file(GLOB QT_STYLE_PLUGINS
-			"${QT_ROOT_DIR}/plugins/styles/*.dll"
-			"${QT_BIN_DIR}/../plugins/styles/*.dll"
-		)
-
-		message(STATUS "QT_BIN_DIR = ${QT_BIN_DIR}")
-		message(STATUS "QT_ROOT_DIR = ${QT_ROOT_DIR}")
-		message(STATUS "QT_TLS_BACKENDS = ${QT_TLS_BACKENDS}")
-		message(STATUS "QT_PLATFORM_PLUGINS = ${QT_PLATFORM_PLUGINS}")
-		message(STATUS "QT_MULTIMEDIA_PLUGINS = ${QT_MULTIMEDIA_PLUGINS}")
-		message(STATUS "QT_IMAGEFORMAT_PLUGINS = ${QT_IMAGEFORMAT_PLUGINS}")
-		message(STATUS "QT_ICONENGINE_PLUGINS = ${QT_ICONENGINE_PLUGINS}")
-		message(STATUS "QT_STYLE_PLUGINS = ${QT_STYLE_PLUGINS}")
-
+		if (CLIP_CROPPER_STATIC_QT)
+			if (QT_CORE_LOCATION MATCHES "\\.dll$")
+				message(FATAL_ERROR
+					"CLIP_CROPPER_STATIC_QT is ON, but Qt6::Core points to a DLL: ${QT_CORE_LOCATION}. "
+					"Use a static Qt build and set CMAKE_PREFIX_PATH/Qt6_DIR to it, or disable CLIP_CROPPER_STATIC_QT."
+				)
 			endif ()
+
+			if (COMMAND qt_import_plugins)
+				# A static Qt build still needs its static plugin initialization stubs.
+				# Qt imports a sane default set automatically; we only exclude SQL drivers
+				# because this plugin does not use Qt SQL.
+				qt_import_plugins(${CMAKE_PROJECT_NAME}
+					EXCLUDE_BY_TYPE sqldrivers
+				)
+			else ()
+				message(FATAL_ERROR "qt_import_plugins is unavailable; ensure Qt6::Core was found before enabling CLIP_CROPPER_STATIC_QT")
+			endif ()
+		else ()
+			get_filename_component(QT_BIN_DIR "${QT_CORE_LOCATION}" DIRECTORY)
+			get_filename_component(QT_ROOT_DIR "${QT_BIN_DIR}" DIRECTORY)
+
+			set(QT_RUNTIME_DLLS
+				"$<TARGET_FILE:Qt6::Core>"
+				"$<TARGET_FILE:Qt6::Gui>"
+				"$<TARGET_FILE:Qt6::Widgets>"
+				"$<TARGET_FILE:Qt6::Network>"
+				"$<TARGET_FILE:Qt6::Multimedia>"
+				"$<TARGET_FILE:Qt6::MultimediaWidgets>"
+			)
+
+			file(GLOB QT_TLS_BACKENDS
+				"${QT_ROOT_DIR}/plugins/tls/qschannelbackend.dll"
+				"${QT_ROOT_DIR}/plugins/tls/qcertonlybackend.dll"
+				"${QT_BIN_DIR}/../plugins/tls/qschannelbackend.dll"
+				"${QT_BIN_DIR}/../plugins/tls/qcertonlybackend.dll"
+			)
+
+			file(GLOB QT_PLATFORM_PLUGINS
+				"${QT_ROOT_DIR}/plugins/platforms/qwindows.dll"
+				"${QT_BIN_DIR}/../plugins/platforms/qwindows.dll"
+			)
+
+			file(GLOB QT_MULTIMEDIA_PLUGINS
+				"${QT_ROOT_DIR}/plugins/multimedia/*.dll"
+				"${QT_BIN_DIR}/../plugins/multimedia/*.dll"
+			)
+
+			file(GLOB QT_IMAGEFORMAT_PLUGINS
+				"${QT_ROOT_DIR}/plugins/imageformats/*.dll"
+				"${QT_BIN_DIR}/../plugins/imageformats/*.dll"
+			)
+
+			file(GLOB QT_ICONENGINE_PLUGINS
+				"${QT_ROOT_DIR}/plugins/iconengines/*.dll"
+				"${QT_BIN_DIR}/../plugins/iconengines/*.dll"
+			)
+
+			file(GLOB QT_STYLE_PLUGINS
+				"${QT_ROOT_DIR}/plugins/styles/*.dll"
+				"${QT_BIN_DIR}/../plugins/styles/*.dll"
+			)
+
+			message(STATUS "QT_BIN_DIR = ${QT_BIN_DIR}")
+			message(STATUS "QT_ROOT_DIR = ${QT_ROOT_DIR}")
+			message(STATUS "QT_TLS_BACKENDS = ${QT_TLS_BACKENDS}")
+			message(STATUS "QT_PLATFORM_PLUGINS = ${QT_PLATFORM_PLUGINS}")
+			message(STATUS "QT_MULTIMEDIA_PLUGINS = ${QT_MULTIMEDIA_PLUGINS}")
+			message(STATUS "QT_IMAGEFORMAT_PLUGINS = ${QT_IMAGEFORMAT_PLUGINS}")
+			message(STATUS "QT_ICONENGINE_PLUGINS = ${QT_ICONENGINE_PLUGINS}")
+			message(STATUS "QT_STYLE_PLUGINS = ${QT_STYLE_PLUGINS}")
+		endif ()
+	endif ()
 endif ()
 
 
@@ -397,6 +500,7 @@ set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(WHISPER_BUILD_SERVER OFF CACHE BOOL "" FORCE)
 set(WHISPER_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
 set(GGML_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
+set(WHISPER_USE_SYSTEM_GGML OFF CACHE BOOL "" FORCE)
 set(GGML_NATIVE ON CACHE BOOL "" FORCE)
 
 target_compile_definitions(${CMAKE_PROJECT_NAME}
@@ -433,7 +537,9 @@ else ()
 	set(GGML_CUDA OFF CACHE BOOL "" FORCE)
 endif ()
 
-set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+if (CLIP_CROPPER_STATIC_DEPS)
+	set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+endif ()
 
 if (MSVC)
 	foreach (flag_var
@@ -492,7 +598,27 @@ else()
 		endif ()
 	endif ()
 
+	if (CLIP_CROPPER_STATIC_DEPS)
+		set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+	endif ()
+
 	add_subdirectory(deps/whisper.cpp EXCLUDE_FROM_ALL)
+
+	if (ENABLE_WHISPER_CUDA AND CLIP_CROPPER_STATIC_CUDA_RUNTIME)
+		foreach (_clip_cropper_cuda_runtime_target
+			whisper
+			ggml
+			ggml-base
+			ggml-cpu
+			ggml-cuda
+		)
+			if (TARGET ${_clip_cropper_cuda_runtime_target})
+				set_target_properties(${_clip_cropper_cuda_runtime_target} PROPERTIES
+					CUDA_RUNTIME_LIBRARY Static
+				)
+			endif ()
+		endforeach ()
+	endif ()
 
 	if (UNIX AND NOT APPLE)
 		foreach (_clip_cropper_pic_target
@@ -539,7 +665,7 @@ if (WIN32)
 	)
 endif ()
 
-if (WIN32 AND ENABLE_QT)
+if (WIN32 AND ENABLE_QT AND NOT CLIP_CROPPER_STATIC_QT)
 	install(FILES ${QT_RUNTIME_DLLS}
 		DESTINATION "obs-plugins/64bit"
 	)

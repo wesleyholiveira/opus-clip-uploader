@@ -1,0 +1,32 @@
+#pragma once
+
+#include <QString>
+#include <QVector>
+
+namespace Curation::Scoring {
+
+struct SemanticEmbedding {
+	QVector<float> values;
+
+	bool isValid() const { return !values.isEmpty(); }
+};
+
+class SemanticEmbeddingProvider {
+public:
+	virtual ~SemanticEmbeddingProvider() = default;
+
+	virtual bool isAvailable() const = 0;
+	virtual QString modelId() const = 0;
+	virtual SemanticEmbedding embed(const QString &text) const = 0;
+};
+
+class DisabledSemanticEmbeddingProvider final : public SemanticEmbeddingProvider {
+public:
+	bool isAvailable() const override { return false; }
+	QString modelId() const override { return QStringLiteral("disabled"); }
+	SemanticEmbedding embed(const QString &text) const override;
+};
+
+double cosineSimilarity(const SemanticEmbedding &left, const SemanticEmbedding &right);
+
+} // namespace Curation::Scoring
