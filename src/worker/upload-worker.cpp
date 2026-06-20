@@ -674,6 +674,8 @@ UploadWorker::PreparedUploadItem UploadWorker::prepareIndependentRangeUploadVide
 	itemSettings.rangeEndSec = durationSec;
 	itemSettings.originalVideoDurationSec = durationSec;
 	itemSettings.uploadClipRangesIndependently = false;
+	itemSettings.skipCurate = true;
+	itemSettings.clipLengthPreset = QStringLiteral("Auto");
 
 	item.data = std::move(payload);
 	item.fileName = QStringLiteral("%1-candidate-%2.mp4")
@@ -685,7 +687,7 @@ UploadWorker::PreparedUploadItem UploadWorker::prepareIndependentRangeUploadVide
 	item.sourceEndSec = range.endSec;
 
 	blog(LOG_INFO,
-	     "[clip-cropper] Prepared in-memory isolated candidate upload %d/%d. sourceRange=%.2f-%.2f bytes=%lld durationSec=%.2f",
+	     "[clip-cropper] Prepared in-memory isolated candidate upload %d/%d. sourceRange=%.2f-%.2f bytes=%lld durationSec=%.2f opusMode=fixed_exact_range",
 	     index + 1, total, range.startSec, range.endSec, static_cast<long long>(item.data.size()), durationSec);
 
 	return item;

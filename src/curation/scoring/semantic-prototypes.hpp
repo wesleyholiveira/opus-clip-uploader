@@ -11,6 +11,10 @@ struct SemanticPrototypeSet {
 	QStringList greetingNoise;
 	QStringList streamManagement;
 	QStringList topicShift;
+	QStringList clipValue;
+	QStringList hook;
+	QStringList resolution;
+	QStringList metaNoise;
 };
 
 const SemanticPrototypeSet &defaultSemanticPrototypes();

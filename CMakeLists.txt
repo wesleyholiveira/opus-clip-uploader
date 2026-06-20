@@ -238,10 +238,14 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 	src/curation/scoring/embedding-semantic-reranker.hpp
 	src/curation/scoring/llama-server-embedding-provider.cpp
 	src/curation/scoring/llama-server-embedding-provider.hpp
+	src/curation/scoring/llama-server-reranker-provider.cpp
+	src/curation/scoring/llama-server-reranker-provider.hpp
 	src/curation/scoring/semantic-embedding-settings.cpp
 	src/curation/scoring/semantic-embedding-settings.hpp
 	src/curation/scoring/semantic-prototypes.cpp
 	src/curation/scoring/semantic-prototypes.hpp
+	src/curation/scoring/semantic-coarse-retriever.cpp
+	src/curation/scoring/semantic-coarse-retriever.hpp
 	src/curation/scoring/semantic-clip-scorer.cpp
 	src/curation/scoring/semantic-clip-scorer.hpp
 	src/curation/scoring/semantic-reranker.cpp

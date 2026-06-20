@@ -10,11 +10,13 @@ class QComboBox;
 class QLabel;
 class QLineEdit;
 class QPlainTextEdit;
+class QProgressDialog;
 class QPushButton;
 class QTableWidget;
 class VideoMarkerEditor;
 class QWidget;
 struct ReviewScoringPreparationResult;
+struct ReviewScoringProgressUpdate;
 
 class UploadReviewDialog : public QDialog {
 	Q_OBJECT
@@ -44,12 +46,17 @@ private:
 	QCheckBox *skipCurateInput = nullptr;
 	QPlainTextEdit *customPromptInput = nullptr;
 	QPushButton *suggestClipRangesButton = nullptr;
+	QProgressDialog *semanticSuggestionProgressDialog = nullptr;
 	bool semanticSuggestionInProgress = false;
+	int semanticSuggestionProgressGeneration = 0;
 
 	void refreshClipTable(const QVector<ClipDuration> &ranges);
 	void applyCurationSettings(const CurationSettings &settings);
 	void updateCreditEstimate(const QVector<ClipDuration> &ranges);
 	void requestSemanticClipSuggestions();
+	void showSemanticSuggestionProgressDialog();
+	void updateSemanticSuggestionProgress(const ReviewScoringProgressUpdate &progress);
+	void closeSemanticSuggestionProgressDialog();
 	void applySemanticClipSuggestionResult(const ReviewScoringPreparationResult &result);
 	void loadSavedCurationOptions();
 	void saveCurationOptions() const;

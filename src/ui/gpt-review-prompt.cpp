@@ -143,6 +143,63 @@ static QObject *async_context(QWidget *parent)
 	return QCoreApplication::instance();
 }
 
+static void configure_foreground_progress_window(QProgressDialog *progressDialog, QWidget *parent, bool allowClose)
+{
+	if (!progressDialog)
+		return;
+
+	if (!parent) {
+		configure_background_progress_window(progressDialog, allowClose);
+		return;
+	}
+
+	QWidget *owner = parent->window() ? parent->window() : parent;
+	progressDialog->setParent(owner);
+	progressDialog->setAttribute(Qt::WA_QuitOnClose, false);
+	progressDialog->setModal(true);
+	progressDialog->setWindowModality(Qt::WindowModal);
+
+	Qt::WindowFlags flags = Qt::Dialog | Qt::WindowTitleHint | Qt::WindowSystemMenuHint |
+				Qt::MSWindowsFixedSizeDialogHint | Qt::WindowStaysOnTopHint;
+	if (allowClose)
+		flags |= Qt::WindowCloseButtonHint;
+	progressDialog->setWindowFlags(flags);
+}
+
+static void show_foreground_progress_window(QProgressDialog *progressDialog, QWidget *parent, const QString &videoPath)
+{
+	if (!progressDialog)
+		return;
+
+	progressDialog->show();
+	progressDialog->raise();
+	progressDialog->activateWindow();
+
+	QPointer<QProgressDialog> safeProgress(progressDialog);
+	QTimer::singleShot(0, progressDialog, [safeProgress, videoPath]() {
+		if (!safeProgress)
+			return;
+
+		safeProgress->show();
+		safeProgress->raise();
+		safeProgress->activateWindow();
+		blog(LOG_INFO, "Transcription progress dialog shown in front of review dialog. video=%s",
+		     videoPath.toUtf8().constData());
+	});
+
+	if (parent) {
+		QPointer<QProgressDialog> safeProgressForParent(progressDialog);
+		QTimer::singleShot(150, parent, [safeProgressForParent]() {
+			if (!safeProgressForParent)
+				return;
+
+			safeProgressForParent->show();
+			safeProgressForParent->raise();
+			safeProgressForParent->activateWindow();
+		});
+	}
+}
+
 static void invoke_finished(QWidget *parent, std::function<void()> finishedCallback)
 {
 	if (!finishedCallback)
@@ -272,7 +329,6 @@ static CurationSettings gpt_context_settings_for_large_viewer_discovery(const QS
 		return settings;
 
 	CurationSettings adjusted = resolver.apply(settings, resolution);
-	adjusted.uploadClipRangesIndependently = false;
 
 	blog(LOG_INFO,
 	     "[clip-cropper] Preselected viewer-message candidate ranges for GPT context. video=%s strategy=%s mode=%s reason=%s originalSelectedSec=%.2f promptRanges=%d ranges=%s details=%s",
@@ -451,14 +507,15 @@ static void transcribe_video_with_progress_dialog_async(QWidget *parent, const Q
 		new QProgressDialog(obsText("Status.PreparingTranscription"), obsText("Button.Cancel"), 0, 100, parent);
 	QPointer<QProgressDialog> safeProgress(progressDialog);
 	progressDialog->setWindowTitle(obsText("Dialog.TranscribingAudioTitle"));
-	configure_background_progress_window(progressDialog, true);
+	configure_foreground_progress_window(progressDialog, parent, true);
 	progressDialog->setMinimumDuration(0);
 	progressDialog->setAutoClose(false);
 	progressDialog->setAutoReset(false);
 	progressDialog->setValue(0);
-	progressDialog->show();
+	show_foreground_progress_window(progressDialog, parent, videoPath);
 
 	auto cancelRequested = std::make_shared<std::atomic_bool>(false);
+	auto transcriptionCompleted = std::make_shared<std::atomic_bool>(false);
 	auto operationFinished = std::make_shared<std::atomic_bool>(false);
 	auto transcriptResult = std::make_shared<RecordingTranscript>();
 	const QString modelPath = resolve_whisper_model_path();
@@ -481,7 +538,7 @@ static void transcribe_video_with_progress_dialog_async(QWidget *parent, const Q
 	};
 
 	auto *thread = QThread::create([videoPath, modelPath, normalizedLanguage, transcriptionRanges, cancelRequested,
-					transcriptResult, reportProgress]() {
+					transcriptionCompleted, transcriptResult, reportProgress]() {
 		reportProgress(0, obsText("Status.PreparingTranscription"));
 
 		if (transcriptResult) {
@@ -495,11 +552,15 @@ static void transcribe_video_with_progress_dialog_async(QWidget *parent, const Q
 					[cancelRequested]() { return cancelRequested && cancelRequested->load(); });
 			}
 		}
+
+		if (transcriptionCompleted)
+			transcriptionCompleted->store(true);
 	});
 	thread->setObjectName(QStringLiteral("ClipCropperTranscriptionThread"));
 
-	auto requestTranscriptionCancel = [cancelRequested, operationFinished, safeProgress, videoPath]() {
-		if (operationFinished && operationFinished->load())
+	auto requestTranscriptionCancel = [cancelRequested, transcriptionCompleted, operationFinished, safeProgress, videoPath]() {
+		if ((operationFinished && operationFinished->load()) ||
+		    (transcriptionCompleted && transcriptionCompleted->load()))
 			return;
 
 		cancelRequested->store(true);
@@ -524,9 +585,15 @@ static void transcribe_video_with_progress_dialog_async(QWidget *parent, const Q
 			if (!safeContext)
 				return;
 
-			const bool canceled = cancelRequested && cancelRequested->load();
+			const bool cancelRequestedBeforeCompletion = cancelRequested && cancelRequested->load();
 			const RecordingTranscript transcript = transcriptResult ? *transcriptResult
-										: RecordingTranscript{};
+									: RecordingTranscript{};
+			const bool canceled = cancelRequestedBeforeCompletion && transcript.segments.isEmpty();
+			if (cancelRequestedBeforeCompletion && !transcript.segments.isEmpty()) {
+				blog(LOG_INFO,
+				     "Ignoring late transcription cancel because a usable transcript was produced. video=%s segments=%d",
+				     videoPath.toUtf8().constData(), static_cast<int>(transcript.segments.size()));
+			}
 
 			if (operationFinished)
 				operationFinished->store(true);

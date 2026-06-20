@@ -215,6 +215,37 @@ void open_settings_impl(void *private_data)
 		QStringLiteral("qwen3-embedding-0.6b-q8_0")));
 	treeWidget->setItemWidget(localEmbeddingModelItem, 1, localEmbeddingModelInput);
 
+	auto *localRerankerBackendItem = new QTreeWidgetItem(advancedItem);
+	localRerankerBackendItem->setText(0, obsText("Settings.LocalRerankerBackend"));
+
+	QComboBox *localRerankerBackendInput = new QComboBox(treeWidget);
+	localRerankerBackendInput->addItem(obsText("Combobox.Disabled"),
+						 QString::fromLatin1(Curation::Scoring::LOCAL_RERANKER_BACKEND_DISABLED));
+	localRerankerBackendInput->addItem(QStringLiteral("llama-server HTTP /v1/rerank"),
+						 QString::fromLatin1(Curation::Scoring::LOCAL_RERANKER_BACKEND_LLAMA_SERVER));
+	set_combo_current_data(localRerankerBackendInput, Curation::Scoring::localRerankerBackendFromConfig(), 0);
+	treeWidget->setItemWidget(localRerankerBackendItem, 1, localRerankerBackendInput);
+
+	auto *localRerankerEndpointItem = new QTreeWidgetItem(advancedItem);
+	localRerankerEndpointItem->setText(0, obsText("Settings.LocalRerankerEndpoint"));
+
+	QLineEdit *localRerankerEndpointInput = new QLineEdit(treeWidget);
+	localRerankerEndpointInput->setPlaceholderText(QStringLiteral("http://127.0.0.1:8081/v1/rerank"));
+	localRerankerEndpointInput->setText(PluginConfig::getValue(
+		QString::fromLatin1(Curation::Scoring::CONFIG_LOCAL_RERANKER_ENDPOINT),
+		QStringLiteral("http://127.0.0.1:8081/v1/rerank")));
+	treeWidget->setItemWidget(localRerankerEndpointItem, 1, localRerankerEndpointInput);
+
+	auto *localRerankerModelItem = new QTreeWidgetItem(advancedItem);
+	localRerankerModelItem->setText(0, obsText("Settings.LocalRerankerModel"));
+
+	QLineEdit *localRerankerModelInput = new QLineEdit(treeWidget);
+	localRerankerModelInput->setPlaceholderText(QStringLiteral("qwen3-reranker-0.6b-q8_0"));
+	localRerankerModelInput->setText(PluginConfig::getValue(
+		QString::fromLatin1(Curation::Scoring::CONFIG_LOCAL_RERANKER_MODEL_ID),
+		QStringLiteral("qwen3-reranker-0.6b-q8_0")));
+	treeWidget->setItemWidget(localRerankerModelItem, 1, localRerankerModelInput);
+
 	auto updateLocalEmbeddingFields = [localEmbeddingBackendInput, localEmbeddingEndpointInput, localEmbeddingModelInput]() {
 		const bool enabled = localEmbeddingBackendInput->currentData().toString() ==
 			QString::fromLatin1(Curation::Scoring::LOCAL_EMBEDDING_BACKEND_LLAMA_SERVER);
@@ -222,9 +253,19 @@ void open_settings_impl(void *private_data)
 		localEmbeddingModelInput->setEnabled(enabled);
 	};
 
+	auto updateLocalRerankerFields = [localRerankerBackendInput, localRerankerEndpointInput, localRerankerModelInput]() {
+		const bool enabled = localRerankerBackendInput->currentData().toString() ==
+			QString::fromLatin1(Curation::Scoring::LOCAL_RERANKER_BACKEND_LLAMA_SERVER);
+		localRerankerEndpointInput->setEnabled(enabled);
+		localRerankerModelInput->setEnabled(enabled);
+	};
+
 	QObject::connect(localEmbeddingBackendInput, qOverload<int>(&QComboBox::currentIndexChanged), &dialog,
 			 [&updateLocalEmbeddingFields](int) { updateLocalEmbeddingFields(); });
+	QObject::connect(localRerankerBackendInput, qOverload<int>(&QComboBox::currentIndexChanged), &dialog,
+			 [&updateLocalRerankerFields](int) { updateLocalRerankerFields(); });
 	updateLocalEmbeddingFields();
+	updateLocalRerankerFields();
 
 	auto *purgeCachesItem = new QTreeWidgetItem(advancedItem);
 	purgeCachesItem->setText(0, obsText("Settings.PurgePluginCaches"));
@@ -329,7 +370,8 @@ void open_settings_impl(void *private_data)
 		btn, &QPushButton::clicked,
 		[&dialog, apiKeyInput, openAiApiKeyInput, whisperModelInput, brandTemplateIdInput,
 		 resampleThresholdInput, gptContextPaddingInput, localEmbeddingBackendInput, localEmbeddingEndpointInput,
-		 localEmbeddingModelInput, openAiModelInput, gptDefaultPromptInput]() {
+		 localEmbeddingModelInput, localRerankerBackendInput, localRerankerEndpointInput, localRerankerModelInput,
+		 openAiModelInput, gptDefaultPromptInput]() {
 			PluginConfig::setValue("opus_api_key", apiKeyInput->text().trimmed());
 			PluginConfig::setValue("opus_brand_template_id", brandTemplateIdInput->text().trimmed());
 			PluginConfig::setValue("openai_api_key", openAiApiKeyInput->text().trimmed());
@@ -360,6 +402,12 @@ void open_settings_impl(void *private_data)
 					       localEmbeddingEndpointInput->text().trimmed());
 			PluginConfig::setValue(QString::fromLatin1(Curation::Scoring::CONFIG_LOCAL_EMBEDDING_MODEL_ID),
 					       localEmbeddingModelInput->text().trimmed());
+			PluginConfig::setValue(QString::fromLatin1(Curation::Scoring::CONFIG_LOCAL_RERANKER_BACKEND),
+					       localRerankerBackendInput->currentData().toString().trimmed());
+			PluginConfig::setValue(QString::fromLatin1(Curation::Scoring::CONFIG_LOCAL_RERANKER_ENDPOINT),
+					       localRerankerEndpointInput->text().trimmed());
+			PluginConfig::setValue(QString::fromLatin1(Curation::Scoring::CONFIG_LOCAL_RERANKER_MODEL_ID),
+					       localRerankerModelInput->text().trimmed());
 
 			blog(LOG_INFO, "Clip Cropper settings saved. Opus Clip settings updated.");
 

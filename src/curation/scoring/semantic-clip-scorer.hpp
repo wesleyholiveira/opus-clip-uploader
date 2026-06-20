@@ -12,6 +12,8 @@ namespace Curation::Scoring {
 struct SemanticClipScoringOptions {
 	bool enabled = true;
 	int minTextChars = 40;
+	int maxPrototypeTexts = 8;
+	bool enablePairwiseTopicContinuity = false;
 	double highConfidenceMatch = 0.72;
 };
 
@@ -32,9 +34,15 @@ private:
 				      const QStringList &prototypes) const;
 	double topicContinuityByEmbedding(const TranscriptIndex &index, const ClipCandidate &candidate,
 				       const SemanticEmbeddingProvider &provider) const;
+	void scoreOpeningAndEnding(const TranscriptIndex &index, ClipCandidate &candidate,
+				       const SemanticEmbeddingProvider &provider, const QStringList &hookPrototypes,
+				       const QStringList &resolutionPrototypes, const QStringList &metaNoisePrototypes,
+				       const QStringList &topicShiftPrototypes) const;
 	double combineFinalScore(const ClipCandidate &candidate, const SemanticScoringContext &context) const;
 	QString firstHalfText(const TranscriptIndex &index, const ClipCandidate &candidate) const;
 	QString secondHalfText(const TranscriptIndex &index, const ClipCandidate &candidate) const;
+	QString openingText(const TranscriptIndex &index, const ClipCandidate &candidate) const;
+	QString endingText(const TranscriptIndex &index, const ClipCandidate &candidate) const;
 };
 
 } // namespace Curation::Scoring

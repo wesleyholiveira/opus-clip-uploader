@@ -5,6 +5,8 @@
 
 #include <QUrl>
 
+#include <functional>
+
 namespace Curation::Scoring {
 
 struct LlamaServerEmbeddingProviderOptions {
@@ -13,6 +15,7 @@ struct LlamaServerEmbeddingProviderOptions {
 	int timeoutMs = 10000;
 	int maxTextChars = 6000;
 	bool enabled = false;
+	std::function<bool()> cancellationCallback = {};
 };
 
 class LlamaServerEmbeddingProvider final : public SemanticEmbeddingProvider {
@@ -31,11 +34,13 @@ private:
 	QByteArray buildRequestPayload(const QString &text) const;
 	SemanticEmbedding parseEmbeddingResponse(const QByteArray &payload) const;
 	QString preparedText(const QString &text) const;
-	void markFailure(const QString &message) const;
+	void markFailure(const QString &message, bool fatal = false) const;
+	void markSuccess() const;
 
 	LlamaServerEmbeddingProviderOptions options_;
 	mutable EmbeddingCache cache_;
 	mutable bool failed_ = false;
+	mutable int consecutiveFailures_ = 0;
 	mutable QString lastError_;
 };
 

@@ -52,7 +52,13 @@ QJsonObject OpusCurationPayloadBuilder::build(const ClipDuration &rangeValue,
 		clipDurationSeconds.append(rangeDurationSec);
 		curationPref.insert("clip_duration", clipDurationSeconds);
 	} else if (hasPreferredClipLength) {
-		curationPref.insert("clipDurations", clipDurationsForBounds(clipLengthBounds.minSec, clipLengthBounds.maxSec));
+		const double boundedMaxSec = rangeDurationSec > 0.0 ? std::min(clipLengthBounds.maxSec, rangeDurationSec)
+							   : clipLengthBounds.maxSec;
+		const double boundedMinSec = rangeDurationSec > 0.0 ? std::min(clipLengthBounds.minSec, boundedMaxSec)
+							   : clipLengthBounds.minSec;
+
+		if (boundedMaxSec > 0.0 && boundedMaxSec >= boundedMinSec)
+			curationPref.insert("clipDurations", clipDurationsForBounds(boundedMinSec, boundedMaxSec));
 	}
 
 	QJsonArray topicKeywords;

@@ -27,12 +27,16 @@ extern "C" {
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
+#include <QMetaObject>
 #include <QLineEdit>
 #include <QPlainTextEdit>
+#include <QProgressDialog>
 #include <QPointer>
 #include <QPushButton>
 #include <QTableWidget>
 #include <QTableWidgetItem>
+#include <QThread>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -415,6 +419,76 @@ void UploadReviewDialog::applyCurationSettings(const CurationSettings &settings)
 		customPromptInput->setPlainText(settings.aiPrompt.trimmed());
 }
 
+void UploadReviewDialog::showSemanticSuggestionProgressDialog()
+{
+	closeSemanticSuggestionProgressDialog();
+
+	auto *progress = new QProgressDialog(obsText("Status.SuggestClipsCheckingSettings"), QString(), 0, 100, this);
+	semanticSuggestionProgressDialog = progress;
+	progress->setWindowTitle(obsText("Dialog.SuggestingBestClipsTitle"));
+	progress->setWindowModality(Qt::WindowModal);
+	progress->setMinimumDuration(0);
+	progress->setAutoClose(false);
+	progress->setAutoReset(false);
+	progress->setValue(0);
+	progress->setAttribute(Qt::WA_DeleteOnClose, false);
+	progress->setWindowFlags(Qt::Dialog | Qt::WindowTitleHint | Qt::CustomizeWindowHint |
+				       Qt::MSWindowsFixedSizeDialogHint | Qt::WindowStaysOnTopHint);
+
+	connect(progress, &QObject::destroyed, this, [this, progress]() {
+		if (semanticSuggestionProgressDialog == progress)
+			semanticSuggestionProgressDialog = nullptr;
+	});
+
+	progress->show();
+	progress->raise();
+	progress->activateWindow();
+	QTimer::singleShot(0, progress, [safeProgress = QPointer<QProgressDialog>(progress)]() {
+		if (!safeProgress)
+			return;
+		safeProgress->show();
+		safeProgress->raise();
+		safeProgress->activateWindow();
+	});
+}
+
+void UploadReviewDialog::updateSemanticSuggestionProgress(const ReviewScoringProgressUpdate &progressUpdate)
+{
+	if (QThread::currentThread() != thread()) {
+		QPointer<UploadReviewDialog> safeThis(this);
+		QMetaObject::invokeMethod(this, [safeThis, progressUpdate]() {
+			if (!safeThis)
+				return;
+			safeThis->updateSemanticSuggestionProgress(progressUpdate);
+		}, Qt::QueuedConnection);
+		return;
+	}
+
+	QPointer<QProgressDialog> progress = semanticSuggestionProgressDialog;
+	if (!progress)
+		return;
+
+	const int maximum = std::max(0, progressUpdate.maximum);
+	const int value = std::clamp(progressUpdate.value, 0, maximum);
+	progress->setRange(0, maximum);
+	if (!progressUpdate.message.isEmpty())
+		progress->setLabelText(progressUpdate.message);
+	progress->setValue(value);
+	if (!progress->isVisible())
+		progress->show();
+}
+
+void UploadReviewDialog::closeSemanticSuggestionProgressDialog()
+{
+	if (!semanticSuggestionProgressDialog)
+		return;
+
+	QProgressDialog *progress = semanticSuggestionProgressDialog;
+	semanticSuggestionProgressDialog = nullptr;
+	progress->close();
+	progress->deleteLater();
+}
+
 void UploadReviewDialog::requestSemanticClipSuggestions()
 {
 	if (advancedSettingsOnly || !videoEditor || semanticSuggestionInProgress)
@@ -422,6 +496,8 @@ void UploadReviewDialog::requestSemanticClipSuggestions()
 
 	const CurationSettings reviewSettings = curationSettings();
 	semanticSuggestionInProgress = true;
+	const int suggestionGeneration = ++semanticSuggestionProgressGeneration;
+	showSemanticSuggestionProgressDialog();
 	if (suggestClipRangesButton) {
 		suggestClipRangesButton->setEnabled(false);
 		suggestClipRangesButton->setText(obsText("Status.SuggestingBestClips"));
@@ -435,17 +511,25 @@ void UploadReviewDialog::requestSemanticClipSuggestions()
 	QPointer<UploadReviewDialog> safeThis(this);
 	prepare_review_scoring_async(
 		this, videoPath, reviewSettings,
-		[safeThis](ReviewScoringPreparationResult result) mutable {
-			if (!safeThis)
+		[safeThis, suggestionGeneration](ReviewScoringPreparationResult result) mutable {
+			if (!safeThis || safeThis->semanticSuggestionProgressGeneration != suggestionGeneration)
 				return;
 
 			safeThis->semanticSuggestionInProgress = false;
+			++safeThis->semanticSuggestionProgressGeneration;
+			safeThis->closeSemanticSuggestionProgressDialog();
 			if (safeThis->suggestClipRangesButton) {
 				safeThis->suggestClipRangesButton->setEnabled(true);
 				safeThis->suggestClipRangesButton->setText(obsText("Button.SuggestBestClips"));
 			}
 
 			safeThis->applySemanticClipSuggestionResult(result);
+		},
+		[safeThis, suggestionGeneration](ReviewScoringProgressUpdate progress) mutable {
+			if (!safeThis || !safeThis->semanticSuggestionInProgress ||
+			    safeThis->semanticSuggestionProgressGeneration != suggestionGeneration)
+				return;
+			safeThis->updateSemanticSuggestionProgress(progress);
 		});
 }
 
@@ -633,6 +717,7 @@ CurationSettings UploadReviewDialog::curationSettings() const
 	settings.clipDurations.clear();
 	for (const auto &range : ranges)
 		settings.clipDurations.append(range);
+	settings.uploadClipRangesIndependently = settings.clipDurations.size() > 1;
 
 	settings.genre = genreInput->currentText();
 	settings.curationPreset = curationPresetInput ? curationPresetInput->currentData().toString()

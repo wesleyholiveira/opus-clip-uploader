@@ -29,6 +29,17 @@ QString Curation::Scoring::localEmbeddingBackendFromConfig()
 	return backend;
 }
 
+
+QString Curation::Scoring::localRerankerBackendFromConfig()
+{
+	QString backend = PluginConfig::getValue(QString::fromLatin1(CONFIG_LOCAL_RERANKER_BACKEND),
+						  QString::fromLatin1(LOCAL_RERANKER_BACKEND_DISABLED))
+			  .trimmed();
+	if (backend.isEmpty())
+		backend = QString::fromLatin1(LOCAL_RERANKER_BACKEND_DISABLED);
+	return backend;
+}
+
 LlamaServerEmbeddingProviderOptions Curation::Scoring::llamaServerEmbeddingOptionsFromConfig()
 {
 	LlamaServerEmbeddingProviderOptions options;
@@ -38,6 +49,19 @@ LlamaServerEmbeddingProviderOptions Curation::Scoring::llamaServerEmbeddingOptio
 	options.modelId = PluginConfig::getValue(QString::fromLatin1(CONFIG_LOCAL_EMBEDDING_MODEL_ID), options.modelId).trimmed();
 	options.timeoutMs = configInt(QString::fromLatin1(CONFIG_LOCAL_EMBEDDING_TIMEOUT_MS), options.timeoutMs, 1000, 60000);
 	options.maxTextChars = configInt(QString::fromLatin1(CONFIG_LOCAL_EMBEDDING_MAX_TEXT_CHARS), options.maxTextChars,
+					   500, 24000);
+	return options;
+}
+
+LlamaServerRerankerProviderOptions Curation::Scoring::llamaServerRerankerOptionsFromConfig()
+{
+	LlamaServerRerankerProviderOptions options;
+	const QString backend = localRerankerBackendFromConfig();
+	options.enabled = backend == QString::fromLatin1(LOCAL_RERANKER_BACKEND_LLAMA_SERVER);
+	options.endpoint = PluginConfig::getValue(QString::fromLatin1(CONFIG_LOCAL_RERANKER_ENDPOINT), options.endpoint).trimmed();
+	options.modelId = PluginConfig::getValue(QString::fromLatin1(CONFIG_LOCAL_RERANKER_MODEL_ID), options.modelId).trimmed();
+	options.timeoutMs = configInt(QString::fromLatin1(CONFIG_LOCAL_RERANKER_TIMEOUT_MS), options.timeoutMs, 1000, 120000);
+	options.maxTextChars = configInt(QString::fromLatin1(CONFIG_LOCAL_RERANKER_MAX_TEXT_CHARS), options.maxTextChars,
 					   500, 24000);
 	return options;
 }

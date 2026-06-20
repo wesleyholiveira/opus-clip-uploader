@@ -25,6 +25,8 @@ public:
 	virtual bool isAvailable() const = 0;
 	virtual QString modelId() const = 0;
 	virtual double score(const QString &query, const QString &candidateText) const = 0;
+	virtual QVector<double> scoreBatch(const QString &query, const QVector<QString> &candidateTexts) const;
+	virtual QString lastError() const { return {}; }
 };
 
 class SemanticRerankerStage {
@@ -34,6 +36,9 @@ public:
 
 private:
 	QString queryForContext(const SemanticRerankerContext &context) const;
+	QString badClipQueryForContext(const SemanticRerankerContext &context) const;
+	QString documentForCandidate(const ClipCandidate &candidate) const;
+	double rerankerScoreFromRaw(double rawScore, double normalizedScore, double badClipScore) const;
 	double combineFinalScore(const ClipCandidate &candidate, double rerankerScore, double contributionWeight) const;
 };
 

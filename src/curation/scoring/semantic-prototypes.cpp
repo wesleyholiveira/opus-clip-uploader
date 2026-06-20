@@ -31,13 +31,60 @@ const SemanticPrototypeSet &Curation::Scoring::defaultSemanticPrototypes()
 			QStringLiteral("the speaker manages stream logistics"),
 			QStringLiteral("the speaker talks about invites, lobby, queue, donations or subscriptions"),
 			QStringLiteral("chat backlog or stream management without a meaningful answer"),
+			QStringLiteral("the speaker talks about moderators, spam, bans or live rules"),
 			QStringLiteral("o streamer organiza convite lobby fila ou operação da live"),
+			QStringLiteral("o streamer agradece seguidores inscrições doações ou moedas"),
+			QStringLiteral("o streamer fala sobre moderação spam castigo banimento ou regras da live"),
 		},
 		{
 			QStringLiteral("the speaker moves to another viewer question"),
 			QStringLiteral("the conversation changes to a different topic"),
 			QStringLiteral("a new unrelated chat message starts"),
 			QStringLiteral("o assunto muda para outra pergunta"),
+		},
+		{
+			QStringLiteral("a strong short-form clip with a concrete problem, useful insight, and clear takeaway"),
+			QStringLiteral("one focused answer that teaches, advises, or emotionally resolves a real viewer problem"),
+			QStringLiteral("a meaningful personal reflection that builds to a practical lesson and conclusion"),
+			QStringLiteral("practical advice that helps the viewer decide what to do and why"),
+			QStringLiteral("mental health advice with careful reasoning and a responsible conclusion"),
+			QStringLiteral("a viewer shares a real dilemma and the speaker gives a complete helpful answer"),
+			QStringLiteral("um conselho útil com problema claro, explicação e conclusão"),
+			QStringLiteral("uma reflexão profunda que vira aprendizado prático no final"),
+			QStringLiteral("um desabafo real com resposta empática útil e fechamento"),
+			QStringLiteral("uma dica de saúde mental com começo meio e fim"),
+			QStringLiteral("um papo filosófico ou emocional com gancho e conclusão forte"),
+		},
+		{
+			QStringLiteral("the clip opens immediately with a compelling question, conflict, or emotional tension"),
+			QStringLiteral("the first sentence creates curiosity before any greeting or setup"),
+			QStringLiteral("the opening line makes the viewer want to know the answer"),
+			QStringLiteral("a surprising, vulnerable, or philosophical statement starts the clip"),
+			QStringLiteral("um gancho inicial direto com pergunta conflito ou tensão emocional"),
+			QStringLiteral("o corte começa com uma pergunta interessante antes de qualquer saudação"),
+		},
+		{
+			QStringLiteral("the answer reaches a natural conclusion with no new topic afterwards"),
+			QStringLiteral("the speaker resolves the point smoothly before the clip ends"),
+			QStringLiteral("a complete thought with a satisfying ending and final takeaway"),
+			QStringLiteral("a resposta termina com conclusão natural e sem puxar outro assunto"),
+			QStringLiteral("o raciocínio fecha suavemente sem virar saudação moderação ou chat"),
+		},
+		{
+			QStringLiteral("only greeting viewers without useful content"),
+			QStringLiteral("a clip starts with a donation thank you follower goal or chat greeting"),
+			QStringLiteral("a transcript excerpt mixes several unrelated chat interactions"),
+			QStringLiteral("thanking donations followers subscribers or coins"),
+			QStringLiteral("live moderation instructions about spam bans timeouts or rules"),
+			QStringLiteral("stream status updates follower goals chat backlog or reading chat"),
+			QStringLiteral("casual banter with several unrelated viewers"),
+			QStringLiteral("a clip that ends one chat topic and starts another unrelated video moment"),
+			QStringLiteral("a response with no actionable takeaway, no emotional payoff, and no conclusion"),
+			QStringLiteral("apenas cumprimentos agradecimentos ou metas da live"),
+			QStringLiteral("agradecimento por doação seguidores moedas inscrições ou subs"),
+			QStringLiteral("instruções de moderação spam castigo banimento ou regras da live"),
+			QStringLiteral("conversa casual com várias pessoas sem conselho nem conclusão"),
+			QStringLiteral("um corte que termina um assunto e começa outro assunto sem relação"),
 		}
 	};
 	return prototypes;
@@ -56,7 +103,9 @@ QStringList Curation::Scoring::targetPrototypesForPreset(const QString &presetId
 	if (presetId == QStringLiteral("viewer_message_response")) {
 		prototypes << QStringLiteral("a viewer message followed by the speaker's direct response")
 			   << QStringLiteral("one complete answer to a single viewer question")
-			   << QStringLiteral("uma mensagem de espectador seguida por resposta direta");
+			   << QStringLiteral("one useful response to one viewer problem with clear payoff")
+			   << QStringLiteral("uma mensagem de espectador seguida por resposta direta")
+			   << QStringLiteral("um conselho útil para uma única pergunta do chat");
 	} else if (presetId == QStringLiteral("advice_answer")) {
 		prototypes << QStringLiteral("practical advice with a clear recommendation")
 			   << QStringLiteral("a useful answer explaining what someone should do");
