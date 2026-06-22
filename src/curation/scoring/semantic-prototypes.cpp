@@ -31,6 +31,25 @@ static QStringList uniqueTexts(QStringList values)
 	return result;
 }
 
+
+static bool looksLikeGenericClipInstruction(const QString &target)
+{
+	const QString value = target.toLower().simplified();
+	if (value.isEmpty())
+		return false;
+	const bool instructionShape = value.contains(QStringLiteral("find one")) ||
+		value.contains(QStringLiteral("continuous")) || value.contains(QStringLiteral("unbroken")) ||
+		value.contains(QStringLiteral("single viewer message")) || value.contains(QStringLiteral("complete response")) ||
+		value.contains(QStringLiteral("prefer the clearest")) || value.contains(QStringLiteral("clip built"));
+	const bool realTopic = value.contains(QStringLiteral("mental")) || value.contains(QStringLiteral("saude")) ||
+		value.contains(QStringLiteral("saúde")) || value.contains(QStringLiteral("empathy")) ||
+		value.contains(QStringLiteral("empatia")) || value.contains(QStringLiteral("therapy")) ||
+		value.contains(QStringLiteral("terapia")) || value.contains(QStringLiteral("anxiety")) ||
+		value.contains(QStringLiteral("ansiedade")) || value.contains(QStringLiteral("depress")) ||
+		value.contains(QStringLiteral("relationship")) || value.contains(QStringLiteral("relacionamento"));
+	return instructionShape && !realTopic;
+}
+
 static QStringList localizedTargetHints(const QString &target, bool portuguese)
 {
 	QStringList hints;
@@ -382,8 +401,10 @@ QStringList Curation::Scoring::targetPrototypesForPreset(const QString &presetId
 	const QString &languageCode)
 {
 	QStringList prototypes;
-	const QString target = mainTarget.trimmed();
+	QString target = mainTarget.trimmed();
 	const bool portuguese = isPortugueseSemanticLanguage(languageCode);
+	if (looksLikeGenericClipInstruction(target))
+		target.clear();
 	const QStringList localizedHints = localizedTargetHints(target, portuguese);
 	const QString localizedTarget = localizedHints.isEmpty() ? target : localizedHints.join(QStringLiteral(", "));
 

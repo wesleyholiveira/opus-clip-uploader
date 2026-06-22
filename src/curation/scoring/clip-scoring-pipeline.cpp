@@ -257,7 +257,13 @@ ClipScoringResult ClipScoringPipeline::score(const RecordingTranscript &transcri
 	if (std::all_of(candidates.constBegin(), candidates.constEnd(), [](const ClipCandidate &candidate) {
 		    return candidate.rejectedByQualityGate;
 	    })) {
-		result.summary = noCandidateSummary(QStringLiteral("semantic_embedding_required_but_unavailable"), candidates);
+		const bool anyFailed = std::any_of(candidates.constBegin(), candidates.constEnd(), [](const ClipCandidate &candidate) {
+			return candidate.rejectionReason == QStringLiteral("semantic_embedding_failed");
+		});
+		result.summary = noCandidateSummary(anyFailed
+				? QStringLiteral("semantic_embedding_required_but_failed")
+				: QStringLiteral("semantic_embedding_required_but_unavailable"),
+			candidates);
 		return result;
 	}
 	candidates.erase(std::remove_if(candidates.begin(), candidates.end(), [](const ClipCandidate &candidate) {
@@ -383,10 +389,11 @@ CandidateQualityGateOptions ClipScoringPipeline::qualityGateOptionsFromOptions(
 			std::max(qualityOptions.minConditionalRerankerRawScoreWhenAvailable, 0.68);
 	}
 	if (isViewerMessagePreset(options)) {
-		// Recovery is a safety net only. With the beam architecture we should prefer
-		// another generated/refined variant over resurrecting multiple weak arcs.
-		qualityOptions.maxFailsafeRecoveredCandidates =
-			std::min(qualityOptions.maxFailsafeRecoveredCandidates, 1);
+		// Viewer-message markers must be produced by a real contextual arc, not by
+		// resurrecting a candidate that the gate already rejected. With the beam
+		// architecture, a zero-marker result is safer than applying an off-topic or
+		// multi-subject range.
+		qualityOptions.maxFailsafeRecoveredCandidates = 0;
 	}
 	return qualityOptions;
 }
@@ -414,15 +421,12 @@ QVector<ClipCandidate> ClipScoringPipeline::candidatesFromSemanticCoarseRegions(
 		};
 	} else if (viewerPreset) {
 		targetDurations = {
+			std::clamp(14.0, options.generation.minDurationSec, options.generation.maxDurationSec),
 			std::clamp(18.0, options.generation.minDurationSec, options.generation.maxDurationSec),
 			std::clamp(24.0, options.generation.minDurationSec, options.generation.maxDurationSec),
 			std::clamp(32.0, options.generation.minDurationSec, options.generation.maxDurationSec),
 			std::clamp(45.0, options.generation.minDurationSec, options.generation.maxDurationSec),
 			std::clamp(60.0, options.generation.minDurationSec, options.generation.maxDurationSec),
-			std::clamp(90.0, options.generation.minDurationSec, options.generation.maxDurationSec),
-			std::clamp(120.0, options.generation.minDurationSec, options.generation.maxDurationSec),
-			std::clamp(150.0, options.generation.minDurationSec, options.generation.maxDurationSec),
-			options.generation.maxDurationSec,
 		};
 	} else {
 		targetDurations = {
@@ -649,9 +653,12 @@ QVector<ClipCandidate> ClipScoringPipeline::expandCandidateVariants(const Transc
 	}
 
 	QVector<double> durations;
-	for (const double duration : QVector<double>{18.0, 24.0, 32.0, 45.0, 60.0, 90.0, 120.0,
-		seedDurationSec, options.generation.maxDurationSec}) {
-		if (duration >= options.generation.minDurationSec && duration <= options.generation.maxDurationSec)
+	const QVector<double> candidateDurations = viewerPreset
+		? QVector<double>{14.0, 18.0, 24.0, 32.0, 45.0, 60.0, seedDurationSec}
+		: QVector<double>{18.0, 24.0, 32.0, 45.0, 60.0, 90.0, 120.0, seedDurationSec, options.generation.maxDurationSec};
+	for (const double duration : candidateDurations) {
+		if (duration >= options.generation.minDurationSec && duration <= options.generation.maxDurationSec &&
+		    (!viewerPreset || duration <= 68.0))
 			appendUniqueValue(durations, duration);
 	}
 
@@ -767,9 +774,20 @@ QVector<ClipCandidate> ClipScoringPipeline::refineCandidatesToSemanticTopicSpans
 		QVector<IndexedCandidate> chunk;
 		chunk.reserve(std::max(0, last - first));
 		for (int i = first; i < last; ++i) {
-			ClipCandidate topicCandidate = refineCandidateToSemanticTopicSpan(index, options, source.at(i));
-			if (!isStructurallyViable(topicCandidate, options))
-				topicCandidate = source.at(i);
+			const ClipCandidate originalCandidate = source.at(i);
+			ClipCandidate topicCandidate = refineCandidateToSemanticTopicSpan(index, options, originalCandidate);
+			if (!isStructurallyViable(topicCandidate, options)) {
+				ClipCandidate diagnosticFallback = originalCandidate;
+				for (const QString &evidence : topicCandidate.evidence) {
+					if (evidence.startsWith(QStringLiteral("exchange_arc_")) ||
+					    evidence.startsWith(QStringLiteral("quality_rejected:")) ||
+					    evidence == QStringLiteral("candidate_contextual_refiner_unviable"))
+						diagnosticFallback.evidence.append(evidence);
+				}
+				diagnosticFallback.evidence.append(QStringLiteral("exchange_arc_refiner_unviable_fallback_preserved"));
+				diagnosticFallback.evidence.removeDuplicates();
+				topicCandidate = diagnosticFallback;
+			}
 			chunk.append(IndexedCandidate{i, topicCandidate});
 		}
 		return chunk;
@@ -884,15 +902,65 @@ ClipCandidate ClipScoringPipeline::refineCandidateToSemanticTopicSpan(const Tran
 	refinerOptions.qualityGate = options.qualityGate;
 	refinerOptions.embeddingProvider = options.embeddingProvider;
 
+	ClipCandidate refinerInput = candidate;
+	if (isViewerMessagePreset(options)) {
+		refinerInput.evidence.append(QStringLiteral("exchange_arc_role_classifier:v20_pipeline_entered_refiner"));
+		refinerInput.evidence.removeDuplicates();
+	}
+
 	ExchangeArcBoundaryRefiner refiner;
-	ClipCandidate refined = refiner.refine(index, candidate, refinerOptions);
+	ClipCandidate refined = refiner.refine(index, refinerInput, refinerOptions);
+
+	auto preserveRefinerEvidence = [&candidate](const ClipCandidate &source, const QString &reason) {
+		ClipCandidate diagnostic = candidate;
+
+		// Preserve the arc contract only when the refined range is still a usable
+		// replacement. If the refiner output is structurally unviable, copying its arc
+		// scores to the original range makes a mixed-topic fallback look valid and can
+		// pass the quality gate with the wrong boundaries. Keep the evidence/graph,
+		// but do not bless the original range as a valid contextual arc.
+		const bool copyArcContract = reason != QStringLiteral("exchange_arc_refiner_output_not_structurally_viable");
+		if (copyArcContract && source.scores.arcCompleteness > diagnostic.scores.arcCompleteness) {
+			diagnostic.scores.arcOpening = source.scores.arcOpening;
+			diagnostic.scores.arcDevelopment = source.scores.arcDevelopment;
+			diagnostic.scores.arcConclusion = source.scores.arcConclusion;
+			diagnostic.scores.arcBoundaryCleanliness = source.scores.arcBoundaryCleanliness;
+			diagnostic.scores.arcTailRisk = source.scores.arcTailRisk;
+			diagnostic.scores.arcCompleteness = source.scores.arcCompleteness;
+		}
+
+		for (const QString &evidence : source.evidence) {
+			if (evidence.startsWith(QStringLiteral("exchange_arc_")) ||
+			    evidence == QStringLiteral("candidate_contextual_refiner_unviable"))
+				diagnostic.evidence.append(evidence);
+		}
+		diagnostic.evidence.append(reason);
+		diagnostic.evidence.removeDuplicates();
+		return diagnostic;
+	};
+
 	if (!isStructurallyViable(refined, options))
-		return candidate;
+		return preserveRefinerEvidence(refined, QStringLiteral("exchange_arc_refiner_output_not_structurally_viable"));
 
 	const bool materiallyChanged = std::fabs(refined.range.startSec - candidate.range.startSec) > 1.0 ||
 		std::fabs(refined.range.endSec - candidate.range.endSec) > 1.0;
 	if (materiallyChanged)
 		return scoreStructurally(index, refined);
+
+	auto isDetailedArcEvidence = [](const QString &evidence) {
+		return evidence.startsWith(QStringLiteral("exchange_arc_state_machine:")) ||
+			evidence.startsWith(QStringLiteral("exchange_arc_window_dfs_graph:")) ||
+			evidence.startsWith(QStringLiteral("exchange_arc_roles:")) ||
+			evidence.startsWith(QStringLiteral("exchange_arc_contextual_role_scores:")) ||
+			evidence.startsWith(QStringLiteral("exchange_arc opening:")) ||
+			evidence.startsWith(QStringLiteral("exchange_arc_boundary")) ||
+			evidence == QStringLiteral("exchange_arc_no_valid_subspan") ||
+			evidence == QStringLiteral("exchange_arc_contextual_dp_subspan_recovered") ||
+			evidence.startsWith(QStringLiteral("exchange_arc_refiner_skipped:"));
+	};
+	const bool hasDetailedArcEvidence = std::any_of(refined.evidence.constBegin(), refined.evidence.constEnd(), isDetailedArcEvidence);
+	if (!hasDetailedArcEvidence && isViewerMessagePreset(options))
+		return preserveRefinerEvidence(refined, QStringLiteral("exchange_arc_refiner_returned_without_detailed_arc_evidence_v20"));
 	return refined;
 }
 
@@ -1174,7 +1242,24 @@ QString ClipScoringPipeline::rejectionSummary(const QVector<ClipCandidate> &cand
 	const int rejectedLimit = static_cast<int>(std::min(static_cast<long long>(3), static_cast<long long>(topRejected.size())));
 	for (int i = 0; i < rejectedLimit; ++i) {
 		const ClipCandidate &candidate = topRejected.at(i);
-		rejectedParts.append(QStringLiteral("%1-%2:%3 final=%4 value=%5 hook=%6 res=%7 meta=%8 raw=%9 defect=%10 openDef=%11 endDef=%12 structDef=%13 margin=%14")
+		QStringList arcEvidence;
+		for (const QString &evidence : candidate.evidence) {
+			if (evidence.startsWith(QStringLiteral("exchange_arc_role_classifier:")) ||
+			    evidence.startsWith(QStringLiteral("exchange_arc_state_machine:")) ||
+			    evidence.startsWith(QStringLiteral("exchange_arc_roles:")) ||
+			    evidence.startsWith(QStringLiteral("exchange_arc_contextual_role_scores:")) ||
+			    evidence.startsWith(QStringLiteral("exchange_arc_refiner_skipped:")) ||
+			    evidence == QStringLiteral("exchange_arc_refiner_returned_without_arc_evidence") ||
+			    evidence == QStringLiteral("exchange_arc_refiner_returned_without_detailed_arc_evidence_v20") ||
+			    evidence == QStringLiteral("exchange_arc_refiner_output_not_structurally_viable") ||
+			    evidence == QStringLiteral("exchange_arc_no_valid_subspan") ||
+			    evidence == QStringLiteral("exchange_arc_contextual_dp_subspan_recovered")) {
+				arcEvidence.append(evidence.left(180));
+			}
+			if (arcEvidence.size() >= 6)
+				break;
+		}
+		rejectedParts.append(QStringLiteral("%1-%2:%3 final=%4 value=%5 hook=%6 res=%7 meta=%8 raw=%9 defect=%10 openDef=%11 endDef=%12 structDef=%13 margin=%14 arcEvidence=%15")
 			.arg(QString::number(candidate.range.startSec, 'f', 1))
 			.arg(QString::number(candidate.range.endSec, 'f', 1))
 			.arg(candidate.rejectionReason.left(40))
@@ -1188,7 +1273,8 @@ QString ClipScoringPipeline::rejectionSummary(const QVector<ClipCandidate> &cand
 			.arg(QString::number(candidate.scores.rerankerOpeningDefect, 'f', 2))
 			.arg(QString::number(candidate.scores.rerankerEndingDefect, 'f', 2))
 			.arg(QString::number(candidate.scores.rerankerStructureDefect, 'f', 2))
-			.arg(QString::number(candidate.scores.rerankerClipQualityMargin, 'f', 2)));
+			.arg(QString::number(candidate.scores.rerankerClipQualityMargin, 'f', 2))
+			.arg(arcEvidence.isEmpty() ? QStringLiteral("none") : arcEvidence.join(QStringLiteral("|"))));
 	}
 
 	QString summary = QStringLiteral("candidates=%1 passed=%2 rejected=%3 bestFinal=%4 bestSemantic=%5 bestReranker=%6 bestRaw=%7 bestValue=%8 bestHook=%9 bestOpeningHook=%10 bestResolution=%11 bestEndingResolution=%12 bestMetaNoise=%13 bestBad=%14 bestMargin=%15 reasons=[%16]")

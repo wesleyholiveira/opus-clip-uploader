@@ -30,8 +30,8 @@
 /cmake/.CMakeBuildNumber
 !/deps/
 /deps/*
-!/deps/llama.cpp
-!/deps/whisper.cpp
+/deps/llama.cpp
+/deps/whisper.cpp
 
 !/models/
 /models/**

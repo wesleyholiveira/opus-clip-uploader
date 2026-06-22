@@ -67,6 +67,121 @@ static bool hasValidContextualStateMachine(const ClipCandidate &candidate)
 	return evidenceContainsFragment(candidate, QStringLiteral("exchange_arc_state_machine:valid"));
 }
 
+static bool requiresStrictContextualArc(const CandidateQualityGateOptions &options)
+{
+	return options.presetId == QStringLiteral("viewer_message_response");
+}
+
+static bool hasCompleteContextualArc(const ClipCandidate &candidate)
+{
+	return candidate.scores.arcCompleteness > 0.0 && hasValidContextualStateMachine(candidate) &&
+		!hasInvalidContextualStateMachine(candidate) && !evidenceContainsFragment(candidate, QStringLiteral("flags:implicit_opening"));
+}
+
+static bool hasImplicitContextualOpening(const ClipCandidate &candidate)
+{
+	return evidenceContainsFragment(candidate, QStringLiteral("flags:implicit_opening"));
+}
+
+static QString arcRolesEvidence(const ClipCandidate &candidate)
+{
+	for (const QString &evidence : candidate.evidence) {
+		if (evidence.startsWith(QStringLiteral("exchange_arc_roles:")))
+			return evidence;
+	}
+	return {};
+}
+
+static int arcRoleCount(const ClipCandidate &candidate, const QString &role)
+{
+	const QString roles = arcRolesEvidence(candidate);
+	if (roles.isEmpty())
+		return 0;
+	return static_cast<int>(roles.count(QStringLiteral(":%1").arg(role)));
+}
+
+static bool hasRecoveredContextualDpSubspan(const ClipCandidate &candidate)
+{
+	return hasEvidence(candidate, QStringLiteral("exchange_arc_contextual_dp_subspan_recovered")) &&
+		hasValidContextualStateMachine(candidate);
+}
+
+static bool hasStrongRecoveredContextualDpArc(const ClipCandidate &candidate)
+{
+	if (!hasRecoveredContextualDpSubspan(candidate))
+		return false;
+
+	const double duration = durationSec(candidate);
+	const double semanticMeta = std::max({candidate.scores.semanticMetaNoise,
+		candidate.scores.semanticOpeningMetaNoise, candidate.scores.semanticEndingMetaNoise});
+	const double semanticUseful = std::max({candidate.scores.semanticClipValue, candidate.scores.semanticHook,
+		candidate.scores.semanticResolution, candidate.scores.semanticTarget});
+
+	// DP-recovered viewer arcs may still have local roles reported as resolution
+	// because multilingual embedding role scores are nearly tied. Treat the DP
+	// state-machine contract as authoritative only when it is compact, has a real
+	// body/payoff score, and does not look meta dominated. This prevents the old
+	// resolution-only recovery from returning, while allowing valid Q&A answers
+	// whose first short viewer question was mislabeled as resolution.
+	return duration <= 42.0 && candidate.scores.arcCompleteness >= 0.50 &&
+		candidate.scores.arcOpening >= 0.48 && candidate.scores.arcDevelopment >= 0.60 &&
+		candidate.scores.arcConclusion >= 0.56 && candidate.scores.arcBoundaryCleanliness >= 0.44 &&
+		candidate.scores.arcTailRisk <= 0.58 && semanticUseful >= semanticMeta - 0.02 &&
+		!hasImplicitContextualOpening(candidate);
+}
+
+static bool hasResolutionPlateauWithoutOpening(const ClipCandidate &candidate)
+{
+	const QString roles = arcRolesEvidence(candidate);
+	if (roles.isEmpty())
+		return false;
+	const int resolutionCount = arcRoleCount(candidate, QStringLiteral("resolution"));
+	const int openingCount = arcRoleCount(candidate, QStringLiteral("opening"));
+	const int developmentCount = arcRoleCount(candidate, QStringLiteral("development"));
+	const bool startsInsideBody = roles.contains(QStringLiteral("exchange_arc_roles:0:development")) ||
+		roles.contains(QStringLiteral("exchange_arc_roles:0:resolution"));
+	return startsInsideBody && openingCount <= 0 && resolutionCount >= 3 &&
+		(durationSec(candidate) >= 26.0 || candidate.scores.maxInternalPauseSec >= 6.0 || developmentCount <= 1);
+}
+
+
+static bool hasSpecificMainTarget(const QString &target)
+{
+	QString value = target.toLower().simplified();
+	if (value.isEmpty())
+		return false;
+	const bool looksLikeGeneratedInstruction =
+		value.contains(QStringLiteral("find one")) ||
+		value.contains(QStringLiteral("continuous")) ||
+		value.contains(QStringLiteral("unbroken")) ||
+		value.contains(QStringLiteral("single viewer message")) ||
+		value.contains(QStringLiteral("complete response")) ||
+		value.contains(QStringLiteral("prefer the clearest")) ||
+		value.contains(QStringLiteral("clip built"));
+	const bool hasRealTopic = value.contains(QStringLiteral("mental")) || value.contains(QStringLiteral("saude")) ||
+		value.contains(QStringLiteral("saúde")) || value.contains(QStringLiteral("empathy")) ||
+		value.contains(QStringLiteral("empatia")) || value.contains(QStringLiteral("therapy")) ||
+		value.contains(QStringLiteral("terapia")) || value.contains(QStringLiteral("anxiety")) ||
+		value.contains(QStringLiteral("ansiedade")) || value.contains(QStringLiteral("depress")) ||
+		value.contains(QStringLiteral("relationship")) || value.contains(QStringLiteral("relacionamento"));
+	if (looksLikeGeneratedInstruction && !hasRealTopic)
+		return false;
+	const QStringList genericTokens = {
+		QStringLiteral("q&a"), QStringLiteral("qna"), QStringLiteral("just chatting"),
+		QStringLiteral("viewer_message_response"), QStringLiteral("viewer message"),
+		QStringLiteral("single viewer message"), QStringLiteral("viewer issue"),
+		QStringLiteral("complete response"), QStringLiteral("one continuous"), QStringLiteral("unbroken clip"),
+		QStringLiteral("continuous clip"), QStringLiteral("clip built"), QStringLiteral("find one"),
+		QStringLiteral("prefer the clearest"), QStringLiteral("emotionally consequential"),
+		QStringLiteral("motivational speech"), QStringLiteral("advices"), QStringLiteral("advice"),
+	};
+	for (const QString &token : genericTokens)
+		value.remove(token);
+	value.remove(QLatin1Char(','));
+	value.remove(QLatin1Char(';'));
+	value.remove(QLatin1Char('.'));
+	return value.simplified().size() >= 5;
+}
 
 static bool hasStrictReliableTargetSupport(const ClipCandidate &candidate,
 	const CandidateQualityGateOptions &options)
@@ -286,12 +401,22 @@ QString CandidateQualityGate::rejectionReason(const ClipCandidate &candidate,
 	const double positive = semanticPositiveScore(candidate);
 	const double negative = semanticNegativeScore(candidate);
 	const double semanticMargin = positive - negative;
-	const bool reliableTargetMode = viewerPreset && options.reliableMainTarget && !options.mainTarget.trimmed().isEmpty();
+	const bool reliableTargetMode = viewerPreset && options.reliableMainTarget && hasSpecificMainTarget(options.mainTarget);
 
+	if (requiresStrictContextualArc(options) && candidate.semanticScoringAvailable && !hasCompleteContextualArc(candidate))
+		return candidate.scores.arcCompleteness <= 0.0 ? QStringLiteral("missing_contextual_arc")
+								   : QStringLiteral("invalid_contextual_arc");
+	if (viewerPreset && durationSec(candidate) >= 75.0 &&
+	    (candidate.scores.arcCompleteness < 0.70 || candidate.scores.maxInternalPauseSec >= 4.0 ||
+	     (candidate.scores.topicContinuity > 0.0 && candidate.scores.topicContinuity < 0.84)))
+		return QStringLiteral("overlong_viewer_arc");
+	if (viewerPreset && hasImplicitContextualOpening(candidate))
+		return QStringLiteral("implicit_opening_not_allowed");
+	if (viewerPreset && hasResolutionPlateauWithoutOpening(candidate) &&
+	    !hasStrongRecoveredContextualDpArc(candidate))
+		return QStringLiteral("resolution_plateau_without_opening");
 	if (reliableTargetMode && candidate.semanticScoringAvailable && !hasStrictReliableTargetSupport(candidate, options))
 		return QStringLiteral("semantic_target_not_specific");
-	if (reliableTargetMode && candidate.scores.arcCompleteness <= 0.0 && !hasValidContextualStateMachine(candidate))
-		return QStringLiteral("missing_contextual_arc");
 
 	if (options.requireSemanticTargetWhenAvailable && options.reliableMainTarget && candidate.semanticScoringAvailable &&
 	    candidate.scores.semanticTarget < options.minSemanticTargetWhenAvailable && !usefulArc)
@@ -504,6 +629,8 @@ bool CandidateQualityGate::isFailsafeRecoverable(const ClipCandidate &candidate,
 		return false;
 	if (candidate.rejectedAsNoise || candidate.scores.noise >= options.maxNoiseScore)
 		return false;
+	if (requiresStrictContextualArc(options) && !hasCompleteContextualArc(candidate))
+		return false;
 	if (candidate.rejectionReason == QStringLiteral("reranker_failed") ||
 	    candidate.rejectionReason == QStringLiteral("reranker_unavailable") ||
 	    candidate.rejectionReason == QStringLiteral("too_short") ||
@@ -511,6 +638,13 @@ bool CandidateQualityGate::isFailsafeRecoverable(const ClipCandidate &candidate,
 	    candidate.rejectionReason == QStringLiteral("noise_or_stream_management") ||
 	    candidate.rejectionReason == QStringLiteral("weak_social_opening") ||
 	    candidate.rejectionReason == QStringLiteral("exchange_arc_degenerate_roles") ||
+	    candidate.rejectionReason == QStringLiteral("missing_contextual_arc") ||
+	    candidate.rejectionReason == QStringLiteral("invalid_contextual_arc") ||
+	    candidate.rejectionReason == QStringLiteral("implicit_opening_not_allowed") ||
+	    candidate.rejectionReason == QStringLiteral("resolution_plateau_without_opening") ||
+	    candidate.rejectionReason == QStringLiteral("semantic_target_not_specific") ||
+	    candidate.rejectionReason == QStringLiteral("semantic_target_mismatch") ||
+	    candidate.rejectionReason == QStringLiteral("overlong_viewer_arc") ||
 	    candidate.rejectionReason == QStringLiteral("overextended_tail_after_resolution"))
 		return false;
 	if (hasUnresolvedInternalPause(candidate, options) || hasDegenerateArcShape(candidate, options) ||
@@ -592,6 +726,8 @@ bool CandidateQualityGate::isLastResortRecoverable(const ClipCandidate &candidat
 	// saturated reranker defects remain blocked.
 	if (!candidate.rejectedByQualityGate || options.presetId != QStringLiteral("viewer_message_response"))
 		return false;
+	if (!hasCompleteContextualArc(candidate))
+		return false;
 	if (!isWeakConclusionReason(candidate.rejectionReason) &&
 	    candidate.rejectionReason != QStringLiteral("weak_clip_value"))
 		return false;
@@ -648,6 +784,8 @@ bool CandidateQualityGate::isCollapsedRoleRecoverable(const ClipCandidate &candi
 	// opening/body/payoff signal; otherwise they are usually mid-answer clips.
 	if (!candidate.rejectedByQualityGate || options.presetId != QStringLiteral("viewer_message_response"))
 		return false;
+	if (!hasCompleteContextualArc(candidate))
+		return false;
 	if (candidate.rejectionReason != QStringLiteral("exchange_arc_degenerate_roles"))
 		return false;
 	if (hasResolutionOnlyArcRoles(candidate) && !hasStrongRepairedResolutionOnlyArc(candidate))
@@ -702,6 +840,8 @@ bool CandidateQualityGate::hasReliableConclusionFallback(const ClipCandidate &ca
 {
 	if (!candidate.semanticScoringAvailable)
 		return false;
+	if (hasImplicitContextualOpening(candidate) || hasResolutionPlateauWithoutOpening(candidate))
+		return false;
 	const double semanticResolution = std::max(candidate.scores.semanticEndingResolution, candidate.scores.semanticResolution);
 	const double endingDefect = std::max(candidate.scores.semanticEndingMetaNoise, candidate.scores.semanticEndingTopicShift);
 	const bool semanticConclusion = semanticResolution >= options.minFailsafeEndingResolution - 0.03 &&
@@ -719,6 +859,8 @@ bool CandidateQualityGate::hasWeakConclusionFailsafe(const ClipCandidate &candid
 	const CandidateQualityGateOptions &options) const
 {
 	if (options.presetId != QStringLiteral("viewer_message_response") || !candidate.semanticScoringAvailable)
+		return false;
+	if (hasImplicitContextualOpening(candidate) || hasResolutionPlateauWithoutOpening(candidate))
 		return false;
 	if (options.reliableMainTarget && !options.mainTarget.trimmed().isEmpty() &&
 	    (candidate.scores.arcCompleteness <= 0.0 || !hasStrictReliableTargetSupport(candidate, options)))
@@ -761,6 +903,8 @@ bool CandidateQualityGate::hasSemanticBackedArcFallback(const ClipCandidate &can
 	if (options.presetId != QStringLiteral("viewer_message_response") || !candidate.semanticScoringAvailable)
 		return false;
 	if (candidate.scores.arcCompleteness <= 0.0)
+		return false;
+	if (hasImplicitContextualOpening(candidate) || hasResolutionPlateauWithoutOpening(candidate))
 		return false;
 	if (options.reliableMainTarget && !options.mainTarget.trimmed().isEmpty() &&
 	    (!hasValidContextualStateMachine(candidate) || !hasStrictReliableTargetSupport(candidate, options)))
@@ -825,6 +969,8 @@ bool CandidateQualityGate::hasCuriosityArcFallback(const ClipCandidate &candidat
 		return false;
 	if (candidate.scores.arcCompleteness <= 0.0)
 		return false;
+	if (hasImplicitContextualOpening(candidate) || hasResolutionPlateauWithoutOpening(candidate))
+		return false;
 	if (hasUnresolvedInternalPause(candidate, options) || hasDegenerateArcShape(candidate, options) ||
 	    hasWeakSocialOpening(candidate, options) || hasOverextendedTail(candidate, options))
 		return false;
@@ -861,6 +1007,9 @@ bool CandidateQualityGate::hasUsefulExchangeArc(const ClipCandidate &candidate,
 	const CandidateQualityGateOptions &options) const
 {
 	if (candidate.scores.arcCompleteness <= 0.0)
+		return false;
+	if (hasInvalidContextualStateMachine(candidate) || hasImplicitContextualOpening(candidate) ||
+	    hasResolutionPlateauWithoutOpening(candidate))
 		return false;
 	if (hasSemanticBackedArcFallback(candidate, options) || hasCuriosityArcFallback(candidate, options))
 		return true;
@@ -967,7 +1116,8 @@ bool CandidateQualityGate::hasDegenerateArcShape(const ClipCandidate &candidate,
 	if (options.presetId != QStringLiteral("viewer_message_response") ||
 	    candidate.scores.arcCompleteness <= 0.0)
 		return false;
-	if (hasInvalidContextualStateMachine(candidate))
+	if (hasInvalidContextualStateMachine(candidate) || hasImplicitContextualOpening(candidate) ||
+	    hasResolutionPlateauWithoutOpening(candidate))
 		return true;
 
 	// The local arc-role classifier is intentionally cheap and can collapse when

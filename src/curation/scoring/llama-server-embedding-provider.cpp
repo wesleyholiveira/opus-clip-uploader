@@ -19,7 +19,6 @@ namespace {
 
 static constexpr int DEFAULT_TIMEOUT_MS = 10000;
 static constexpr int DEFAULT_MAX_TEXT_CHARS = 6000;
-static constexpr int MAX_CONSECUTIVE_FAILURES_BEFORE_UNAVAILABLE = 3;
 
 } // namespace
 
@@ -37,8 +36,12 @@ LlamaServerEmbeddingProvider::LlamaServerEmbeddingProvider(LlamaServerEmbeddingP
 
 bool LlamaServerEmbeddingProvider::isAvailable() const
 {
-	QMutexLocker locker(&stateMutex_);
-	return options_.enabled && !failed_ && normalizedEndpoint(options_.endpoint).isValid();
+	// Availability here means the backend is configured and worth trying.
+	// Do not make transient request failures globally disable the provider:
+	// semantic boundary refinement and semantic scoring can run in parallel, and a
+	// few failed/slow requests must not turn every later candidate into
+	// semantic_embedding_unavailable.
+	return options_.enabled && normalizedEndpoint(options_.endpoint).isValid();
 }
 
 QString LlamaServerEmbeddingProvider::modelId() const
@@ -222,7 +225,11 @@ void LlamaServerEmbeddingProvider::markFailure(const QString &message, bool fata
 	QMutexLocker locker(&stateMutex_);
 	lastError_ = message;
 	++consecutiveFailures_;
-	if (fatal || consecutiveFailures_ >= MAX_CONSECUTIVE_FAILURES_BEFORE_UNAVAILABLE)
+	// Only fatal configuration errors may disable the provider globally. Ordinary
+	// HTTP/parse/timeouts are candidate-level failures and should be reported as
+	// semantic_embedding_failed, not as semantic_embedding_unavailable for the
+	// whole batch.
+	if (fatal)
 		failed_ = true;
 }
 
