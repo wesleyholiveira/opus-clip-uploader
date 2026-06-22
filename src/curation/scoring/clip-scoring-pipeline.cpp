@@ -3,12 +3,17 @@
 #include "curation/scoring/semantic-prototypes.hpp"
 
 #include <QMap>
+#include <QPair>
 #include <QStringList>
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
+#include <future>
 #include <limits>
+#include <thread>
 #include <utility>
+#include <vector>
 
 using namespace Curation::Scoring;
 
@@ -112,6 +117,68 @@ static void clearSelectionMetadata(QVector<ClipCandidate> &candidates)
 	}
 }
 
+
+static bool isViewerMessagePreset(const ClipScoringPipelineOptions &options)
+{
+	return options.scoring.presetId == QStringLiteral("viewer_message_response");
+}
+
+static int boundedWorkerCount(int taskCount, int preferredMaxWorkers)
+{
+	if (taskCount <= 1)
+		return 1;
+	const unsigned int hardware = std::max(1u, std::thread::hardware_concurrency());
+	return std::clamp(taskCount, 1, std::max(1, std::min(preferredMaxWorkers, static_cast<int>(hardware))));
+}
+
+static void appendUniqueValue(QVector<double> &values, double value, double tolerance = 0.25)
+{
+	if (!std::isfinite(value))
+		return;
+	for (const double existing : values) {
+		if (std::fabs(existing - value) <= tolerance)
+			return;
+	}
+	values.append(value);
+}
+
+static void appendUniqueRange(QVector<ClipDuration> &ranges, const ClipDuration &range)
+{
+	if (!std::isfinite(range.startSec) || !std::isfinite(range.endSec) || range.endSec <= range.startSec)
+		return;
+	for (const ClipDuration &existing : ranges) {
+		if (std::fabs(existing.startSec - range.startSec) < 0.75 && std::fabs(existing.endSec - range.endSec) < 0.75)
+			return;
+	}
+	ranges.append(range);
+}
+
+static bool rangeIsWithinDurationLimits(const ClipDuration &range, const CandidateGenerationOptions &options)
+{
+	const double durationSec = range.endSec - range.startSec;
+	return durationSec >= options.minDurationSec && durationSec <= options.maxDurationSec + 0.50;
+}
+
+static ClipDuration normalizedVariantRange(const TranscriptIndex &index, const CandidateGenerationOptions &options,
+	const ClipDuration &candidateRange, const ClipDuration &localSearchRange)
+{
+	ClipDuration range = candidateRange;
+	if (range.startSec < localSearchRange.startSec) {
+		const double shift = localSearchRange.startSec - range.startSec;
+		range.startSec += shift;
+		range.endSec += shift;
+	}
+	if (range.endSec > localSearchRange.endSec) {
+		const double shift = range.endSec - localSearchRange.endSec;
+		range.startSec -= shift;
+		range.endSec -= shift;
+	}
+	range = index.clampRange(range, localSearchRange);
+	if (!rangeIsWithinDurationLimits(range, options))
+		return {};
+	return range;
+}
+
 } // namespace
 
 ClipScoringResult ClipScoringPipeline::score(const RecordingTranscript &transcript,
@@ -162,6 +229,10 @@ ClipScoringResult ClipScoringPipeline::score(const RecordingTranscript &transcri
 	candidates = ranker.rank(std::move(candidates), preSemanticRankingOptionsFromOptions(options));
 	clearSelectionMetadata(candidates);
 	reportPipelineProgress(options, QStringLiteral("Candidate marker windows after pre-ranking: %1").arg(static_cast<int>(candidates.size())), 36);
+	if (semanticBackendAvailable) {
+		candidates = expandCandidateBeam(index, options, std::move(candidates));
+		reportPipelineProgress(options, QStringLiteral("Expanded candidate beam variants: %1").arg(static_cast<int>(candidates.size())), 37);
+	}
 	if (semanticBackendAvailable && options.embeddingProvider && options.embeddingProvider->isAvailable()) {
 		candidates = refineCandidatesToSemanticTopicSpans(index, options, std::move(candidates));
 		reportPipelineProgress(options, QStringLiteral("Refined candidate marker windows to semantic topic spans: %1").arg(static_cast<int>(candidates.size())), 38);
@@ -173,16 +244,13 @@ ClipScoringResult ClipScoringPipeline::score(const RecordingTranscript &transcri
 		return result;
 	}
 
-	SemanticClipScorer semanticScorer;
-	const SemanticScoringContext semanticContext = semanticContextFromOptions(options);
 	const int semanticTotal = static_cast<int>(candidates.size());
-	for (int i = 0; i < semanticTotal; ++i) {
-		if (stopIfCanceled(options, result, QStringLiteral("canceled_during_semantic_scoring")))
-			return result;
-		reportPipelineProgress(options, candidateProgressMessage(QStringLiteral("Embedding/scoring marker"), candidates[i], i + 1, semanticTotal),
-			40 + ((i * 24) / std::max(1, semanticTotal)));
-		candidates[i] = semanticScorer.score(index, candidates[i], semanticContext, options.semantic, options.embeddingProvider);
-	}
+	if (stopIfCanceled(options, result, QStringLiteral("canceled_before_semantic_scoring")))
+		return result;
+	reportPipelineProgress(options, QStringLiteral("Embedding/scoring %1 marker candidates...").arg(semanticTotal), 40);
+	candidates = semanticScoreCandidates(index, options, std::move(candidates));
+	if (stopIfCanceled(options, result, QStringLiteral("canceled_during_semantic_scoring")))
+		return result;
 	reportPipelineProgress(options, QStringLiteral("Semantic scoring finished for %1 marker candidates").arg(semanticTotal), 66);
 
 	candidates = enforceSemanticAvailability(std::move(candidates), options);
@@ -276,9 +344,18 @@ ClipRankerOptions ClipScoringPipeline::preSemanticRankingOptionsFromOptions(
 	const ClipScoringPipelineOptions &options) const
 {
 	ClipRankerOptions ranking = options.ranking;
-	ranking.maxCandidates = std::max(1, std::min(24, options.budget.maxCandidatesBeforeEmbedding));
+	const int requested = std::max(1, options.budget.maxCandidatesBeforeEmbedding);
+	const int rawBudget = std::max(1, options.generation.maxRawCandidates);
+	if (isViewerMessagePreset(options)) {
+		// Viewer-message boundaries need several nearby variants from the same semantic region.
+		// Do not apply the final marker spacing here; final MMR will de-duplicate later.
+		ranking.maxCandidates = std::min(rawBudget, std::max(requested * 2, requested + 24));
+		ranking.minSpacingSec = 0.0;
+	} else {
+		ranking.maxCandidates = std::max(1, std::min(24, requested));
+		ranking.minSpacingSec = options.budget.preSemanticMinSpacingSec;
+	}
 	ranking.minFinalScore = options.budget.preSemanticMinFinalScore;
-	ranking.minSpacingSec = options.budget.preSemanticMinSpacingSec;
 	ranking.useMmr = false;
 	return ranking;
 }
@@ -305,6 +382,12 @@ CandidateQualityGateOptions ClipScoringPipeline::qualityGateOptionsFromOptions(
 		qualityOptions.minConditionalRerankerRawScoreWhenAvailable =
 			std::max(qualityOptions.minConditionalRerankerRawScoreWhenAvailable, 0.68);
 	}
+	if (isViewerMessagePreset(options)) {
+		// Recovery is a safety net only. With the beam architecture we should prefer
+		// another generated/refined variant over resurrecting multiple weak arcs.
+		qualityOptions.maxFailsafeRecoveredCandidates =
+			std::min(qualityOptions.maxFailsafeRecoveredCandidates, 1);
+	}
 	return qualityOptions;
 }
 
@@ -319,12 +402,26 @@ QVector<ClipCandidate> ClipScoringPipeline::candidatesFromSemanticCoarseRegions(
 	const int maxRawCandidates = std::max(1, options.generation.maxRawCandidates);
 	const int maxCandidatesPerRegion = std::max(4, maxRawCandidates / std::max(1, static_cast<int>(regions.size())));
 	QVector<double> targetDurations;
+	const bool viewerPreset = isViewerMessagePreset(options);
 	if (options.generation.maxDurationSec <= 40.0) {
 		targetDurations = {
 			std::clamp(10.0, options.generation.minDurationSec, options.generation.maxDurationSec),
 			std::clamp(14.0, options.generation.minDurationSec, options.generation.maxDurationSec),
 			std::clamp(18.0, options.generation.minDurationSec, options.generation.maxDurationSec),
 			std::clamp(24.0, options.generation.minDurationSec, options.generation.maxDurationSec),
+			std::clamp(32.0, options.generation.minDurationSec, options.generation.maxDurationSec),
+			options.generation.maxDurationSec,
+		};
+	} else if (viewerPreset) {
+		targetDurations = {
+			std::clamp(18.0, options.generation.minDurationSec, options.generation.maxDurationSec),
+			std::clamp(24.0, options.generation.minDurationSec, options.generation.maxDurationSec),
+			std::clamp(32.0, options.generation.minDurationSec, options.generation.maxDurationSec),
+			std::clamp(45.0, options.generation.minDurationSec, options.generation.maxDurationSec),
+			std::clamp(60.0, options.generation.minDurationSec, options.generation.maxDurationSec),
+			std::clamp(90.0, options.generation.minDurationSec, options.generation.maxDurationSec),
+			std::clamp(120.0, options.generation.minDurationSec, options.generation.maxDurationSec),
+			std::clamp(150.0, options.generation.minDurationSec, options.generation.maxDurationSec),
 			options.generation.maxDurationSec,
 		};
 	} else {
@@ -342,7 +439,9 @@ QVector<ClipCandidate> ClipScoringPipeline::candidatesFromSemanticCoarseRegions(
 		return std::fabs(left - right) < 0.25;
 	}), targetDurations.end());
 
-	for (const SemanticCoarseRegion &region : regions) {
+	auto buildRegionCandidates = [this, &index, &options, &targetDurations, maxCandidatesPerRegion,
+		viewerPreset](const SemanticCoarseRegion &region) {
+		QVector<ClipCandidate> regionCandidates;
 		// The coarse retriever owns only semantic retrieval. Its padded range is a broad search area, not a boundary.
 		const ClipDuration searchRange = index.clampRange(region.range, options.generation.searchRange);
 		ClipDuration focusRange = region.focusRange;
@@ -350,12 +449,12 @@ QVector<ClipCandidate> ClipScoringPipeline::candidatesFromSemanticCoarseRegions(
 			focusRange = searchRange;
 		focusRange = index.clampRange(focusRange, searchRange);
 		if ((searchRange.endSec - searchRange.startSec) < options.generation.minDurationSec)
-			continue;
+			return regionCandidates;
 
 		const QVector<int> focusSegmentIndices = index.segmentIndicesForRange(focusRange);
 		const QVector<int> searchSegmentIndices = index.segmentIndicesForRange(searchRange);
 		if (focusSegmentIndices.isEmpty() || searchSegmentIndices.isEmpty())
-			continue;
+			return regionCandidates;
 
 		QVector<int> focusAnchorIndices;
 		const int desiredAnchors = std::max(5, maxCandidatesPerRegion * 2);
@@ -368,10 +467,8 @@ QVector<ClipCandidate> ClipScoringPipeline::candidatesFromSemanticCoarseRegions(
 		if (!focusAnchorIndices.contains(focusSegmentIndices.last()))
 			focusAnchorIndices.append(focusSegmentIndices.last());
 
-		QVector<ClipCandidate> regionCandidates;
-		regionCandidates.reserve(maxCandidatesPerRegion * 5);
+		regionCandidates.reserve(maxCandidatesPerRegion * 6);
 		QStringList regionSeen;
-
 		for (const int anchorIndex : focusAnchorIndices) {
 			const TranscriptSegment *anchorSegment = index.segmentAt(anchorIndex);
 			if (!anchorSegment || anchorSegment->text.trimmed().isEmpty())
@@ -381,26 +478,29 @@ QVector<ClipCandidate> ClipScoringPipeline::candidatesFromSemanticCoarseRegions(
 				QVector<double> startTimes;
 				appendUniqueStart(startTimes, anchorSegment->startSec - 2.0);
 				appendUniqueStart(startTimes, anchorSegment->startSec - 8.0);
+				if (viewerPreset) {
+					appendUniqueStart(startTimes, anchorSegment->startSec - 13.0);
+					appendUniqueStart(startTimes, anchorSegment->startSec - 16.0);
+					appendUniqueStart(startTimes, anchorSegment->startSec - 24.0);
+					appendUniqueStart(startTimes, anchorSegment->startSec - 32.0);
+					appendUniqueStart(startTimes, anchorSegment->startSec - 44.0);
+				}
 				appendUniqueStart(startTimes, anchorSegment->startSec - (requestedDurationSec * 0.25));
 				appendUniqueStart(startTimes, anchorSegment->startSec - (requestedDurationSec * 0.50));
 				appendUniqueStart(startTimes, rangeCenterSec(focusRange) - (requestedDurationSec * 0.50));
 				appendUniqueStart(startTimes, focusRange.startSec - 6.0);
+				if (viewerPreset) {
+					appendUniqueStart(startTimes, focusRange.startSec - 16.0);
+					appendUniqueStart(startTimes, focusRange.startSec - 32.0);
+					appendUniqueStart(startTimes, searchRange.startSec + 4.0);
+					appendUniqueStart(startTimes, searchRange.startSec + 12.0);
+				}
 				appendUniqueStart(startTimes, focusRange.endSec - requestedDurationSec + 6.0);
 
 				for (double requestedStartSec : startTimes) {
-					ClipDuration range{requestedStartSec, requestedStartSec + requestedDurationSec};
-					if (range.startSec < searchRange.startSec) {
-						const double shift = searchRange.startSec - range.startSec;
-						range.startSec += shift;
-						range.endSec += shift;
-					}
-					if (range.endSec > searchRange.endSec) {
-						const double shift = range.endSec - searchRange.endSec;
-						range.startSec -= shift;
-						range.endSec -= shift;
-					}
-					range = index.clampRange(range, searchRange);
-					if ((range.endSec - range.startSec) < options.generation.minDurationSec)
+					ClipDuration range = normalizedVariantRange(index, options.generation,
+						{requestedStartSec, requestedStartSec + requestedDurationSec}, searchRange);
+					if (range.endSec <= range.startSec)
 						continue;
 					if (!substantiallyOverlapsFocus(range, focusRange))
 						continue;
@@ -410,18 +510,18 @@ QVector<ClipCandidate> ClipScoringPipeline::candidatesFromSemanticCoarseRegions(
 					candidate.evidence.append(QStringLiteral("candidate_generated_around_coarse_focus"));
 					candidate.evidence.removeDuplicates();
 					const QString key = rangeKey(candidate.range);
-					if (regionSeen.contains(key) || seen.contains(key) || !isStructurallyViable(candidate, options))
+					if (regionSeen.contains(key) || !isStructurallyViable(candidate, options))
 						continue;
 
 					regionSeen.append(key);
 					regionCandidates.append(candidate);
-					if (static_cast<int>(regionCandidates.size()) >= maxCandidatesPerRegion * 5)
+					if (static_cast<int>(regionCandidates.size()) >= maxCandidatesPerRegion * 6)
 						break;
 				}
-				if (static_cast<int>(regionCandidates.size()) >= maxCandidatesPerRegion * 5)
+				if (static_cast<int>(regionCandidates.size()) >= maxCandidatesPerRegion * 6)
 					break;
 			}
-			if (static_cast<int>(regionCandidates.size()) >= maxCandidatesPerRegion * 5)
+			if (static_cast<int>(regionCandidates.size()) >= maxCandidatesPerRegion * 6)
 				break;
 		}
 
@@ -433,7 +533,38 @@ QVector<ClipCandidate> ClipScoringPipeline::candidatesFromSemanticCoarseRegions(
 				return left.scores.coarseSemantic > right.scores.coarseSemantic;
 			return left.range.startSec < right.range.startSec;
 		});
+		return regionCandidates;
+	};
 
+	const int workerCount = boundedWorkerCount(static_cast<int>(regions.size()), 4);
+	QVector<QVector<ClipCandidate>> perRegion;
+	perRegion.reserve(regions.size());
+	if (workerCount <= 1) {
+		for (const SemanticCoarseRegion &region : regions)
+			perRegion.append(buildRegionCandidates(region));
+	} else {
+		std::vector<std::future<QVector<QVector<ClipCandidate>>>> futures;
+		futures.reserve(workerCount);
+		const int chunkSize = static_cast<int>(std::ceil(static_cast<double>(regions.size()) /
+			static_cast<double>(workerCount)));
+		for (int first = 0; first < static_cast<int>(regions.size()); first += chunkSize) {
+			const int last = std::min(static_cast<int>(regions.size()), first + chunkSize);
+			futures.emplace_back(std::async(std::launch::async, [buildRegionCandidates, &regions, first, last]() {
+				QVector<QVector<ClipCandidate>> chunk;
+				chunk.reserve(std::max(0, last - first));
+				for (int i = first; i < last; ++i)
+					chunk.append(buildRegionCandidates(regions.at(i)));
+				return chunk;
+			}));
+		}
+		for (std::future<QVector<QVector<ClipCandidate>>> &future : futures) {
+			const QVector<QVector<ClipCandidate>> chunk = future.get();
+			for (const QVector<ClipCandidate> &regionCandidates : chunk)
+				perRegion.append(regionCandidates);
+		}
+	}
+
+	for (const QVector<ClipCandidate> &regionCandidates : perRegion) {
 		int acceptedFromRegion = 0;
 		for (const ClipCandidate &candidate : regionCandidates) {
 			const QString key = rangeKey(candidate.range);
@@ -445,7 +576,6 @@ QVector<ClipCandidate> ClipScoringPipeline::candidatesFromSemanticCoarseRegions(
 			if (acceptedFromRegion >= maxCandidatesPerRegion || static_cast<int>(candidates.size()) >= maxRawCandidates)
 				break;
 		}
-
 		if (static_cast<int>(candidates.size()) >= maxRawCandidates)
 			break;
 	}
@@ -453,29 +583,296 @@ QVector<ClipCandidate> ClipScoringPipeline::candidatesFromSemanticCoarseRegions(
 	return candidates;
 }
 
+int ClipScoringPipeline::semanticCandidateBudgetFromOptions(const ClipScoringPipelineOptions &options) const
+{
+	const int requested = std::max(1, options.budget.maxCandidatesBeforeEmbedding);
+	const int rawBudget = std::max(1, options.generation.maxRawCandidates);
+	if (isViewerMessagePreset(options))
+		return std::min(rawBudget, std::max(requested * 3, requested + 36));
+	return std::min(rawBudget, std::max(requested, 32));
+}
+
+ClipCandidate ClipScoringPipeline::buildCandidateVariantFromSeed(const TranscriptIndex &index,
+	const ClipScoringPipelineOptions &options, const ClipCandidate &seed, const ClipDuration &range,
+	const QString &variantEvidence) const
+{
+	ClipCandidate candidate;
+	candidate.range = index.clampRange(range, options.generation.searchRange);
+	candidate.firstSegmentIndex = index.firstSegmentIndexOverlapping(candidate.range);
+	candidate.lastSegmentIndex = index.lastSegmentIndexOverlapping(candidate.range);
+	candidate.text = index.textForRange(candidate.range).simplified();
+	candidate.timedText = index.timedTextForRange(candidate.range);
+	candidate.anchorText = candidate.text.left(220);
+	candidate.source = seed.source.trimmed().isEmpty() ? QStringLiteral("semantic_beam_variant")
+		: seed.source + QStringLiteral("_beam");
+	candidate.startsNearViewerCue = seed.startsNearViewerCue;
+	candidate.endsBeforeNextCue = seed.endsBeforeNextCue;
+	candidate.hasReliableMainTarget = seed.hasReliableMainTarget;
+	candidate.scores.coarseSemantic = seed.scores.coarseSemantic;
+	candidate.evidence = seed.evidence;
+	candidate.evidence.append(QStringLiteral("candidate_beam_variant"));
+	candidate.evidence.append(variantEvidence);
+	candidate.evidence.removeDuplicates();
+	return scoreStructurally(index, candidate);
+}
+
+QVector<ClipCandidate> ClipScoringPipeline::expandCandidateVariants(const TranscriptIndex &index,
+	const ClipScoringPipelineOptions &options, const ClipCandidate &candidate) const
+{
+	QVector<ClipCandidate> variants;
+	QVector<ClipDuration> ranges;
+	const bool viewerPreset = isViewerMessagePreset(options);
+	const double localLookbackSec = viewerPreset ? 64.0 : 24.0;
+	const double localLookaheadSec = viewerPreset ? 44.0 : 24.0;
+	const ClipDuration localSearchRange = index.clampRange({candidate.range.startSec - localLookbackSec,
+		candidate.range.endSec + localLookaheadSec}, options.generation.searchRange);
+	if (localSearchRange.endSec <= localSearchRange.startSec)
+		return variants;
+
+	const double seedDurationSec = candidate.range.endSec - candidate.range.startSec;
+	const double seedCenterSec = rangeCenterSec(candidate.range);
+	const TranscriptSegment *firstSegment = index.segmentAt(candidate.firstSegmentIndex);
+	const TranscriptSegment *lastSegment = index.segmentAt(candidate.lastSegmentIndex);
+	const double firstSpeechSec = firstSegment ? firstSegment->startSec : candidate.range.startSec;
+	const double lastSpeechEndSec = lastSegment ? lastSegment->endSec : candidate.range.endSec;
+
+	const QVector<QPair<double, double>> primaryShifts = viewerPreset
+		? QVector<QPair<double, double>>{
+			{0.0, 0.0}, {-13.0, 4.0}, {-16.0, 4.0}, {-16.0, 0.0}, {-16.0, -24.0},
+			{-24.0, -24.0}, {-32.0, -24.0}, {-44.0, -24.0}, {-44.0, 0.0}, {-56.0, 0.0},
+			{-8.0, 8.0}, {-13.0, 8.0}, {-16.0, 8.0}, {-24.0, 8.0}}
+		: QVector<QPair<double, double>>{{0.0, 0.0}, {-8.0, 0.0}, {0.0, 8.0}, {-8.0, 8.0}};
+	for (const QPair<double, double> &shift : primaryShifts) {
+		ClipDuration range = normalizedVariantRange(index, options.generation,
+			{candidate.range.startSec + shift.first, candidate.range.endSec + shift.second}, localSearchRange);
+		appendUniqueRange(ranges, range);
+	}
+
+	QVector<double> durations;
+	for (const double duration : QVector<double>{18.0, 24.0, 32.0, 45.0, 60.0, 90.0, 120.0,
+		seedDurationSec, options.generation.maxDurationSec}) {
+		if (duration >= options.generation.minDurationSec && duration <= options.generation.maxDurationSec)
+			appendUniqueValue(durations, duration);
+	}
+
+	for (const double duration : durations) {
+		QVector<double> starts;
+		appendUniqueValue(starts, candidate.range.startSec);
+		appendUniqueValue(starts, candidate.range.endSec - duration);
+		appendUniqueValue(starts, seedCenterSec - (duration * 0.50));
+		appendUniqueValue(starts, firstSpeechSec - 0.35);
+		appendUniqueValue(starts, lastSpeechEndSec - duration + 0.35);
+		if (viewerPreset) {
+			appendUniqueValue(starts, firstSpeechSec - 13.0);
+			appendUniqueValue(starts, firstSpeechSec - 16.0);
+			appendUniqueValue(starts, firstSpeechSec - 24.0);
+			appendUniqueValue(starts, firstSpeechSec - 32.0);
+			appendUniqueValue(starts, firstSpeechSec - 44.0);
+		}
+		for (const double startSec : starts) {
+			ClipDuration range = normalizedVariantRange(index, options.generation,
+				{startSec, startSec + duration}, localSearchRange);
+			appendUniqueRange(ranges, range);
+		}
+	}
+
+	variants.reserve(ranges.size());
+	for (int i = 0; i < static_cast<int>(ranges.size()); ++i) {
+		const ClipDuration &range = ranges.at(i);
+		if (!rangeIsWithinDurationLimits(range, options.generation))
+			continue;
+		ClipCandidate variant = buildCandidateVariantFromSeed(index, options, candidate, range,
+			QStringLiteral("candidate_beam_variant_index:%1").arg(i));
+		if (!isStructurallyViable(variant, options))
+			continue;
+		variants.append(variant);
+	}
+	return variants;
+}
+
+QVector<ClipCandidate> ClipScoringPipeline::expandCandidateBeam(const TranscriptIndex &index,
+	const ClipScoringPipelineOptions &options, QVector<ClipCandidate> candidates) const
+{
+	if (candidates.isEmpty())
+		return candidates;
+
+	const int finalBudget = semanticCandidateBudgetFromOptions(options);
+	const bool viewerPreset = isViewerMessagePreset(options);
+	const int variantsPerSeed = viewerPreset ? 12 : 5;
+	const int protectedVariantsPerSeed = viewerPreset ? 6 : 1;
+	QVector<ClipCandidate> expanded;
+	QStringList seen;
+	expanded.reserve(std::min(finalBudget, static_cast<int>(candidates.size()) * variantsPerSeed));
+
+	for (const ClipCandidate &candidate : candidates) {
+		QVector<ClipCandidate> variants = expandCandidateVariants(index, options, candidate);
+		if (variants.isEmpty())
+			variants.append(candidate);
+
+		int acceptedFromSeed = 0;
+		auto appendVariant = [&expanded, &seen, &acceptedFromSeed, variantsPerSeed](ClipCandidate variant) {
+			if (acceptedFromSeed >= variantsPerSeed)
+				return;
+			const QString key = rangeKey(variant.range);
+			if (seen.contains(key))
+				return;
+			variant.evidence.append(QStringLiteral("candidate_beam_selected"));
+			variant.evidence.removeDuplicates();
+			seen.append(key);
+			expanded.append(std::move(variant));
+			++acceptedFromSeed;
+		};
+
+		for (int i = 0; i < std::min(protectedVariantsPerSeed, static_cast<int>(variants.size())); ++i)
+			appendVariant(variants.at(i));
+
+		std::sort(variants.begin(), variants.end(), [](const ClipCandidate &left, const ClipCandidate &right) {
+			if (std::fabs(left.scores.final - right.scores.final) > 0.0001)
+				return left.scores.final > right.scores.final;
+			if (std::fabs(left.scores.boundary - right.scores.boundary) > 0.0001)
+				return left.scores.boundary > right.scores.boundary;
+			return left.range.startSec < right.range.startSec;
+		});
+		for (const ClipCandidate &variant : variants)
+			appendVariant(variant);
+
+		if (static_cast<int>(expanded.size()) >= finalBudget)
+			break;
+	}
+
+	if (expanded.isEmpty())
+		return candidates;
+	if (static_cast<int>(expanded.size()) > finalBudget)
+		expanded.resize(finalBudget);
+	for (ClipCandidate &candidate : expanded)
+		candidate.evidence.append(QStringLiteral("candidate_beam_budget:%1").arg(finalBudget));
+	return expanded;
+}
+
+
 
 
 QVector<ClipCandidate> ClipScoringPipeline::refineCandidatesToSemanticTopicSpans(const TranscriptIndex &index,
 	const ClipScoringPipelineOptions &options, QVector<ClipCandidate> candidates) const
 {
-	if (!options.embeddingProvider || !options.embeddingProvider->isAvailable())
+	if (!options.embeddingProvider || !options.embeddingProvider->isAvailable() || candidates.isEmpty())
 		return candidates;
 
-	QVector<ClipCandidate> refined;
-	refined.reserve(candidates.size());
-	QStringList seen;
-	for (const ClipCandidate &candidate : candidates) {
-		ClipCandidate topicCandidate = refineCandidateToSemanticTopicSpan(index, options, candidate);
-		if (!isStructurallyViable(topicCandidate, options))
-			topicCandidate = candidate;
+	struct IndexedCandidate {
+		int index = 0;
+		ClipCandidate candidate;
+	};
 
-		const QString key = rangeKey(topicCandidate.range);
+	auto refineChunk = [this, &index, &options](int first, int last, const QVector<ClipCandidate> &source) {
+		QVector<IndexedCandidate> chunk;
+		chunk.reserve(std::max(0, last - first));
+		for (int i = first; i < last; ++i) {
+			ClipCandidate topicCandidate = refineCandidateToSemanticTopicSpan(index, options, source.at(i));
+			if (!isStructurallyViable(topicCandidate, options))
+				topicCandidate = source.at(i);
+			chunk.append(IndexedCandidate{i, topicCandidate});
+		}
+		return chunk;
+	};
+
+	const int workerCount = boundedWorkerCount(static_cast<int>(candidates.size()), isViewerMessagePreset(options) ? 4 : 2);
+	QVector<IndexedCandidate> indexed;
+	indexed.reserve(candidates.size());
+	if (workerCount <= 1) {
+		indexed = refineChunk(0, static_cast<int>(candidates.size()), candidates);
+	} else {
+		std::vector<std::future<QVector<IndexedCandidate>>> futures;
+		futures.reserve(workerCount);
+		const int chunkSize = static_cast<int>(std::ceil(static_cast<double>(candidates.size()) /
+			static_cast<double>(workerCount)));
+		for (int first = 0; first < static_cast<int>(candidates.size()); first += chunkSize) {
+			const int last = std::min(static_cast<int>(candidates.size()), first + chunkSize);
+			futures.emplace_back(std::async(std::launch::async, refineChunk, first, last, std::cref(candidates)));
+		}
+		for (std::future<QVector<IndexedCandidate>> &future : futures) {
+			const QVector<IndexedCandidate> chunk = future.get();
+			for (const IndexedCandidate &candidate : chunk)
+				indexed.append(candidate);
+		}
+		std::sort(indexed.begin(), indexed.end(), [](const IndexedCandidate &left, const IndexedCandidate &right) {
+			return left.index < right.index;
+		});
+	}
+
+	QVector<ClipCandidate> refined;
+	refined.reserve(indexed.size());
+	QStringList seen;
+	for (const IndexedCandidate &entry : indexed) {
+		const QString key = rangeKey(entry.candidate.range);
 		if (seen.contains(key))
 			continue;
 		seen.append(key);
-		refined.append(topicCandidate);
+		refined.append(entry.candidate);
 	}
 	return refined.isEmpty() ? candidates : refined;
+}
+
+QVector<ClipCandidate> ClipScoringPipeline::semanticScoreCandidates(const TranscriptIndex &index,
+	const ClipScoringPipelineOptions &options, QVector<ClipCandidate> candidates) const
+{
+	if (candidates.isEmpty())
+		return candidates;
+
+	const SemanticScoringContext semanticContext = semanticContextFromOptions(options);
+	const int workerCount = boundedWorkerCount(static_cast<int>(candidates.size()), isViewerMessagePreset(options) ? 4 : 2);
+	if (workerCount <= 1) {
+		SemanticClipScorer semanticScorer;
+		for (ClipCandidate &candidate : candidates) {
+			if (isPipelineCanceled(options))
+				break;
+			candidate = semanticScorer.score(index, candidate, semanticContext, options.semantic, options.embeddingProvider);
+		}
+		return candidates;
+	}
+
+	struct IndexedCandidate {
+		int index = 0;
+		ClipCandidate candidate;
+	};
+
+	auto scoreChunk = [&index, &options, &semanticContext](int first, int last, const QVector<ClipCandidate> &source) {
+		SemanticClipScorer semanticScorer;
+		QVector<IndexedCandidate> chunk;
+		chunk.reserve(std::max(0, last - first));
+		for (int i = first; i < last; ++i) {
+			ClipCandidate candidate = source.at(i);
+			if (!isPipelineCanceled(options))
+				candidate = semanticScorer.score(index, candidate, semanticContext, options.semantic, options.embeddingProvider);
+			chunk.append(IndexedCandidate{i, candidate});
+		}
+		return chunk;
+	};
+
+	std::vector<std::future<QVector<IndexedCandidate>>> futures;
+	futures.reserve(workerCount);
+	const int chunkSize = static_cast<int>(std::ceil(static_cast<double>(candidates.size()) /
+		static_cast<double>(workerCount)));
+	for (int first = 0; first < static_cast<int>(candidates.size()); first += chunkSize) {
+		const int last = std::min(static_cast<int>(candidates.size()), first + chunkSize);
+		futures.emplace_back(std::async(std::launch::async, scoreChunk, first, last, std::cref(candidates)));
+	}
+
+	QVector<IndexedCandidate> indexed;
+	indexed.reserve(candidates.size());
+	for (std::future<QVector<IndexedCandidate>> &future : futures) {
+		const QVector<IndexedCandidate> chunk = future.get();
+		for (const IndexedCandidate &candidate : chunk)
+			indexed.append(candidate);
+	}
+	std::sort(indexed.begin(), indexed.end(), [](const IndexedCandidate &left, const IndexedCandidate &right) {
+		return left.index < right.index;
+	});
+
+	QVector<ClipCandidate> scored;
+	scored.reserve(indexed.size());
+	for (const IndexedCandidate &entry : indexed)
+		scored.append(entry.candidate);
+	return scored;
 }
 
 ClipCandidate ClipScoringPipeline::refineCandidateToSemanticTopicSpan(const TranscriptIndex &index,

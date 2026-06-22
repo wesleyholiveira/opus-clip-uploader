@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <future>
+#include <thread>
+#include <vector>
 
 using namespace Curation::Scoring;
 
@@ -55,6 +58,15 @@ static double centerSec(const ClipDuration &range)
 	return range.startSec + ((range.endSec - range.startSec) * 0.5);
 }
 
+
+static int boundedWorkerCount(int taskCount, int preferredMaxWorkers)
+{
+	if (taskCount <= 1)
+		return 1;
+	const unsigned int hardware = std::max(1u, std::thread::hardware_concurrency());
+	return std::clamp(taskCount, 1, std::max(1, std::min(preferredMaxWorkers, static_cast<int>(hardware))));
+}
+
 } // namespace
 
 QVector<SemanticCoarseRegion> SemanticCoarseRetriever::retrieve(const TranscriptIndex &index,
@@ -86,14 +98,16 @@ QVector<SemanticCoarseRegion> SemanticCoarseRetriever::retrieve(const Transcript
 	QVector<SemanticCoarseRegion> scored;
 	const QVector<ClipDuration> windows = buildWindows(index, options);
 	scored.reserve(windows.size());
-	for (const ClipDuration &window : windows) {
+	auto scoreWindow = [this, &index, &options, provider, &targetEmbeddings, &viewerEmbeddings,
+		&directEmbeddings, &valueEmbeddings, &noiseEmbeddings, &metaNoiseEmbeddings, &context,
+		&languageCode](const ClipDuration &window) {
 		QString text = preparedWindowText(index.textForRange(window), options.maxWindowTextChars);
 		if (text.size() < options.minWindowTextChars)
-			continue;
+			return SemanticCoarseRegion{};
 
 		const SemanticEmbedding windowEmbedding = provider->embed(text);
 		if (!windowEmbedding.isValid())
-			continue;
+			return SemanticCoarseRegion{};
 
 		SemanticCoarseRegion region;
 		region.focusRange = window;
@@ -117,6 +131,7 @@ QVector<SemanticCoarseRegion> SemanticCoarseRetriever::retrieve(const Transcript
 			.arg(QString::number(region.range.startSec, 'f', 1),
 			     QString::number(region.range.endSec, 'f', 1)));
 		region.evidence.append(QStringLiteral("coarse_boundary_hint_disabled"));
+		region.evidence.append(QStringLiteral("coarse_parallel_window_scored"));
 		if (region.targetScore >= 0.65)
 			region.evidence.append(QStringLiteral("coarse_target_match"));
 		if (std::max(region.viewerScore, region.directAnswerScore) >= 0.65)
@@ -128,7 +143,39 @@ QVector<SemanticCoarseRegion> SemanticCoarseRetriever::retrieve(const Transcript
 		if (region.noiseScore >= 0.72)
 			region.evidence.append(QStringLiteral("coarse_noise_penalty"));
 		region.evidence.removeDuplicates();
-		scored.append(region);
+		return region;
+	};
+
+	const int workerCount = boundedWorkerCount(static_cast<int>(windows.size()), 4);
+	if (workerCount <= 1) {
+		for (const ClipDuration &window : windows) {
+			const SemanticCoarseRegion region = scoreWindow(window);
+			if (region.focusRange.endSec > region.focusRange.startSec)
+				scored.append(region);
+		}
+	} else {
+		std::vector<std::future<QVector<SemanticCoarseRegion>>> futures;
+		futures.reserve(workerCount);
+		const int chunkSize = static_cast<int>(std::ceil(static_cast<double>(windows.size()) /
+			static_cast<double>(workerCount)));
+		for (int first = 0; first < static_cast<int>(windows.size()); first += chunkSize) {
+			const int last = std::min(static_cast<int>(windows.size()), first + chunkSize);
+			futures.emplace_back(std::async(std::launch::async, [scoreWindow, &windows, first, last]() {
+				QVector<SemanticCoarseRegion> chunk;
+				chunk.reserve(std::max(0, last - first));
+				for (int i = first; i < last; ++i) {
+					const SemanticCoarseRegion region = scoreWindow(windows.at(i));
+					if (region.focusRange.endSec > region.focusRange.startSec)
+						chunk.append(region);
+				}
+				return chunk;
+			}));
+		}
+		for (std::future<QVector<SemanticCoarseRegion>> &future : futures) {
+			const QVector<SemanticCoarseRegion> chunk = future.get();
+			for (const SemanticCoarseRegion &region : chunk)
+				scored.append(region);
+		}
 	}
 
 	std::sort(scored.begin(), scored.end(), [](const SemanticCoarseRegion &left,

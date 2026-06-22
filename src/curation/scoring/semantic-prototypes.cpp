@@ -31,6 +31,45 @@ static QStringList uniqueTexts(QStringList values)
 	return result;
 }
 
+static QStringList localizedTargetHints(const QString &target, bool portuguese)
+{
+	QStringList hints;
+	const QString lower = target.toLower();
+
+	if (portuguese) {
+		if (lower.contains(QStringLiteral("mental")) || lower.contains(QStringLiteral("saude")) ||
+		    lower.contains(QStringLiteral("saúde")))
+			hints << QStringLiteral("saúde mental") << QStringLiteral("bem-estar emocional")
+			      << QStringLiteral("cuidar da mente") << QStringLiteral("ansiedade depressão terapia autocuidado");
+		if (lower.contains(QStringLiteral("empathy")) || lower.contains(QStringLiteral("empatia")))
+			hints << QStringLiteral("empatia") << QStringLiteral("acolhimento emocional")
+			      << QStringLiteral("entender o sentimento da pessoa");
+		if (lower.contains(QStringLiteral("advice")) || lower.contains(QStringLiteral("advices")) ||
+		    lower.contains(QStringLiteral("conselho")))
+			hints << QStringLiteral("conselho útil") << QStringLiteral("orientação prática")
+			      << QStringLiteral("o que a pessoa deveria fazer");
+		if (lower.contains(QStringLiteral("q&a")) || lower.contains(QStringLiteral("qna")) ||
+		    lower.contains(QStringLiteral("pergunta")))
+			hints << QStringLiteral("pergunta do chat com resposta completa")
+			      << QStringLiteral("resposta direta a uma dúvida do viewer");
+	} else {
+		if (lower.contains(QStringLiteral("mental")))
+			hints << QStringLiteral("mental health") << QStringLiteral("emotional wellbeing")
+			      << QStringLiteral("self care anxiety therapy");
+		if (lower.contains(QStringLiteral("empathy")))
+			hints << QStringLiteral("empathy") << QStringLiteral("emotional support")
+			      << QStringLiteral("understanding someone's feelings");
+		if (lower.contains(QStringLiteral("advice")) || lower.contains(QStringLiteral("advices")))
+			hints << QStringLiteral("useful advice") << QStringLiteral("practical guidance")
+			      << QStringLiteral("what someone should do");
+		if (lower.contains(QStringLiteral("q&a")) || lower.contains(QStringLiteral("qna")))
+			hints << QStringLiteral("viewer question with complete answer")
+			      << QStringLiteral("direct answer to a chat question");
+	}
+
+	return uniqueTexts(hints);
+}
+
 } // namespace
 
 QString Curation::Scoring::normalizedSemanticLanguageCode(const QString &transcriptionLanguage,
@@ -345,17 +384,37 @@ QStringList Curation::Scoring::targetPrototypesForPreset(const QString &presetId
 	QStringList prototypes;
 	const QString target = mainTarget.trimmed();
 	const bool portuguese = isPortugueseSemanticLanguage(languageCode);
+	const QStringList localizedHints = localizedTargetHints(target, portuguese);
+	const QString localizedTarget = localizedHints.isEmpty() ? target : localizedHints.join(QStringLiteral(", "));
+
 	if (!target.isEmpty()) {
 		if (portuguese) {
 			prototypes << QStringLiteral("um corte autossuficiente especificamente sobre %1").arg(target)
 				   << QStringLiteral("o streamer permanece no assunto %1").arg(target)
 				   << QStringLiteral("uma resposta completa sobre %1").arg(target)
 				   << QStringLiteral("o início, meio e fim tratam apenas de %1").arg(target);
+			if (!localizedHints.isEmpty()) {
+				prototypes << QStringLiteral("um corte autossuficiente especificamente sobre %1").arg(localizedTarget)
+					   << QStringLiteral("uma resposta completa e útil sobre %1").arg(localizedTarget)
+					   << QStringLiteral("conselho ou acolhimento relacionado a %1").arg(localizedTarget)
+					   << QStringLiteral("pergunta do viewer respondida dentro do tema %1").arg(localizedTarget);
+			}
 		} else {
 			prototypes << QStringLiteral("a self-contained clip specifically about %1").arg(target)
 				   << QStringLiteral("the speaker stays on the topic of %1").arg(target)
 				   << QStringLiteral("a complete answer about %1").arg(target);
+			if (!localizedHints.isEmpty()) {
+				prototypes << QStringLiteral("a complete useful answer about %1").arg(localizedTarget)
+					   << QStringLiteral("advice or emotional support related to %1").arg(localizedTarget)
+					   << QStringLiteral("a viewer question answered within the topic %1").arg(localizedTarget);
+			}
 		}
+
+		// In reliable topic mode, semanticTarget must remain topic-specific. Generic
+		// viewer/Q&A/story prototypes are scored elsewhere; adding them here made
+		// unrelated moderation/game/meta-chat segments look like target matches.
+		if (presetId == QStringLiteral("viewer_message_response"))
+			return uniqueTexts(prototypes);
 	}
 
 	if (presetId == QStringLiteral("viewer_message_response")) {

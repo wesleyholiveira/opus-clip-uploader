@@ -290,7 +290,7 @@ QString SemanticRerankerStage::queryForContext(const SemanticRerankerContext &co
 			"com abertura autossuficiente, desenvolvimento e primeira conclusão local. Ignore a tentação de recompensar apenas assunto interessante: "
 			"o range completo precisa começar no gancho correto e terminar antes de nova interação. Use [PAUSA Xs] e timestamps como sinais de borda. ");
 		if (!target.isEmpty())
-			task += QStringLiteral("O melhor trecho deve ser especificamente sobre: %1. ").arg(target);
+			task += QStringLiteral("O melhor trecho deve ser especificamente sobre: %1. Penalize fortemente respostas genéricas de viewer, moderação, jogos, meta-chat, agradecimentos ou conversa casual que não permaneçam nesse tema do começo ao fim. ").arg(target);
 		else if (context.presetId == QStringLiteral("viewer_message_response"))
 			task += QStringLiteral("Prefira uma resposta completa e valiosa para uma única pergunta/mensagem do chat; aceite também um momento autossuficiente que gere curiosidade, empatia, conselho amoroso/emocional, reflexão ou história, desenvolva a ideia e chegue a um payoff local mesmo sem Q&A explícito. Penalize ranges dominados por agradecimento de presente/item virtual/social, conversa casual, estado físico ou curiosidade trivial sem arco útil. ");
 		return task.simplified();
@@ -301,7 +301,7 @@ QString SemanticRerankerStage::queryForContext(const SemanticRerankerContext &co
 		"with a self-contained opening, development, and first local resolution. Do not reward an interesting topic alone: "
 		"the full range must start at the correct hook and end before a new interaction. Use [PAUSE Xs] and timestamps as boundary signals. ");
 	if (!target.isEmpty())
-		task += QStringLiteral("The best excerpt must be specifically about: %1. ").arg(target);
+		task += QStringLiteral("The best excerpt must be specifically about: %1. Strongly penalize generic viewer answers, moderation, games, meta-chat, thanks, or casual talk that does not stay on that topic from start to finish. ").arg(target);
 	else if (context.presetId == QStringLiteral("viewer_message_response"))
 		task += QStringLiteral("Prefer one complete valuable answer to a single chat question/message; also accept a self-contained curiosity/empathy/relationship advice/story/opinion moment with development and local payoff even when it is not explicit Q&A. Penalize ranges dominated by virtual gift thanks/social/meta, casual check-ins, body status, or trivial one-off answers without a useful arc. ");
 	return task.simplified();

@@ -57,6 +57,45 @@ static bool hasDevelopmentOnlyArcRoles(const ClipCandidate &candidate)
 		!hasArcRole(candidate, QStringLiteral("resolution"));
 }
 
+static bool hasInvalidContextualStateMachine(const ClipCandidate &candidate)
+{
+	return evidenceContainsFragment(candidate, QStringLiteral("exchange_arc_state_machine:invalid"));
+}
+
+static bool hasValidContextualStateMachine(const ClipCandidate &candidate)
+{
+	return evidenceContainsFragment(candidate, QStringLiteral("exchange_arc_state_machine:valid"));
+}
+
+
+static bool hasStrictReliableTargetSupport(const ClipCandidate &candidate,
+	const CandidateQualityGateOptions &options)
+{
+	if (!options.reliableMainTarget || options.mainTarget.trimmed().isEmpty() || !candidate.semanticScoringAvailable)
+		return true;
+
+	const double semanticNegative = std::max({candidate.scores.semanticNoise, candidate.scores.semanticMetaNoise,
+		candidate.scores.semanticOpeningMetaNoise, candidate.scores.semanticEndingMetaNoise,
+		candidate.scores.semanticEndingTopicShift});
+	const double target = candidate.scores.semanticTarget;
+	const double clipValue = candidate.scores.semanticClipValue;
+	const double empathy = candidate.scores.semanticEmpathy;
+	const double humanAnswer = std::max(candidate.scores.semanticDirectAnswer,
+		candidate.scores.semanticViewerMessage);
+	const double boundaryValue = std::max(candidate.scores.semanticOpeningHook,
+		candidate.scores.semanticEndingResolution);
+
+	const bool targetClearlyWins = target >= 0.70 && target >= semanticNegative + 0.060 &&
+		clipValue >= semanticNegative - 0.010;
+	const bool empathyAdviceClearlyWins = empathy >= 0.71 && empathy >= semanticNegative + 0.045 &&
+		clipValue >= 0.67 && clipValue >= candidate.scores.semanticMetaNoise - 0.005 &&
+		(candidate.scores.topicContinuity <= 0.0 || candidate.scores.topicContinuity >= 0.66);
+	const bool directTargetedAnswer = humanAnswer >= 0.68 && target >= semanticNegative + 0.050 &&
+		clipValue >= semanticNegative + 0.015 && boundaryValue >= 0.64;
+
+	return targetClearlyWins || empathyAdviceClearlyWins || directTargetedAnswer;
+}
+
 static bool hasStrongHumanContext(const ClipCandidate &candidate)
 {
 	const double strongestContext = std::max({candidate.scores.semanticViewerMessage,
@@ -70,16 +109,66 @@ static bool hasStrongHumanContext(const ClipCandidate &candidate)
 	return explicitContext || empathyClearlyWins;
 }
 
+static bool hasStrongRepairedResolutionOnlyArc(const ClipCandidate &candidate)
+{
+	if (!candidate.semanticScoringAvailable || !hasResolutionOnlyArcRoles(candidate))
+		return false;
+
+	// A resolution-only role sequence means the local arc classifier did not see a
+	// real opening/body/payoff progression. That is acceptable only for compact
+	// micro-clips where the whole answer fits inside one short local arc. Longer
+	// resolution-only spans are almost always mid-answer windows or ranges that bleed
+	// into the next subject, exactly the failure mode seen in dale.mp4.
+	const double candidateDurationSec = durationSec(candidate);
+	if (candidateDurationSec > 22.0)
+		return false;
+
+	const double opening = candidate.scores.semanticOpeningHook;
+	const double hook = std::max(candidate.scores.semanticHook, candidate.scores.semanticOpeningHook);
+	const double resolution = std::max(candidate.scores.semanticResolution, candidate.scores.semanticEndingResolution);
+	const double endingDefect = std::max(candidate.scores.semanticEndingMetaNoise, candidate.scores.semanticEndingTopicShift);
+	const double meta = std::max({candidate.scores.semanticMetaNoise, candidate.scores.semanticOpeningMetaNoise,
+		candidate.scores.semanticEndingMetaNoise});
+	const bool compactBoundary = candidateDurationSec <= 18.5 ||
+		candidate.scores.pauseBeforeSec >= 0.55 || candidate.scores.pauseAfterSec >= 0.55;
+	const bool localArcLooksComplete = candidate.scores.arcOpening >= 0.40 &&
+		candidate.scores.arcDevelopment >= 0.49 && candidate.scores.arcConclusion >= 0.52 &&
+		candidate.scores.arcBoundaryCleanliness >= 0.48;
+	const bool strongOpeningBoundary = opening >= 0.68 && hook >= 0.68 &&
+		opening >= candidate.scores.semanticOpeningMetaNoise - 0.02;
+	const bool strongUsefulBody = candidate.scores.semanticClipValue >= 0.70 &&
+		candidate.scores.semanticClipValue >= meta - 0.005;
+	const bool strongLocalPayoff = resolution >= 0.68 && resolution >= endingDefect - 0.04;
+	const bool coherentTopic = candidate.scores.topicContinuity <= 0.0 || candidate.scores.topicContinuity >= 0.64;
+	const bool tailContinuationIsSafe = !hasEvidence(candidate, QStringLiteral("exchange_arc_tail_continuation")) ||
+		(candidateDurationSec <= 18.5 && candidate.scores.arcTailRisk <= 0.28 &&
+		 candidate.scores.semanticEndingResolution >= 0.70);
+	const bool rerankerAllowsRepair = !candidate.rerankerAvailable ||
+		(candidate.scores.rerankerRaw >= 0.96 && candidate.scores.rerankerClipQualityMargin >= 0.38 &&
+		 candidate.scores.rerankerOpeningDefect <= 0.56 && candidate.scores.rerankerStructureDefect <= 0.58 &&
+		 candidate.scores.rerankerEndingDefect <= 0.66) ||
+		candidate.scores.rerankerClipQualityMargin >= 0.46;
+	const bool notAllDefectsHigh = !candidate.rerankerAvailable ||
+		!(candidate.scores.rerankerOpeningDefect >= 0.70 && candidate.scores.rerankerEndingDefect >= 0.70 &&
+		  candidate.scores.rerankerStructureDefect >= 0.70);
+	const bool noObviousTail = candidate.scores.arcTailRisk <= 0.62;
+
+	return candidate.scores.final >= 0.54 && compactBoundary && localArcLooksComplete && strongOpeningBoundary &&
+		strongUsefulBody && strongLocalPayoff && coherentTopic && tailContinuationIsSafe && rerankerAllowsRepair &&
+		notAllDefectsHigh && noObviousTail;
+}
+
 static bool semanticSupportsCollapsedArcRoles(const ClipCandidate &candidate)
 {
 	if (!candidate.semanticScoringAvailable)
 		return false;
+	if (hasResolutionOnlyArcRoles(candidate))
+		return hasStrongRepairedResolutionOnlyArc(candidate);
 
-	// A collapsed role sequence (all resolution/all development) is common with very
-	// short WhisperX-aligned chunks, but it must not become a free pass. Only soften
-	// it when independent semantic evidence says this is a real human-context clip
-	// with a clean hook/payoff, not stream setup, social check-in, gift thanks or
-	// background-game chatter that happens to look semantically "complete".
+	// A collapsed non-resolution sequence can be a cheap-classifier false negative,
+	// but it must not become a free pass. Only soften it when independent semantic
+	// evidence says this is a real human-context clip with a clean hook/payoff, not
+	// stream setup, social check-in, gift thanks or background-game chatter.
 	const double opening = std::max(candidate.scores.semanticOpeningHook, candidate.scores.semanticHook);
 	const double resolution = std::max(candidate.scores.semanticEndingResolution, candidate.scores.semanticResolution);
 	const double endingDefect = std::max(candidate.scores.semanticEndingMetaNoise, candidate.scores.semanticEndingTopicShift);
@@ -142,11 +231,15 @@ ClipCandidate CandidateQualityGate::apply(const ClipCandidate &candidate,
 		gated.evidence.append(QStringLiteral("quality_rejected:%1").arg(reason));
 	} else {
 		gated.evidence.append(QStringLiteral("quality_gate_passed"));
-		if ((hasResolutionOnlyArcRoles(gated) || hasDevelopmentOnlyArcRoles(gated)) &&
+		if (hasDevelopmentOnlyArcRoles(gated) && !hasResolutionOnlyArcRoles(gated) &&
 		    !hasDegenerateArcShape(gated, options))
 			gated.evidence.append(QStringLiteral("quality_gate_collapsed_arc_roles_softened"));
+		if (hasStrongRepairedResolutionOnlyArc(gated))
+			gated.evidence.append(QStringLiteral("quality_gate_resolution_only_arc_semantic_repaired"));
 		if (hasUsefulExchangeArc(gated, options))
 			gated.evidence.append(QStringLiteral("quality_gate_exchange_arc_validated"));
+		if (hasValidContextualStateMachine(gated))
+			gated.evidence.append(QStringLiteral("quality_gate_contextual_state_machine_validated"));
 		if (hasReliableConclusionFallback(gated, options))
 			gated.evidence.append(QStringLiteral("quality_gate_conclusion_semantic_fallback"));
 		if (hasWeakConclusionFailsafe(gated, options))
@@ -193,6 +286,12 @@ QString CandidateQualityGate::rejectionReason(const ClipCandidate &candidate,
 	const double positive = semanticPositiveScore(candidate);
 	const double negative = semanticNegativeScore(candidate);
 	const double semanticMargin = positive - negative;
+	const bool reliableTargetMode = viewerPreset && options.reliableMainTarget && !options.mainTarget.trimmed().isEmpty();
+
+	if (reliableTargetMode && candidate.semanticScoringAvailable && !hasStrictReliableTargetSupport(candidate, options))
+		return QStringLiteral("semantic_target_not_specific");
+	if (reliableTargetMode && candidate.scores.arcCompleteness <= 0.0 && !hasValidContextualStateMachine(candidate))
+		return QStringLiteral("missing_contextual_arc");
 
 	if (options.requireSemanticTargetWhenAvailable && options.reliableMainTarget && candidate.semanticScoringAvailable &&
 	    candidate.scores.semanticTarget < options.minSemanticTargetWhenAvailable && !usefulArc)
@@ -377,7 +476,7 @@ QVector<ClipCandidate> CandidateQualityGate::recoverFailsafeCandidates(QVector<C
 		ClipCandidate &candidate = candidates[recoverableIndices.at(i)];
 		const QString previousReason = candidate.rejectionReason;
 		const bool collapsedRoleRecovery = isCollapsedRoleRecoverable(candidate, options);
-		const bool lastResort = !isFailsafeRecoverable(candidate, options) &&
+		const bool lastResort = !collapsedRoleRecovery && !isFailsafeRecoverable(candidate, options) &&
 			isLastResortRecoverable(candidate, options);
 		candidate.rejectedByQualityGate = false;
 		candidate.rejectionReason.clear();
@@ -543,13 +642,15 @@ bool CandidateQualityGate::isCollapsedRoleRecoverable(const ClipCandidate &candi
 	const CandidateQualityGateOptions &options) const
 {
 	// WhisperX word-level cache can fragment the transcript enough for the cheap
-	// role classifier to collapse into resolution-only/development-only. Recover
-	// at most a couple of such candidates only when the independent semantic and
-	// reranker signals indicate a useful human-context arc, while setup/social/meta
-	// material remains blocked.
+	// role classifier to collapse. Recover collapsed roles only when independent
+	// semantic/reranker signals indicate a useful human-context arc. Resolution-only
+	// spans remain blocked unless the boundary refiner produced a strong repaired
+	// opening/body/payoff signal; otherwise they are usually mid-answer clips.
 	if (!candidate.rejectedByQualityGate || options.presetId != QStringLiteral("viewer_message_response"))
 		return false;
 	if (candidate.rejectionReason != QStringLiteral("exchange_arc_degenerate_roles"))
+		return false;
+	if (hasResolutionOnlyArcRoles(candidate) && !hasStrongRepairedResolutionOnlyArc(candidate))
 		return false;
 	if (!candidate.semanticScoringAvailable)
 		return false;
@@ -619,6 +720,9 @@ bool CandidateQualityGate::hasWeakConclusionFailsafe(const ClipCandidate &candid
 {
 	if (options.presetId != QStringLiteral("viewer_message_response") || !candidate.semanticScoringAvailable)
 		return false;
+	if (options.reliableMainTarget && !options.mainTarget.trimmed().isEmpty() &&
+	    (candidate.scores.arcCompleteness <= 0.0 || !hasStrictReliableTargetSupport(candidate, options)))
+		return false;
 	if (isSocialMetaDominated(candidate, options))
 		return false;
 
@@ -655,6 +759,11 @@ bool CandidateQualityGate::hasSemanticBackedArcFallback(const ClipCandidate &can
 	const CandidateQualityGateOptions &options) const
 {
 	if (options.presetId != QStringLiteral("viewer_message_response") || !candidate.semanticScoringAvailable)
+		return false;
+	if (candidate.scores.arcCompleteness <= 0.0)
+		return false;
+	if (options.reliableMainTarget && !options.mainTarget.trimmed().isEmpty() &&
+	    (!hasValidContextualStateMachine(candidate) || !hasStrictReliableTargetSupport(candidate, options)))
 		return false;
 	if (isSocialMetaDominated(candidate, options) || hasDegenerateArcShape(candidate, options) ||
 	    hasWeakSocialOpening(candidate, options) || hasOverextendedTail(candidate, options))
@@ -712,6 +821,10 @@ bool CandidateQualityGate::hasCuriosityArcFallback(const ClipCandidate &candidat
 	// instead of only rescuing them through the last-resort recovery path.
 	if (options.presetId != QStringLiteral("viewer_message_response") || !candidate.semanticScoringAvailable)
 		return false;
+	if (options.reliableMainTarget && !options.mainTarget.trimmed().isEmpty())
+		return false;
+	if (candidate.scores.arcCompleteness <= 0.0)
+		return false;
 	if (hasUnresolvedInternalPause(candidate, options) || hasDegenerateArcShape(candidate, options) ||
 	    hasWeakSocialOpening(candidate, options) || hasOverextendedTail(candidate, options))
 		return false;
@@ -747,10 +860,10 @@ bool CandidateQualityGate::hasCuriosityArcFallback(const ClipCandidate &candidat
 bool CandidateQualityGate::hasUsefulExchangeArc(const ClipCandidate &candidate,
 	const CandidateQualityGateOptions &options) const
 {
-	if (hasSemanticBackedArcFallback(candidate, options) || hasCuriosityArcFallback(candidate, options))
-		return true;
 	if (candidate.scores.arcCompleteness <= 0.0)
 		return false;
+	if (hasSemanticBackedArcFallback(candidate, options) || hasCuriosityArcFallback(candidate, options))
+		return true;
 	return candidate.scores.arcOpening >= options.minArcOpeningForViewerPreset &&
 		candidate.scores.arcDevelopment >= options.minArcDevelopmentForViewerPreset &&
 		(candidate.scores.arcConclusion >= options.minArcConclusionForViewerPreset ||
@@ -854,15 +967,17 @@ bool CandidateQualityGate::hasDegenerateArcShape(const ClipCandidate &candidate,
 	if (options.presetId != QStringLiteral("viewer_message_response") ||
 	    candidate.scores.arcCompleteness <= 0.0)
 		return false;
+	if (hasInvalidContextualStateMachine(candidate))
+		return true;
 
 	// The local arc-role classifier is intentionally cheap and can collapse when
-	// WhisperX word-aligned segments are shorter/more fragmented. Treat a flat
-	// "all resolution" or "all development" role sequence as a hard defect only
-	// when the independent semantic/reranker signals do not support a complete
-	// hook/body/payoff arc. Otherwise the gate should keep the candidate and let
-	// the semantic/reranker score order it.
+	// WhisperX word-aligned segments are shorter/more fragmented. A flat
+	// "all resolution" sequence is not a complete viewer-message arc: it usually
+	// means the clip starts inside the answer and lost the viewer setup/context.
+	// Allow semantic/reranker fallback only for development-only cases.
 	const bool semanticBackedCollapsedRoles = semanticSupportsCollapsedArcRoles(candidate);
-	const bool resolutionOnly = hasResolutionOnlyArcRoles(candidate) && !semanticBackedCollapsedRoles;
+	const bool resolutionOnly = hasResolutionOnlyArcRoles(candidate);
+	const bool repairedResolutionOnly = resolutionOnly && hasStrongRepairedResolutionOnlyArc(candidate);
 	const bool developmentOnlyWithoutPayoff = hasDevelopmentOnlyArcRoles(candidate) &&
 		!semanticBackedCollapsedRoles &&
 		candidate.scores.arcConclusion < options.minArcConclusionForViewerPreset - 0.06 &&
@@ -872,7 +987,12 @@ bool CandidateQualityGate::hasDegenerateArcShape(const ClipCandidate &candidate,
 		candidate.scores.arcConclusion < options.minArcConclusionForViewerPreset + 0.02 &&
 		!semanticBackedCollapsedRoles;
 
-	return resolutionOnly || developmentOnlyWithoutPayoff || hookOnlyWithoutBody;
+	const bool startsWithPriorOrMeta = arcRolesStartWith(candidate, QStringLiteral("previous_conclusion")) ||
+		arcRolesStartWith(candidate, QStringLiteral("meta_prelude")) ||
+		arcRolesStartWith(candidate, QStringLiteral("tail_or_new_turn"));
+
+	return startsWithPriorOrMeta || (resolutionOnly && !repairedResolutionOnly) ||
+		developmentOnlyWithoutPayoff || hookOnlyWithoutBody;
 }
 
 bool CandidateQualityGate::hasWeakSocialOpening(const ClipCandidate &candidate,

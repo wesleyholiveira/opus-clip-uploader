@@ -12,6 +12,11 @@ using namespace Curation::Scoring;
 
 namespace {
 
+static constexpr double VIEWER_PRESET_ANALYSIS_LOOKBACK_SEC = 56.0;
+static constexpr double VIEWER_PRESET_ANALYSIS_LOOKAHEAD_SEC = 36.0;
+static constexpr int VIEWER_PRESET_MAX_CONTEXT_EXTENSIONS = 12;
+static constexpr int DEFAULT_MAX_CONTEXT_EXTENSIONS = 3;
+
 static double boundedScore(double value)
 {
 	return std::clamp(value, 0.0, 1.0);
@@ -22,6 +27,7 @@ enum class ArcChunkRole {
 	OpeningCandidate,
 	Development,
 	LocalResolution,
+	PreviousConclusion,
 	SocialOrMetaPrelude,
 	TailOrNewTurn
 };
@@ -35,6 +41,8 @@ static QString roleName(ArcChunkRole role)
 		return QStringLiteral("development");
 	case ArcChunkRole::LocalResolution:
 		return QStringLiteral("resolution");
+	case ArcChunkRole::PreviousConclusion:
+		return QStringLiteral("previous_conclusion");
 	case ArcChunkRole::SocialOrMetaPrelude:
 		return QStringLiteral("meta_prelude");
 	case ArcChunkRole::TailOrNewTurn:
@@ -77,6 +85,20 @@ struct ArcSpanScore {
 	double boundaryCleanliness = 0.0;
 	double tailRisk = 0.0;
 	double cohesion = 0.0;
+};
+
+struct ContextualArcScore {
+	bool valid = false;
+	bool implicitOpening = false;
+	bool terminalFollowThrough = false;
+	int openingIndex = -1;
+	int firstDevelopmentIndex = -1;
+	int conclusionIndex = -1;
+	double score = 0.0;
+	double opening = 0.0;
+	double development = 0.0;
+	double conclusion = 0.0;
+	double penalty = 0.0;
 };
 
 static QStringList uniqueTexts(QStringList values)
@@ -186,11 +208,35 @@ static void classifyChunk(ArcChunk &chunk)
 		chunk.role = chunk.shift >= chunk.meta + 0.03 ? ArcChunkRole::TailOrNewTurn : ArcChunkRole::SocialOrMetaPrelude;
 		return;
 	}
-	if (chunk.conclusionScore >= std::max(chunk.openingScore, chunk.developmentScore) - 0.02 &&
-	    chunk.resolution >= 0.52) {
+
+	// Resolution prototypes are intentionally broad, especially in Portuguese. If we
+	// classify before checking hook/body signals, an entire answer can collapse into
+	// "resolution, resolution, resolution" and the boundary gate has no way to tell
+	// whether the viewer setup or development was preserved. Prefer opening/body roles
+	// whenever they are competitive with the conclusion signal.
+	const bool strongOpening = chunk.openingScore >= 0.40 &&
+		(chunk.hook >= 0.52 || chunk.target >= 0.52 || chunk.openingScore >= chunk.developmentScore - 0.04) &&
+		chunk.openingScore >= chunk.conclusionScore - 0.07;
+	if (strongOpening) {
+		chunk.role = ArcChunkRole::OpeningCandidate;
+		return;
+	}
+
+	const bool strongDevelopment = chunk.developmentScore >= 0.38 &&
+		(chunk.value >= 0.52 || positive >= 0.58 || chunk.developmentScore >= chunk.openingScore - 0.04) &&
+		chunk.developmentScore >= chunk.conclusionScore - 0.06;
+	if (strongDevelopment) {
+		chunk.role = ArcChunkRole::Development;
+		return;
+	}
+
+	const bool strongConclusion = chunk.resolution >= 0.56 &&
+		chunk.conclusionScore >= std::max(chunk.openingScore, chunk.developmentScore) - 0.02;
+	if (strongConclusion) {
 		chunk.role = ArcChunkRole::LocalResolution;
 		return;
 	}
+
 	if (chunk.openingScore >= chunk.developmentScore + 0.03 && chunk.openingScore >= 0.34) {
 		chunk.role = ArcChunkRole::OpeningCandidate;
 		return;
@@ -284,9 +330,16 @@ static bool canUseSpan(const QVector<ArcChunk> &chunks, int first, int last,
 static bool isSemanticPrelude(const ArcChunk &chunk)
 {
 	const double positive = std::max({chunk.target, chunk.value, chunk.hook});
-	return chunk.role == ArcChunkRole::SocialOrMetaPrelude ||
+	return chunk.role == ArcChunkRole::SocialOrMetaPrelude || chunk.role == ArcChunkRole::PreviousConclusion ||
 		(chunk.meta >= 0.56 && chunk.meta >= positive - 0.02 && chunk.openingScore < 0.34);
 }
+
+static bool isBlockingArcRole(ArcChunkRole role)
+{
+	return role == ArcChunkRole::PreviousConclusion || role == ArcChunkRole::SocialOrMetaPrelude ||
+		role == ArcChunkRole::TailOrNewTurn;
+}
+
 
 static bool isWeakOpeningPrelude(const QVector<ArcChunk> &chunks, int index)
 {
@@ -322,7 +375,7 @@ static bool shouldPrependOpeningContext(const QVector<ArcChunk> &chunks, int fir
 
 static bool isEssentialOpeningContext(const ArcChunk &previous, const ArcChunk &current)
 {
-	if (isSemanticPrelude(previous))
+	if (isSemanticPrelude(previous) || previous.role == ArcChunkRole::LocalResolution)
 		return false;
 	const double previousPositive = std::max({previous.target, previous.value, previous.hook,
 		previous.developmentScore, previous.openingScore});
@@ -333,6 +386,28 @@ static bool isEssentialOpeningContext(const ArcChunk &previous, const ArcChunk &
 		previous.value >= 0.58 || previous.openingScore >= 0.38;
 	const bool notClearlySocial = previousPositive >= previousDefect - 0.04 && previous.shift < 0.72;
 	return hasContextSignal && notClearlySocial && continuity >= 0.42 && previous.pauseAfterSec < 3.2;
+}
+
+
+static bool addsUsefulViewerOpeningContext(const QVector<ArcChunk> &chunks, int first, int currentFirst)
+{
+	if (first < 0 || currentFirst <= first || currentFirst >= static_cast<int>(chunks.size()))
+		return false;
+
+	bool foundContext = false;
+	for (int i = first; i < currentFirst; ++i) {
+		if (isSemanticPrelude(chunks.at(i)) || chunks.at(i).role == ArcChunkRole::TailOrNewTurn)
+			return false;
+		const ArcChunk &next = chunks.at(std::min(i + 1, currentFirst));
+		const double positive = std::max({chunks.at(i).target, chunks.at(i).value, chunks.at(i).hook,
+			chunks.at(i).openingScore, chunks.at(i).developmentScore});
+		const double defect = std::max(chunks.at(i).meta, chunks.at(i).shift);
+		const bool usefulContext = isEssentialOpeningContext(chunks.at(i), next) ||
+			(chunks.at(i).hook >= 0.50 && positive >= defect - 0.04) ||
+			(chunks.at(i).openingScore >= 0.36 && chunks.at(i).pauseAfterSec < 3.6);
+		foundContext = foundContext || usefulContext;
+	}
+	return foundContext;
 }
 
 
@@ -379,6 +454,342 @@ static bool isSemanticContinuation(const QVector<ArcChunk> &chunks, int currentL
 		(next.developmentScore >= 0.34 || next.conclusionScore >= 0.34 || next.resolution >= 0.55);
 }
 
+static bool isViewerAnswerContinuation(const QVector<ArcChunk> &chunks, int currentLast, int nextIndex)
+{
+	if (currentLast < 0 || nextIndex <= currentLast || nextIndex >= static_cast<int>(chunks.size()))
+		return false;
+	const ArcChunk &current = chunks.at(currentLast);
+	const ArcChunk &next = chunks.at(nextIndex);
+	if (isPauseSeparatedSemanticTurn(current, next) || isTailRisk(chunks, nextIndex) || isBlockingArcRole(next.role))
+		return false;
+
+	const double pauseSec = std::max(current.pauseAfterSec, next.pauseBeforeSec);
+	const double continuity = cosineSimilarity(current.embedding, next.embedding);
+	const double nextPositive = std::max({next.target, next.value, next.resolution, next.hook, next.developmentScore});
+	const double nextDefect = std::max({next.meta, next.shift, next.defectScore});
+	const bool stillAnswerBody = next.role == ArcChunkRole::Development ||
+		next.role == ArcChunkRole::LocalResolution || next.developmentScore >= 0.40 ||
+		next.conclusionScore >= 0.42 || next.resolution >= 0.50 || next.value >= 0.52;
+	const bool notNewTopic = next.shift < nextPositive + 0.09 && nextDefect < nextPositive + 0.13;
+	const bool connectedEnough = continuity >= 0.32 || pauseSec <= 0.85 ||
+		(next.target >= 0.55 && next.value >= nextDefect - 0.08);
+	return pauseSec <= 1.70 && stillAnswerBody && notNewTopic && connectedEnough;
+}
+
+static bool isStaleViewerLeadingResolution(const QVector<ArcChunk> &chunks, int first)
+{
+	if (first < 0 || first + 1 >= static_cast<int>(chunks.size()))
+		return false;
+
+	const ArcChunk &current = chunks.at(first);
+	const ArcChunk &next = chunks.at(first + 1);
+	if (current.role != ArcChunkRole::LocalResolution)
+		return false;
+	if (isSemanticPrelude(current) || current.role == ArcChunkRole::TailOrNewTurn)
+		return true;
+
+	const double continuity = cosineSimilarity(current.embedding, next.embedding);
+	const double currentContent = std::max({current.value, current.hook, current.target, current.openingScore});
+	const double currentDefect = std::max(current.meta, current.shift);
+	const double nextBody = std::max({next.developmentScore, next.openingScore, next.value, next.hook});
+	const bool currentLooksLikePriorClose = current.resolution >= 0.56 &&
+		current.conclusionScore >= current.openingScore + 0.07 && current.openingScore < 0.44;
+	const bool nextLooksLikeActualBody = next.role == ArcChunkRole::Development ||
+		next.role == ArcChunkRole::OpeningCandidate || nextBody >= current.openingScore + 0.05;
+	const bool currentIsNotStrongHook = current.hook < 0.60 && currentContent >= currentDefect - 0.05;
+	return currentLooksLikePriorClose && nextLooksLikeActualBody && currentIsNotStrongHook &&
+		continuity >= 0.35 && current.pauseAfterSec < 3.8;
+}
+
+static bool isViewerStartBoundaryContaminated(const QVector<ArcChunk> &chunks, int first)
+{
+	if (first < 0 || first + 1 >= static_cast<int>(chunks.size()))
+		return false;
+
+	const ArcChunk &current = chunks.at(first);
+	const ArcChunk &next = chunks.at(first + 1);
+	if (current.role != ArcChunkRole::LocalResolution)
+		return false;
+
+	const double currentDurationSec = std::max(0.0, current.endSec - current.startSec);
+	const double currentContent = std::max({current.value, current.hook, current.target, current.openingScore});
+	const double currentDefect = std::max({current.meta, current.shift, current.defectScore});
+	const double nextBody = std::max({next.developmentScore, next.openingScore, next.value, next.hook});
+	const double continuity = cosineSimilarity(current.embedding, next.embedding);
+	const bool nextStartsActualBody = next.role == ArcChunkRole::Development ||
+		next.role == ArcChunkRole::OpeningCandidate || nextBody >= current.openingScore + 0.03;
+	const bool currentLooksLikeLeftoverClose = current.conclusionScore >= current.openingScore + 0.04 ||
+		current.resolution >= std::max(current.openingScore, current.developmentScore) + 0.04;
+	const bool weakAsOpening = current.openingScore < 0.43 && current.target < 0.62 &&
+		(current.hook < 0.66 || current.conclusionScore >= current.openingScore + 0.08);
+	const bool notClearlyBetterThanNext = nextBody >= currentContent - 0.03 || next.role == ArcChunkRole::Development;
+	const bool notHardTopicBreak = continuity >= 0.30 && current.pauseAfterSec < 4.2 && currentDefect <= currentContent + 0.16;
+
+	return nextStartsActualBody && currentLooksLikeLeftoverClose && weakAsOpening &&
+		notClearlyBetterThanNext && notHardTopicBreak && currentDurationSec <= 10.5;
+}
+
+static bool shouldExtendViewerConclusionFollowThroughSoft(const QVector<ArcChunk> &chunks, int currentLast, int nextIndex)
+{
+	if (currentLast < 0 || nextIndex <= currentLast || nextIndex >= static_cast<int>(chunks.size()))
+		return false;
+
+	const ArcChunk &current = chunks.at(currentLast);
+	const ArcChunk &next = chunks.at(nextIndex);
+	if (isPauseSeparatedSemanticTurn(current, next) || isTailRisk(chunks, nextIndex))
+		return false;
+
+	const double pauseSec = std::max(current.pauseAfterSec, next.pauseBeforeSec);
+	const double nextDurationSec = std::max(0.0, next.endSec - next.startSec);
+	const double continuity = cosineSimilarity(current.embedding, next.embedding);
+	const double nextPositive = std::max({next.target, next.value, next.resolution, next.hook, next.developmentScore});
+	const double nextDefect = std::max({next.meta, next.shift, next.defectScore});
+	const bool sameAnswerFollowThrough = next.role == ArcChunkRole::LocalResolution ||
+		next.role == ArcChunkRole::Development || next.resolution >= 0.48 || next.value >= 0.50;
+	const bool notNewTopic = next.shift < nextPositive + 0.08 && nextDefect < nextPositive + 0.12;
+	const bool closeEnough = continuity >= 0.34 || pauseSec <= 0.75;
+
+	return nextDurationSec <= 7.5 && pauseSec <= 1.25 && sameAnswerFollowThrough && notNewTopic && closeEnough;
+}
+
+static bool isViewerConclusionFollowThrough(const QVector<ArcChunk> &chunks, int currentLast, int nextIndex)
+{
+	if (currentLast < 0 || nextIndex <= currentLast || nextIndex >= static_cast<int>(chunks.size()))
+		return false;
+
+	const ArcChunk &current = chunks.at(currentLast);
+	const ArcChunk &next = chunks.at(nextIndex);
+	if (isPauseSeparatedSemanticTurn(current, next) || isTailRisk(chunks, nextIndex))
+		return false;
+
+	const double nextDurationSec = std::max(0.0, next.endSec - next.startSec);
+	const double continuity = cosineSimilarity(current.embedding, next.embedding);
+	const double nextPositive = std::max({next.target, next.value, next.resolution, next.hook, next.developmentScore});
+	const double nextDefect = std::max(next.meta, next.shift);
+	const bool nextStillResolvesSameAnswer = next.role == ArcChunkRole::LocalResolution ||
+		next.role == ArcChunkRole::Development || next.resolution >= 0.52 || next.value >= 0.54;
+	const bool notNewTopicHook = next.shift < nextPositive + 0.03 && nextDefect < nextPositive + 0.08;
+	return nextDurationSec <= 5.8 && continuity >= 0.46 && nextStillResolvesSameAnswer && notNewTopicHook;
+}
+
+
+static bool looksLikePreviousConclusionBeforeBody(const QVector<ArcChunk> &chunks, int index)
+{
+	if (index < 0 || index + 1 >= static_cast<int>(chunks.size()))
+		return false;
+
+	const ArcChunk &current = chunks.at(index);
+	if (current.role != ArcChunkRole::LocalResolution)
+		return false;
+
+	int nextBody = -1;
+	for (int i = index + 1; i < static_cast<int>(chunks.size()) && i <= index + 3; ++i) {
+		if (chunks.at(i).role == ArcChunkRole::OpeningCandidate || chunks.at(i).role == ArcChunkRole::Development) {
+			nextBody = i;
+			break;
+		}
+		if (isBlockingArcRole(chunks.at(i).role))
+			break;
+	}
+	if (nextBody < 0)
+		return false;
+
+	const ArcChunk &next = chunks.at(nextBody);
+	const double continuity = cosineSimilarity(current.embedding, next.embedding);
+	const double currentOpening = std::max(current.openingScore, current.hook);
+	const double currentBody = std::max({current.value, current.target, current.developmentScore});
+	const double nextBodySignal = std::max({next.openingScore, next.developmentScore, next.value, next.hook});
+	const bool currentIsClosingShape = current.conclusionScore >= currentOpening + 0.045 ||
+		current.resolution >= std::max(current.openingScore, current.developmentScore) + 0.035;
+	const bool nextIsBetterStart = nextBodySignal >= std::max(currentOpening, currentBody) - 0.015 ||
+		next.role == ArcChunkRole::OpeningCandidate || next.role == ArcChunkRole::Development;
+	const bool currentIsWeakHook = currentOpening < 0.58 && current.target < 0.63 &&
+		current.openingScore < current.conclusionScore + 0.03;
+	const bool boundaryIsNearby = current.pauseAfterSec < 4.5 && continuity >= 0.24;
+	return currentIsClosingShape && nextIsBetterStart && currentIsWeakHook && boundaryIsNearby;
+}
+
+static void classifyContextualRoles(QVector<ArcChunk> &chunks, const ExchangeArcBoundaryRefinementOptions &options)
+{
+	if (options.scoring.presetId != QStringLiteral("viewer_message_response") || chunks.size() < 2)
+		return;
+
+	// First pass: mark closing residue that appears before the first plausible body/opening.
+	// This is the recurrent dale.mp4 failure mode: "resolution, resolution, development..."
+	// is not a valid Q&A opening, it is usually the tail of the previous topic.
+	for (int i = 0; i + 1 < static_cast<int>(chunks.size()); ++i) {
+		if (looksLikePreviousConclusionBeforeBody(chunks, i))
+			chunks[i].role = ArcChunkRole::PreviousConclusion;
+	}
+
+	// Second pass: if a very short follow-through after a resolution was classified as
+	// development, treat it as conclusion continuation. This avoids cutting 2-4 seconds
+	// before the natural closing phrase of a viewer answer.
+	for (int i = 1; i < static_cast<int>(chunks.size()); ++i) {
+		if (chunks.at(i).role != ArcChunkRole::Development)
+			continue;
+		const ArcChunk &previous = chunks.at(i - 1);
+		const ArcChunk &current = chunks.at(i);
+		const double durationSec = std::max(0.0, current.endSec - current.startSec);
+		const double pauseSec = std::max(previous.pauseAfterSec, current.pauseBeforeSec);
+		const double continuity = cosineSimilarity(previous.embedding, current.embedding);
+		const double currentPositive = std::max({current.value, current.target, current.resolution, current.hook});
+		const double currentDefect = std::max({current.meta, current.shift, current.defectScore});
+		const bool followsResolution = previous.role == ArcChunkRole::LocalResolution ||
+			previous.role == ArcChunkRole::Development || previous.conclusionScore >= 0.48 || previous.resolution >= 0.54;
+		const bool shortSameAnswerTail = durationSec <= 5.8 && pauseSec <= 1.30 &&
+			(continuity >= 0.36 || pauseSec <= 0.65) && currentPositive >= currentDefect - 0.08;
+		const bool conclusionSignalCompetitive = current.conclusionScore >= current.developmentScore - 0.07 ||
+			current.resolution >= 0.48 || current.value >= 0.54;
+		if (followsResolution && shortSameAnswerTail && conclusionSignalCompetitive)
+			chunks[i].role = ArcChunkRole::LocalResolution;
+	}
+}
+
+static bool canBeContextualOpening(const ArcChunk &chunk)
+{
+	if (isBlockingArcRole(chunk.role) || chunk.role == ArcChunkRole::LocalResolution)
+		return false;
+	const double opening = std::max(chunk.openingScore, chunk.hook);
+	const double positive = std::max({chunk.target, chunk.value, chunk.hook, chunk.developmentScore});
+	const double defect = std::max({chunk.meta, chunk.shift, chunk.defectScore});
+	return chunk.role == ArcChunkRole::OpeningCandidate ||
+		(opening >= 0.38 && positive >= defect - 0.08) ||
+		(chunk.role == ArcChunkRole::Development && chunk.openingScore >= 0.34 && positive >= 0.54);
+}
+
+static bool canBeContextualDevelopment(const ArcChunk &chunk)
+{
+	if (isBlockingArcRole(chunk.role))
+		return false;
+	const double positive = std::max({chunk.value, chunk.target, chunk.developmentScore, chunk.hook});
+	const double defect = std::max({chunk.meta, chunk.shift, chunk.defectScore});
+	return chunk.role == ArcChunkRole::Development ||
+		(chunk.role == ArcChunkRole::OpeningCandidate && chunk.value >= 0.48) ||
+		(positive >= 0.56 && chunk.developmentScore >= chunk.conclusionScore - 0.10 && positive >= defect - 0.08);
+}
+
+static bool canBeContextualConclusion(const QVector<ArcChunk> &chunks, int first, int index)
+{
+	if (index < first || index >= static_cast<int>(chunks.size()))
+		return false;
+	const ArcChunk &chunk = chunks.at(index);
+	if (isBlockingArcRole(chunk.role))
+		return false;
+	const double endingDefect = std::max({chunk.meta, chunk.shift, chunk.defectScore});
+	const double endingSignal = std::max({chunk.conclusionScore, chunk.resolution, chunk.value * 0.92});
+	const bool directConclusion = chunk.role == ArcChunkRole::LocalResolution ||
+		(chunk.conclusionScore >= 0.46 && chunk.resolution >= 0.50) ||
+		(endingSignal >= 0.54 && endingSignal >= endingDefect - 0.10);
+	if (directConclusion)
+		return true;
+
+	// A final body chunk can be the natural closing phrase if it is short and follows a
+	// local resolution from the same answer.
+	if (index > first && chunk.role == ArcChunkRole::Development) {
+		const ArcChunk &previous = chunks.at(index - 1);
+		const double durationSec = std::max(0.0, chunk.endSec - chunk.startSec);
+		const double pauseSec = std::max(previous.pauseAfterSec, chunk.pauseBeforeSec);
+		const double continuity = cosineSimilarity(previous.embedding, chunk.embedding);
+		const bool followsConclusion = previous.role == ArcChunkRole::LocalResolution ||
+			previous.conclusionScore >= 0.48 || previous.resolution >= 0.54;
+		return followsConclusion && durationSec <= 6.5 && pauseSec <= 1.35 &&
+			(continuity >= 0.34 || pauseSec <= 0.70) && endingSignal >= endingDefect - 0.08;
+	}
+	return false;
+}
+
+static ContextualArcScore contextualStateMachineScore(const QVector<ArcChunk> &chunks, int first, int last,
+	const ExchangeArcBoundaryRefinementOptions &options)
+{
+	ContextualArcScore score;
+	if (options.scoring.presetId != QStringLiteral("viewer_message_response")) {
+		score.valid = true;
+		score.score = 0.62;
+		return score;
+	}
+	if (first < 0 || last < first || last >= static_cast<int>(chunks.size()))
+		return score;
+
+	if (!canBeContextualOpening(chunks.at(first))) {
+		score.penalty = 0.42;
+		return score;
+	}
+
+	bool sawDevelopment = false;
+	bool sawConclusion = false;
+	bool sawPrematureConclusion = false;
+	int developmentCount = 0;
+	int conclusionIndex = -1;
+	for (int i = first; i <= last; ++i) {
+		const ArcChunk &chunk = chunks.at(i);
+		if (isBlockingArcRole(chunk.role)) {
+			score.penalty = 0.50;
+			return score;
+		}
+
+		if (i == first) {
+			score.openingIndex = i;
+			continue;
+		}
+
+		const bool isConclusion = canBeContextualConclusion(chunks, first, i);
+		const bool isDevelopment = canBeContextualDevelopment(chunk);
+		if (sawConclusion && isDevelopment && !isConclusion) {
+			score.penalty = 0.36;
+			return score;
+		}
+		if (isConclusion) {
+			if (i < last)
+				sawPrematureConclusion = true;
+			sawConclusion = true;
+			conclusionIndex = i;
+			continue;
+		}
+		if (isDevelopment) {
+			sawDevelopment = true;
+			if (score.firstDevelopmentIndex < 0)
+				score.firstDevelopmentIndex = i;
+			++developmentCount;
+			continue;
+		}
+		score.penalty = 0.28;
+		return score;
+	}
+
+	if (!sawDevelopment && developmentCount <= 0) {
+		// Allow a compact two-block answer where the opening block also contains body.
+		const ArcChunk &opening = chunks.at(first);
+		sawDevelopment = opening.developmentScore >= 0.46 || opening.value >= 0.58;
+	}
+	if (!sawDevelopment || !canBeContextualConclusion(chunks, first, last)) {
+		score.penalty = 0.32;
+		return score;
+	}
+
+	const ArcChunk &opening = chunks.at(first);
+	const ArcChunk &ending = chunks.at(last);
+	score.valid = true;
+	score.implicitOpening = opening.role == ArcChunkRole::Development;
+	score.terminalFollowThrough = ending.role == ArcChunkRole::Development;
+	score.conclusionIndex = conclusionIndex >= 0 ? conclusionIndex : last;
+	score.opening = boundedScore(std::max(opening.openingScore, opening.hook) -
+		(score.implicitOpening ? 0.045 : 0.0));
+	score.development = averageScore(chunks, first, last, &ArcChunk::developmentScore);
+	if (developmentCount > 0 && score.firstDevelopmentIndex >= 0)
+		score.development = std::max(score.development,
+			averageScore(chunks, score.firstDevelopmentIndex, std::max(score.firstDevelopmentIndex, last - 1),
+				&ArcChunk::developmentScore));
+	score.conclusion = boundedScore(std::max(ending.conclusionScore, ending.resolution) -
+		(score.terminalFollowThrough ? 0.025 : 0.0));
+	const double cohesion = cohesionScore(chunks, first, last);
+	const double defect = averageScore(chunks, first, last, &ArcChunk::defectScore);
+	const double prematurePenalty = sawPrematureConclusion && !score.terminalFollowThrough ? 0.06 : 0.0;
+	score.score = boundedScore((score.opening * 0.30) + (score.development * 0.30) +
+		(score.conclusion * 0.30) + (cohesion * 0.14) - (defect * 0.12) - prematurePenalty);
+	return score;
+}
+
 static double durationFit(double durationSec, const ExchangeArcBoundaryRefinementOptions &options)
 {
 	const double minSec = std::max(1.0, options.generation.minDurationSec);
@@ -411,9 +822,13 @@ static ArcSpanScore scoreSpan(const QVector<ArcChunk> &chunks, int first, int la
 
 	const bool openingPrelude = isSemanticPrelude(chunks.at(first));
 	const bool weakOpeningPrelude = isWeakOpeningPrelude(chunks, first);
+	const bool staleViewerLeadingResolution =
+		options.scoring.presetId == QStringLiteral("viewer_message_response") &&
+		(isStaleViewerLeadingResolution(chunks, first) || isViewerStartBoundaryContaminated(chunks, first));
 	const bool tailRisk = isTailRisk(chunks, last);
 	score.opening = boundedScore(chunks.at(first).openingScore - (openingPrelude ? 0.18 : 0.0) -
-		(weakOpeningPrelude && !openingPrelude ? 0.12 : 0.0));
+		(weakOpeningPrelude && !openingPrelude ? 0.12 : 0.0) -
+		(staleViewerLeadingResolution ? 0.18 : 0.0));
 	score.development = boundedScore((value * 0.30) + (development * 0.30) + (score.cohesion * 0.24) +
 		(durationFit(durationSec, options) * 0.10) - (averageDefect * 0.16));
 	const double endingDefect = std::max(chunks.at(last).meta, chunks.at(last).shift);
@@ -426,6 +841,23 @@ static ArcSpanScore scoreSpan(const QVector<ArcChunk> &chunks, int first, int la
 		((openingPrelude || weakOpeningPrelude || tailRisk) ? 0.0 : 0.14));
 	score.score = boundedScore((score.opening * 0.28) + (score.development * 0.32) +
 		(score.conclusion * 0.30) + (score.boundaryCleanliness * 0.10) - (score.tailRisk * 0.10));
+
+	if (options.scoring.presetId == QStringLiteral("viewer_message_response")) {
+		const ContextualArcScore contextual = contextualStateMachineScore(chunks, first, last, options);
+		if (contextual.valid) {
+			score.opening = boundedScore((score.opening * 0.55) + (contextual.opening * 0.45));
+			score.development = boundedScore((score.development * 0.55) + (contextual.development * 0.45));
+			score.conclusion = boundedScore((score.conclusion * 0.55) + (contextual.conclusion * 0.45));
+			score.boundaryCleanliness = boundedScore(std::max(score.boundaryCleanliness, contextual.score * 0.92));
+			score.score = boundedScore((score.score * 0.42) + (contextual.score * 0.58) + 0.035 -
+				(contextual.implicitOpening ? 0.015 : 0.0));
+		} else {
+			score.opening = boundedScore(score.opening * 0.62);
+			score.boundaryCleanliness = boundedScore(score.boundaryCleanliness * 0.52);
+			score.tailRisk = std::max(score.tailRisk, 0.58 + contextual.penalty);
+			score.score = boundedScore((score.score * 0.38) - contextual.penalty);
+		}
+	}
 	return score;
 }
 
@@ -435,6 +867,7 @@ static int firstLocalResolutionEnd(const QVector<ArcChunk> &chunks, int first, i
 	if (first < 0 || last <= first || last >= static_cast<int>(chunks.size()))
 		return -1;
 
+	const bool viewerPreset = options.scoring.presetId == QStringLiteral("viewer_message_response");
 	const ArcSpanScore fullScore = scoreSpan(chunks, first, last, options);
 	int bestEnd = -1;
 	double bestScore = 0.0;
@@ -442,8 +875,6 @@ static int firstLocalResolutionEnd(const QVector<ArcChunk> &chunks, int first, i
 		if (!canUseSpan(chunks, first, end, options))
 			continue;
 		const double trimmedTailSec = chunks.at(last).endSec - chunks.at(end).endSec;
-		if (trimmedTailSec < 5.0)
-			continue;
 
 		const ArcChunk &ending = chunks.at(end);
 		const ArcChunk &next = chunks.at(end + 1);
@@ -453,14 +884,27 @@ static int firstLocalResolutionEnd(const QVector<ArcChunk> &chunks, int first, i
 		const bool nextLooksTail = isPauseSeparatedSemanticTurn(ending, next) || isTailRisk(chunks, end + 1) ||
 			next.role == ArcChunkRole::TailOrNewTurn || next.shift >= nextPositive - 0.02 ||
 			(next.meta >= nextPositive - 0.01 && next.openingScore < 0.42);
+		const bool clearTopicBreak = nextLooksTail &&
+			(isPauseSeparatedSemanticTurn(ending, next) || next.role == ArcChunkRole::TailOrNewTurn ||
+			 next.shift >= nextPositive + 0.02);
+		const double minSoftTailTrimSec = viewerPreset ? 10.5 : 7.0;
+		if (trimmedTailSec < (clearTopicBreak ? 3.0 : minSoftTailTrimSec))
+			continue;
 		const bool reachesConclusion = shortened.conclusion >= 0.42 || ending.conclusionScore >= 0.42 ||
 			ending.resolution >= 0.58;
 		const bool hasDevelopment = shortened.development >= 0.46 || (end - first) >= 2;
 		const bool keepsEnoughQuality = shortened.score + 0.035 >= fullScore.score || trimmedTailSec >= 9.0;
-		if (!nextLooksTail || !reachesConclusion || !hasDevelopment || !keepsEnoughQuality)
+		const double plateauTrimMinSec = viewerPreset ? 12.0 : 9.0;
+		const bool conclusionPlateauTail = reachesConclusion && trimmedTailSec >= plateauTrimMinSec &&
+			ending.conclusionScore >= 0.48 && ending.resolution >= 0.56 &&
+			shortened.development >= fullScore.development - 0.05 &&
+			shortened.conclusion >= fullScore.conclusion - 0.07 &&
+			shortened.tailRisk <= fullScore.tailRisk + 0.08;
+		if ((!nextLooksTail && !conclusionPlateauTail) || !reachesConclusion || !hasDevelopment || !keepsEnoughQuality)
 			continue;
 
-		const double candidateScore = shortened.score + (trimmedTailSec >= 10.0 ? 0.05 : 0.0) - (nextDefect * 0.03);
+		const double candidateScore = shortened.score + (trimmedTailSec >= 10.0 ? 0.05 : 0.0) +
+			(conclusionPlateauTail ? 0.035 : 0.0) - (nextDefect * 0.03);
 		if (bestEnd < 0 || candidateScore > bestScore) {
 			bestEnd = end;
 			bestScore = candidateScore;
@@ -499,6 +943,24 @@ static QString boundaryEvidence(const QVector<ArcChunk> &chunks, int first, int 
 		     QString::number(chunks.at(last).pauseAfterSec, 'f', 1));
 }
 
+static QString stateMachineEvidence(const QVector<ArcChunk> &chunks, int first, int last,
+	const ExchangeArcBoundaryRefinementOptions &options)
+{
+	const ContextualArcScore score = contextualStateMachineScore(chunks, first, last, options);
+	if (!score.valid)
+		return QStringLiteral("exchange_arc_state_machine:invalid penalty:%1")
+			.arg(QString::number(score.penalty, 'f', 2));
+	QStringList flags;
+	if (score.implicitOpening)
+		flags.append(QStringLiteral("implicit_opening"));
+	if (score.terminalFollowThrough)
+		flags.append(QStringLiteral("terminal_followthrough"));
+	return QStringLiteral("exchange_arc_state_machine:valid score:%1 opening:%2 development:%3 conclusion:%4 flags:%5")
+		.arg(QString::number(score.score, 'f', 2), QString::number(score.opening, 'f', 2),
+		     QString::number(score.development, 'f', 2), QString::number(score.conclusion, 'f', 2),
+		     flags.isEmpty() ? QStringLiteral("none") : flags.join(QLatin1Char(',')));
+}
+
 static void writeArcScores(ClipCandidate &candidate, const ArcSpanScore &score)
 {
 	candidate.scores.arcOpening = score.opening;
@@ -515,17 +977,19 @@ ClipCandidate ExchangeArcBoundaryRefiner::refine(const TranscriptIndex &index, c
 	const ExchangeArcBoundaryRefinementOptions &options) const
 {
 	const double originalDurationSec = candidate.range.endSec - candidate.range.startSec;
-	if (originalDurationSec <= std::max(options.generation.minDurationSec + 4.0, 20.0))
+	const bool viewerPreset = options.scoring.presetId == QStringLiteral("viewer_message_response");
+	if (!viewerPreset && originalDurationSec <= std::max(options.generation.minDurationSec + 4.0, 20.0))
 		return candidate;
 	if (!options.embeddingProvider || !options.embeddingProvider->isAvailable())
 		return candidate;
 
 	ClipCandidate analysisCandidate = candidate;
-	const bool viewerPreset = options.scoring.presetId == QStringLiteral("viewer_message_response");
 	if (viewerPreset) {
 		const ClipDuration expandedRange = index.clampRange(
-			{std::max(options.generation.searchRange.startSec, candidate.range.startSec - 6.5),
-			 std::min(options.generation.searchRange.endSec, candidate.range.endSec + 22.0)},
+			{std::max(options.generation.searchRange.startSec,
+				 candidate.range.startSec - VIEWER_PRESET_ANALYSIS_LOOKBACK_SEC),
+			 std::min(options.generation.searchRange.endSec,
+				 candidate.range.endSec + VIEWER_PRESET_ANALYSIS_LOOKAHEAD_SEC)},
 			options.generation.searchRange);
 		if (expandedRange.endSec > expandedRange.startSec &&
 		    (expandedRange.startSec < candidate.range.startSec - 0.5 ||
@@ -541,6 +1005,7 @@ ClipCandidate ExchangeArcBoundaryRefiner::refine(const TranscriptIndex &index, c
 	if (chunks.size() < 2)
 		return candidate;
 	scoreChunks(chunks, options);
+	classifyContextualRoles(chunks, options);
 
 	ArcSpanScore best;
 	const double minDurationSec = std::max(8.0, options.generation.boundaryMinDurationSec);
@@ -557,13 +1022,32 @@ ClipCandidate ExchangeArcBoundaryRefiner::refine(const TranscriptIndex &index, c
 				continue;
 			const ArcSpanScore candidateScore = scoreSpan(chunks, first, last, options);
 			const bool betterScore = candidateScore.score > best.score + 0.012;
-			const bool similarCleanerOpening = std::fabs(candidateScore.score - best.score) <= 0.018 &&
-				best.first >= 0 && first > best.first && candidateScore.opening >= best.opening + 0.030 &&
-				candidateScore.boundaryCleanliness >= best.boundaryCleanliness - 0.025;
+			const bool bestHasBadViewerStart = viewerPreset && best.first >= 0 &&
+				(isSemanticPrelude(chunks.at(best.first)) ||
+				 isStaleViewerLeadingResolution(chunks, best.first) ||
+				 isViewerStartBoundaryContaminated(chunks, best.first));
+			const bool canPreferLaterOpening = !viewerPreset || bestHasBadViewerStart;
+			const bool similarCleanerOpening = canPreferLaterOpening &&
+				std::fabs(candidateScore.score - best.score) <= (bestHasBadViewerStart ? 0.055 : 0.018) &&
+				best.first >= 0 && first > best.first &&
+				(candidateScore.opening >= best.opening + (bestHasBadViewerStart ? 0.010 : 0.030) ||
+				 candidateScore.boundaryCleanliness >= best.boundaryCleanliness + 0.020) &&
+				candidateScore.development >= best.development - 0.040 &&
+				candidateScore.conclusion >= best.conclusion - 0.050 &&
+				candidateScore.tailRisk <= best.tailRisk + 0.050;
 			const bool similarShorterCleanerEnding = std::fabs(candidateScore.score - best.score) <= 0.020 &&
 				best.first >= 0 && first == best.first && last < best.last &&
 				candidateScore.conclusion >= best.conclusion - 0.010 && candidateScore.tailRisk <= best.tailRisk + 0.015;
-			if (betterScore || similarCleanerOpening || similarShorterCleanerEnding)
+			const bool addsCleanViewerContext = viewerPreset && best.first >= 0 && first < best.first &&
+				!isStaleViewerLeadingResolution(chunks, first) &&
+				!isViewerStartBoundaryContaminated(chunks, first) &&
+				addsUsefulViewerOpeningContext(chunks, first, best.first);
+			const bool similarEarlierViewerContext = viewerPreset && best.first >= 0 && first < best.first &&
+				last >= best.last && candidateScore.score + 0.032 >= best.score &&
+				candidateScore.development >= best.development - 0.035 &&
+				candidateScore.conclusion >= best.conclusion - 0.045 &&
+				candidateScore.tailRisk <= best.tailRisk + 0.050 && addsCleanViewerContext;
+			if (betterScore || similarCleanerOpening || similarShorterCleanerEnding || similarEarlierViewerContext)
 				best = candidateScore;
 		}
 	}
@@ -575,27 +1059,41 @@ ClipCandidate ExchangeArcBoundaryRefiner::refine(const TranscriptIndex &index, c
 	int adjustedLast = best.last;
 	bool trimmedOpeningMeta = false;
 	bool trimmedWeakOpeningPrelude = false;
+	bool trimmedStaleOpeningResolution = false;
 	bool extendedTailContinuation = false;
 	bool trimmedHardNoisyEnding = false;
 	bool trimmedLongPauseTail = false;
 	bool blockedTailByLongPause = false;
 	bool extendedStartContext = false;
 	bool trimmedFirstResolutionTail = false;
+	bool extendedViewerConclusionFollowThrough = false;
 
 	while (adjustedFirst < adjustedLast && isSemanticPrelude(chunks.at(adjustedFirst)) &&
 	       canUseSpan(chunks, adjustedFirst + 1, adjustedLast, options)) {
 		++adjustedFirst;
 		trimmedOpeningMeta = true;
 	}
-	while (adjustedFirst < adjustedLast && isWeakOpeningPrelude(chunks, adjustedFirst) &&
+	while (!viewerPreset && adjustedFirst < adjustedLast && isWeakOpeningPrelude(chunks, adjustedFirst) &&
 	       canUseSpan(chunks, adjustedFirst + 1, adjustedLast, options)) {
 		++adjustedFirst;
 		trimmedWeakOpeningPrelude = true;
 	}
+	while (viewerPreset && adjustedFirst < adjustedLast &&
+	       (isStaleViewerLeadingResolution(chunks, adjustedFirst) ||
+		isViewerStartBoundaryContaminated(chunks, adjustedFirst)) &&
+	       canUseSpan(chunks, adjustedFirst + 1, adjustedLast, options)) {
+		++adjustedFirst;
+		trimmedStaleOpeningResolution = true;
+	}
 
 	int contextExtensions = 0;
-	while (contextExtensions < 3 && adjustedFirst > 0 && shouldPrependOpeningContext(chunks, adjustedFirst) &&
+	const int maxContextExtensions = viewerPreset ? VIEWER_PRESET_MAX_CONTEXT_EXTENSIONS : DEFAULT_MAX_CONTEXT_EXTENSIONS;
+	while (contextExtensions < maxContextExtensions && adjustedFirst > 0 &&
+	       (shouldPrependOpeningContext(chunks, adjustedFirst) ||
+		(viewerPreset && addsUsefulViewerOpeningContext(chunks, adjustedFirst - 1, adjustedFirst))) &&
 	       isEssentialOpeningContext(chunks.at(adjustedFirst - 1), chunks.at(adjustedFirst)) &&
+	       (!viewerPreset || (!isStaleViewerLeadingResolution(chunks, adjustedFirst - 1) &&
+				  !isViewerStartBoundaryContaminated(chunks, adjustedFirst - 1))) &&
 	       canUseSpan(chunks, adjustedFirst - 1, adjustedLast, options)) {
 		--adjustedFirst;
 		++contextExtensions;
@@ -603,9 +1101,15 @@ ClipCandidate ExchangeArcBoundaryRefiner::refine(const TranscriptIndex &index, c
 	}
 
 	int tailExtensions = 0;
-	while (tailExtensions < 6 && adjustedLast + 1 < static_cast<int>(chunks.size()) &&
-	       isSemanticContinuation(chunks, adjustedLast, adjustedLast + 1) &&
-	       canUseSpan(chunks, adjustedFirst, adjustedLast + 1, options)) {
+	double viewerTailExtensionSec = 0.0;
+	while (tailExtensions < (viewerPreset ? 10 : 6) && adjustedLast + 1 < static_cast<int>(chunks.size())) {
+		const bool normalContinuation = isSemanticContinuation(chunks, adjustedLast, adjustedLast + 1);
+		const bool viewerContinuation = viewerPreset && isViewerAnswerContinuation(chunks, adjustedLast, adjustedLast + 1) &&
+			viewerTailExtensionSec + std::max(0.0, chunks.at(adjustedLast + 1).endSec - chunks.at(adjustedLast + 1).startSec) <= 16.0;
+		if ((!normalContinuation && !viewerContinuation) ||
+		    !canUseSpan(chunks, adjustedFirst, adjustedLast + 1, options))
+			break;
+		viewerTailExtensionSec += std::max(0.0, chunks.at(adjustedLast + 1).endSec - chunks.at(adjustedLast + 1).startSec);
 		++adjustedLast;
 		++tailExtensions;
 		extendedTailContinuation = true;
@@ -625,6 +1129,15 @@ ClipCandidate ExchangeArcBoundaryRefiner::refine(const TranscriptIndex &index, c
 	if (earlyConclusionEnd >= adjustedFirst && earlyConclusionEnd < adjustedLast) {
 		adjustedLast = earlyConclusionEnd;
 		trimmedFirstResolutionTail = true;
+		while (viewerPreset && adjustedLast + 1 < static_cast<int>(chunks.size()) &&
+		       (isViewerConclusionFollowThrough(chunks, adjustedLast, adjustedLast + 1) ||
+			shouldExtendViewerConclusionFollowThroughSoft(chunks, adjustedLast, adjustedLast + 1) ||
+			isViewerAnswerContinuation(chunks, adjustedLast, adjustedLast + 1)) &&
+		       canUseSpan(chunks, adjustedFirst, adjustedLast + 1, options) &&
+		       chunks.at(adjustedLast + 1).endSec - chunks.at(earlyConclusionEnd).endSec <= 16.0) {
+			++adjustedLast;
+			extendedViewerConclusionFollowThrough = true;
+		}
 	}
 	if (adjustedLast + 1 < static_cast<int>(chunks.size()) &&
 	    isPauseSeparatedSemanticTurn(chunks.at(adjustedLast), chunks.at(adjustedLast + 1)))
@@ -681,6 +1194,8 @@ ClipCandidate ExchangeArcBoundaryRefiner::refine(const TranscriptIndex &index, c
 		refined.evidence.append(QStringLiteral("exchange_arc_opening_meta_trimmed"));
 	if (trimmedWeakOpeningPrelude)
 		refined.evidence.append(QStringLiteral("exchange_arc_weak_opening_prelude_trimmed"));
+	if (trimmedStaleOpeningResolution)
+		refined.evidence.append(QStringLiteral("exchange_arc_stale_opening_resolution_trimmed"));
 	if (extendedTailContinuation)
 		refined.evidence.append(QStringLiteral("exchange_arc_tail_continuation"));
 	if (trimmedHardNoisyEnding)
@@ -689,10 +1204,13 @@ ClipCandidate ExchangeArcBoundaryRefiner::refine(const TranscriptIndex &index, c
 		refined.evidence.append(QStringLiteral("exchange_arc_pause_tail_trimmed"));
 	if (trimmedFirstResolutionTail)
 		refined.evidence.append(QStringLiteral("exchange_arc_first_resolution_tail_trimmed"));
+	if (extendedViewerConclusionFollowThrough)
+		refined.evidence.append(QStringLiteral("exchange_arc_viewer_conclusion_followthrough_extended"));
 	if (blockedTailByLongPause)
 		refined.evidence.append(QStringLiteral("exchange_arc_pause_tail_blocked"));
 	refined.evidence.append(arcEvidence(adjustedScore));
 	refined.evidence.append(roleEvidence(chunks, adjustedFirst, adjustedLast));
+	refined.evidence.append(stateMachineEvidence(chunks, adjustedFirst, adjustedLast, options));
 	refined.evidence.append(boundaryEvidence(chunks, adjustedFirst, adjustedLast));
 	refined.evidence.removeDuplicates();
 	return refined;

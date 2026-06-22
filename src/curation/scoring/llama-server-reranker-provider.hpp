@@ -2,6 +2,7 @@
 
 #include "curation/scoring/semantic-reranker.hpp"
 
+#include <QMutex>
 #include <QUrl>
 
 #include <functional>
@@ -35,8 +36,10 @@ private:
 	QVector<double> parseRerankResponse(const QByteArray &payload, qsizetype expectedSize) const;
 	QString preparedText(const QString &text) const;
 	void markFailure(const QString &message) const;
+	void setLastError(const QString &message) const;
 
 	LlamaServerRerankerProviderOptions options_;
+	mutable QMutex stateMutex_;
 	mutable bool failed_ = false;
 	mutable QString lastError_;
 };

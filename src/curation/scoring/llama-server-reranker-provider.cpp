@@ -2,6 +2,7 @@
 
 #include <QEventLoop>
 #include <QJsonArray>
+#include <QMutexLocker>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkAccessManager>
@@ -136,6 +137,7 @@ LlamaServerRerankerProvider::LlamaServerRerankerProvider(LlamaServerRerankerProv
 
 bool LlamaServerRerankerProvider::isAvailable() const
 {
+	QMutexLocker locker(&stateMutex_);
 	return options_.enabled && !failed_ && normalizedEndpoint(options_.endpoint).isValid();
 }
 
@@ -210,7 +212,7 @@ QVector<double> LlamaServerRerankerProvider::scoreBatch(const QString &query,
 	reply->deleteLater();
 
 	if (options_.cancellationCallback && options_.cancellationCallback()) {
-		lastError_ = QStringLiteral("reranker_canceled");
+		setLastError(QStringLiteral("reranker_canceled"));
 		return {};
 	}
 
@@ -238,6 +240,7 @@ QString LlamaServerRerankerProvider::endpoint() const
 
 QString LlamaServerRerankerProvider::lastError() const
 {
+	QMutexLocker locker(&stateMutex_);
 	return lastError_;
 }
 
@@ -347,6 +350,13 @@ QString LlamaServerRerankerProvider::preparedText(const QString &text) const
 
 void LlamaServerRerankerProvider::markFailure(const QString &message) const
 {
+	QMutexLocker locker(&stateMutex_);
 	failed_ = true;
+	lastError_ = message;
+}
+
+void LlamaServerRerankerProvider::setLastError(const QString &message) const
+{
+	QMutexLocker locker(&stateMutex_);
 	lastError_ = message;
 }

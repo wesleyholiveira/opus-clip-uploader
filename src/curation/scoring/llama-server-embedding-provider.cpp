@@ -1,6 +1,7 @@
 #include "curation/scoring/llama-server-embedding-provider.hpp"
 
 #include <QEventLoop>
+#include <QMutexLocker>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -36,6 +37,7 @@ LlamaServerEmbeddingProvider::LlamaServerEmbeddingProvider(LlamaServerEmbeddingP
 
 bool LlamaServerEmbeddingProvider::isAvailable() const
 {
+	QMutexLocker locker(&stateMutex_);
 	return options_.enabled && !failed_ && normalizedEndpoint(options_.endpoint).isValid();
 }
 
@@ -101,7 +103,7 @@ SemanticEmbedding LlamaServerEmbeddingProvider::embed(const QString &text) const
 	reply->deleteLater();
 
 	if (options_.cancellationCallback && options_.cancellationCallback()) {
-		lastError_ = QStringLiteral("embedding_canceled");
+		setLastError(QStringLiteral("embedding_canceled"));
 		return {};
 	}
 
@@ -139,6 +141,7 @@ QString LlamaServerEmbeddingProvider::endpoint() const
 
 QString LlamaServerEmbeddingProvider::lastError() const
 {
+	QMutexLocker locker(&stateMutex_);
 	return lastError_;
 }
 
@@ -216,6 +219,7 @@ QString LlamaServerEmbeddingProvider::preparedText(const QString &text) const
 
 void LlamaServerEmbeddingProvider::markFailure(const QString &message, bool fatal) const
 {
+	QMutexLocker locker(&stateMutex_);
 	lastError_ = message;
 	++consecutiveFailures_;
 	if (fatal || consecutiveFailures_ >= MAX_CONSECUTIVE_FAILURES_BEFORE_UNAVAILABLE)
@@ -224,7 +228,14 @@ void LlamaServerEmbeddingProvider::markFailure(const QString &message, bool fata
 
 void LlamaServerEmbeddingProvider::markSuccess() const
 {
+	QMutexLocker locker(&stateMutex_);
 	consecutiveFailures_ = 0;
 	failed_ = false;
 	lastError_.clear();
+}
+
+void LlamaServerEmbeddingProvider::setLastError(const QString &message) const
+{
+	QMutexLocker locker(&stateMutex_);
+	lastError_ = message;
 }

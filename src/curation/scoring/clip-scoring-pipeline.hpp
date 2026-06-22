@@ -62,14 +62,29 @@ private:
 							 const QVector<SemanticCoarseRegion> &regions) const;
 	QVector<ClipCandidate> fallbackCandidatesFromLocalHeuristics(const TranscriptIndex &index,
 							 const ClipScoringPipelineOptions &options) const;
+	QVector<ClipCandidate> expandCandidateBeam(const TranscriptIndex &index,
+					       const ClipScoringPipelineOptions &options,
+					       QVector<ClipCandidate> candidates) const;
+	QVector<ClipCandidate> expandCandidateVariants(const TranscriptIndex &index,
+						   const ClipScoringPipelineOptions &options,
+						   const ClipCandidate &candidate) const;
 	QVector<ClipCandidate> refineCandidatesToSemanticTopicSpans(const TranscriptIndex &index,
 							 const ClipScoringPipelineOptions &options,
 							 QVector<ClipCandidate> candidates) const;
+	QVector<ClipCandidate> semanticScoreCandidates(const TranscriptIndex &index,
+						 const ClipScoringPipelineOptions &options,
+						 QVector<ClipCandidate> candidates) const;
 	ClipCandidate refineCandidateToSemanticTopicSpan(const TranscriptIndex &index,
 						       const ClipScoringPipelineOptions &options,
 						       const ClipCandidate &candidate) const;
 	ClipCandidate buildCandidateForRange(const TranscriptIndex &index, const ClipScoringPipelineOptions &options,
 					     const ClipDuration &range, const SemanticCoarseRegion &region) const;
+	ClipCandidate buildCandidateVariantFromSeed(const TranscriptIndex &index,
+						      const ClipScoringPipelineOptions &options,
+						      const ClipCandidate &seed,
+						      const ClipDuration &range,
+						      const QString &variantEvidence) const;
+	int semanticCandidateBudgetFromOptions(const ClipScoringPipelineOptions &options) const;
 	ClipCandidate scoreStructurally(const TranscriptIndex &index, const ClipCandidate &candidate) const;
 	ClipCandidate buildCandidateForSegmentWindow(const TranscriptIndex &index,
 						       const ClipScoringPipelineOptions &options, int firstIndex, int lastIndex,

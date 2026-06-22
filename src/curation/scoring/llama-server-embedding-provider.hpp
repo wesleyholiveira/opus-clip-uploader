@@ -3,6 +3,7 @@
 #include "curation/scoring/embedding-cache.hpp"
 #include "curation/scoring/semantic-model.hpp"
 
+#include <QMutex>
 #include <QUrl>
 
 #include <functional>
@@ -36,9 +37,11 @@ private:
 	QString preparedText(const QString &text) const;
 	void markFailure(const QString &message, bool fatal = false) const;
 	void markSuccess() const;
+	void setLastError(const QString &message) const;
 
 	LlamaServerEmbeddingProviderOptions options_;
 	mutable EmbeddingCache cache_;
+	mutable QMutex stateMutex_;
 	mutable bool failed_ = false;
 	mutable int consecutiveFailures_ = 0;
 	mutable QString lastError_;
