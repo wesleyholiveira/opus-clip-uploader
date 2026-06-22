@@ -240,13 +240,11 @@ void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCance
 			if (sourceLang.isEmpty())
 				sourceLang = QStringLiteral("auto");
 
-			const QString openAiApiKey = get_openai_api_key();
-			const QString openAiModel = get_openai_model();
 
 			auto *worker = new UploadWorker(apiKey, QString::fromStdString(fInfo.filePath),
 							QString::fromStdString(fInfo.fileName),
 							QString::fromStdString(fInfo.mimeType), brandTemplateId,
-							sourceLang, curationSettings, openAiApiKey, openAiModel);
+							sourceLang, curationSettings);
 
 			state->running++;
 			state->workers.append(worker);

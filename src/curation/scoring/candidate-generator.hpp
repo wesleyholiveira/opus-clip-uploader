@@ -14,11 +14,11 @@ struct CandidateGenerationOptions {
 	QString mainTarget;
 	bool reliableMainTarget = false;
 	double minDurationSec = 18.0;
-	double maxDurationSec = 75.0;
+	double maxDurationSec = 180.0;
 	double anchorPaddingBeforeSec = 0.35;
-	double defaultAfterSec = 32.0;
-	double emotionalAfterSec = 38.0;
-	double adviceAfterSec = 42.0;
+	double defaultAfterSec = 90.0;
+	double emotionalAfterSec = 120.0;
+	double adviceAfterSec = 150.0;
 	double boundaryMinDurationSec = 8.0;
 	double slidingWindowStepSec = 15.0;
 	int maxRawCandidates = 120;

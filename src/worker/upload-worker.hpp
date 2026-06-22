@@ -20,8 +20,7 @@ class UploadWorker : public QObject {
 public:
 	explicit UploadWorker(QString apiKey, QString filePath, QString fileName, QString mimeType,
 			      QString brandTemplateId = {}, QString sourceLang = "auto",
-			      CurationSettings curationSettings = {}, QString openAiApiKey = {},
-			      QString openAiModel = {}, QObject *parent = nullptr);
+			      CurationSettings curationSettings = {}, QObject *parent = nullptr);
 
 public slots:
 	void run();
@@ -57,8 +56,6 @@ private:
 	QString brandTemplateId;
 	QString sourceLang;
 	CurationSettings curationSettings;
-	QString openAiApiKey;
-	QString openAiModel;
 	OpusClipClient *client = nullptr;
 	QProcess *currentProcess = nullptr;
 	std::atomic_bool cancelRequested{false};

@@ -161,22 +161,10 @@ static QWidget *main_window()
 	return reinterpret_cast<QWidget *>(obs_frontend_get_main_window());
 }
 
-static bool is_openai_model_enabled()
-{
-	const QString model = get_openai_model();
-	return !model.isEmpty() && model != QStringLiteral("disabled");
-}
-
 static void log_on_demand_transcription_status()
 {
-	if (!is_openai_model_enabled()) {
-		blog(LOG_INFO,
-		     "[clip-cropper] OpenAI model is disabled. Audio transcription will be skipped on review.");
-		return;
-	}
-
 	blog(LOG_INFO,
-	     "[clip-cropper] OpenAI model is enabled. Audio transcription will run from the video file via ffmpeg when the review flow starts.");
+	     "[clip-cropper] Local transcription is available for semantic review scoring when the review flow starts.");
 }
 
 static void ensure_opus_api_key_on_ui_thread()
@@ -267,7 +255,7 @@ static void clip_cropper_vertical_recording_stopped(void *data, calldata_t *cd)
 	UNUSED_PARAMETER(data);
 	UNUSED_PARAMETER(cd);
 
-	blog(LOG_INFO, "[clip-cropper] Vertical recording stopped. Ignoring dialog open to avoid duplicate prompt.");
+	blog(LOG_INFO, "[clip-cropper] Vertical recording stopped. Ignoring dialog open to avoid duplicate upload review dialog.");
 }
 
 static QString obs_text(const char *key)

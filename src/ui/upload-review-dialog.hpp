@@ -9,8 +9,8 @@ class QCheckBox;
 class QComboBox;
 class QLabel;
 class QLineEdit;
-class QPlainTextEdit;
 class QProgressDialog;
+class QPlainTextEdit;
 class QPushButton;
 class QTableWidget;
 class VideoMarkerEditor;
@@ -37,6 +37,7 @@ private:
 	QTableWidget *clipTable = nullptr;
 	QLabel *creditEstimateLabel = nullptr;
 	QLineEdit *topicKeywordsInput = nullptr;
+	QPlainTextEdit *opusPromptInput = nullptr;
 	QComboBox *genreInput = nullptr;
 	QComboBox *curationPresetInput = nullptr;
 	QComboBox *modelInput = nullptr;
@@ -44,7 +45,6 @@ private:
 	QComboBox *sourceLanguageInput = nullptr;
 	QComboBox *transcriptionLanguageInput = nullptr;
 	QCheckBox *skipCurateInput = nullptr;
-	QPlainTextEdit *customPromptInput = nullptr;
 	QPushButton *suggestClipRangesButton = nullptr;
 	QProgressDialog *semanticSuggestionProgressDialog = nullptr;
 	bool semanticSuggestionInProgress = false;
@@ -62,16 +62,3 @@ private:
 	void saveCurationOptions() const;
 	QString currentReviewSettingsKey() const;
 };
-
-inline bool review_generated_prompt_before_upload(QWidget *parent, const QString &videoPath, CurationSettings &settings)
-{
-	if (settings.aiPrompt.trimmed().isEmpty())
-		return true;
-
-	UploadReviewDialog promptReviewDialog(videoPath, settings, true, parent);
-	if (promptReviewDialog.exec() != QDialog::Accepted)
-		return false;
-
-	settings = promptReviewDialog.curationSettings();
-	return true;
-}

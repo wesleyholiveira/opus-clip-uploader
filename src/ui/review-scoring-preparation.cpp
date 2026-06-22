@@ -1,13 +1,15 @@
 #include "ui/ui-common.hpp"
 #include "ui/review-scoring-preparation.hpp"
 
-#include "ui/gpt-review-prompt.hpp"
+#include "ui/curation-transcript-preparation.hpp"
 
 #include "curation/curation-preset.hpp"
+#include "curation/curation-preset-profile.hpp"
 #include "curation/scoring/clip-scoring-pipeline.hpp"
 #include "curation/scoring/llama-server-embedding-provider.hpp"
 #include "curation/scoring/llama-server-reranker-provider.hpp"
 #include "curation/scoring/semantic-embedding-settings.hpp"
+#include "curation/scoring/semantic-prototypes.hpp"
 #include "models/transcript.hpp"
 
 #ifdef __cplusplus
@@ -18,6 +20,7 @@ extern "C" {
 }
 #endif
 
+#include <QByteArray>
 #include <QCoreApplication>
 #include <QPointer>
 #include <QThread>
@@ -35,10 +38,10 @@ namespace {
 
 constexpr int kMaxPrototypeTexts = 16;
 constexpr int kMaxCandidatesBeforeEmbedding = 24;
-constexpr int kMaxCandidateTextChars = 1800;
-constexpr int kMaxRerankerTextChars = 900;
+constexpr int kMaxCandidateTextChars = 4000;
+constexpr int kMaxRerankerTextChars = 3200;
 constexpr double DEFAULT_MIN_DURATION_SEC = 8.0;
-constexpr double DEFAULT_MAX_DURATION_SEC = 75.0;
+constexpr double DEFAULT_MAX_DURATION_SEC = 180.0;
 
 struct ReviewSuggestionBudget {
 	int maxReviewMarkers = 3;
@@ -188,39 +191,39 @@ ReviewSuggestionBudget reviewSuggestionBudgetForDuration(double durationSec)
 	} else if (minutes <= 60.0) {
 		budget.maxReviewMarkers = 5;
 		budget.maxCandidatesBeforeEmbedding = kMaxCandidatesBeforeEmbedding;
-		budget.maxRawCandidates = 160;
-		budget.maxCoarseWindowsToEmbed = 56;
+		budget.maxRawCandidates = 180;
+		budget.maxCoarseWindowsToEmbed = 64;
 		budget.maxCoarseRegions = 12;
-		budget.coarseWindowSec = 50.0;
-		budget.coarseStrideSec = 32.0;
-		budget.coarseRegionPaddingSec = 26.0;
+		budget.coarseWindowSec = 70.0;
+		budget.coarseStrideSec = 40.0;
+		budget.coarseRegionPaddingSec = 70.0;
 	} else if (minutes <= 120.0) {
 		budget.maxReviewMarkers = 8;
 		budget.maxCandidatesBeforeEmbedding = kMaxCandidatesBeforeEmbedding;
-		budget.maxRawCandidates = 200;
-		budget.maxCoarseWindowsToEmbed = 72;
-		budget.maxCoarseRegions = 16;
-		budget.coarseWindowSec = 60.0;
-		budget.coarseStrideSec = 42.0;
-		budget.coarseRegionPaddingSec = 30.0;
+		budget.maxRawCandidates = 240;
+		budget.maxCoarseWindowsToEmbed = 88;
+		budget.maxCoarseRegions = 18;
+		budget.coarseWindowSec = 90.0;
+		budget.coarseStrideSec = 55.0;
+		budget.coarseRegionPaddingSec = 90.0;
 	} else if (minutes <= 180.0) {
 		budget.maxReviewMarkers = 8;
 		budget.maxCandidatesBeforeEmbedding = kMaxCandidatesBeforeEmbedding;
-		budget.maxRawCandidates = 240;
-		budget.maxCoarseWindowsToEmbed = 96;
+		budget.maxRawCandidates = 280;
+		budget.maxCoarseWindowsToEmbed = 112;
 		budget.maxCoarseRegions = 24;
-		budget.coarseWindowSec = 75.0;
-		budget.coarseStrideSec = 55.0;
-		budget.coarseRegionPaddingSec = 36.0;
+		budget.coarseWindowSec = 100.0;
+		budget.coarseStrideSec = 65.0;
+		budget.coarseRegionPaddingSec = 90.0;
 	} else {
 		budget.maxReviewMarkers = 12;
 		budget.maxCandidatesBeforeEmbedding = kMaxCandidatesBeforeEmbedding;
-		budget.maxRawCandidates = 280;
-		budget.maxCoarseWindowsToEmbed = 120;
+		budget.maxRawCandidates = 320;
+		budget.maxCoarseWindowsToEmbed = 132;
 		budget.maxCoarseRegions = 30;
-		budget.coarseWindowSec = 90.0;
-		budget.coarseStrideSec = 65.0;
-		budget.coarseRegionPaddingSec = 40.0;
+		budget.coarseWindowSec = 110.0;
+		budget.coarseStrideSec = 75.0;
+		budget.coarseRegionPaddingSec = 90.0;
 	}
 
 	const double markerCount = static_cast<double>(std::max(1, budget.maxReviewMarkers));
@@ -278,11 +281,12 @@ TranscriptScaleProfile transcriptScaleProfileForDuration(double durationSec)
 	if (!profile.longTranscript)
 		return profile;
 
-	profile.maxDurationSec = 60.0;
-	profile.defaultAfterSec = 36.0;
-	profile.slidingWindowStepSec = 24.0;
+	profile.maxDurationSec = DEFAULT_MAX_DURATION_SEC;
+	profile.defaultAfterSec = 90.0;
+	profile.slidingWindowStepSec = 30.0;
 	profile.minTextChars = 56;
 	profile.minFinalScore = 0.34;
+	profile.rankingMinFinalScore = 0.36;
 	profile.preSemanticMinFinalScore = 0.16;
 	return profile;
 }
@@ -293,7 +297,9 @@ SemanticQualityProfile semanticQualityProfile(bool hasReranker)
 	if (!hasReranker)
 		return profile;
 
-	profile.rerankerContributionWeight = 0.58;
+	// The local Qwen reranker is a useful ordering signal, but it should not veto
+	// semantically complete arcs by dragging their final score below the ranker floor.
+	profile.rerankerContributionWeight = 0.34;
 	profile.minViewerResponse = 0.62;
 	profile.minRerankerScore = 0.66;
 	profile.minRerankerRawScore = 0.72;
@@ -322,15 +328,16 @@ SemanticQualityProfile semanticQualityProfile(bool hasReranker)
 }
 
 void configureGenerationOptions(ClipScoringPipelineOptions &options, double durationSec,
-				const ReviewSuggestionBudget &budget, const TranscriptScaleProfile &scaleProfile)
+				const ReviewSuggestionBudget &budget, const TranscriptScaleProfile &scaleProfile,
+				const Curation::CurationPresetProfile &presetProfile)
 {
 	options.generation.searchRange = {0.0, durationSec};
-	options.generation.presetId = QStringLiteral("viewer_message_response");
+	options.generation.presetId = presetProfile.id;
 	options.generation.minDurationSec = DEFAULT_MIN_DURATION_SEC;
 	options.generation.maxDurationSec = scaleProfile.maxDurationSec;
-	options.generation.defaultAfterSec = scaleProfile.defaultAfterSec;
-	options.generation.emotionalAfterSec = 42.0;
-	options.generation.adviceAfterSec = 42.0;
+	options.generation.defaultAfterSec = std::min(scaleProfile.defaultAfterSec, options.generation.maxDurationSec);
+	options.generation.emotionalAfterSec = std::min(120.0, options.generation.maxDurationSec);
+	options.generation.adviceAfterSec = std::min(150.0, options.generation.maxDurationSec);
 	options.generation.boundaryMinDurationSec = 8.0;
 	options.generation.slidingWindowStepSec = scaleProfile.slidingWindowStepSec;
 	options.generation.maxRawCandidates = budget.maxRawCandidates;
@@ -364,9 +371,10 @@ void configureRerankerOptions(ClipScoringPipelineOptions &options, const Semanti
 }
 
 void configureQualityGateOptions(ClipScoringPipelineOptions &options, const TranscriptScaleProfile &scaleProfile,
-				 const SemanticQualityProfile &qualityProfile)
+				 const SemanticQualityProfile &qualityProfile,
+				 const Curation::CurationPresetProfile &presetProfile)
 {
-	options.qualityGate.presetId = QStringLiteral("viewer_message_response");
+	options.qualityGate.presetId = presetProfile.id;
 	options.qualityGate.minDurationSec = DEFAULT_MIN_DURATION_SEC;
 	options.qualityGate.minTextChars = scaleProfile.minTextChars;
 	options.qualityGate.minFinalScore = scaleProfile.minFinalScore;
@@ -396,6 +404,12 @@ void configureQualityGateOptions(ClipScoringPipelineOptions &options, const Tran
 	options.qualityGate.maxEndingTopicShiftWhenAvailable = qualityProfile.maxEndingTopicShift;
 	options.qualityGate.maxRerankerBadClipWhenAvailable = qualityProfile.maxRerankerBadClip;
 	options.qualityGate.minRerankerGoodBadMarginWhenAvailable = qualityProfile.minRerankerGoodBadMargin;
+	options.qualityGate.minArcOpeningForViewerPreset = presetProfile.arcPolicy.minOpening;
+	options.qualityGate.minArcDevelopmentForViewerPreset = presetProfile.arcPolicy.minDevelopment;
+	options.qualityGate.minArcConclusionForViewerPreset = presetProfile.arcPolicy.minConclusion;
+	options.qualityGate.minArcCompletenessForViewerPreset = presetProfile.arcPolicy.minCompleteness;
+	options.qualityGate.minArcBoundaryCleanlinessForViewerPreset = presetProfile.arcPolicy.minBoundaryCleanliness;
+	options.qualityGate.maxArcTailRiskForViewerPreset = presetProfile.arcPolicy.maxTailRisk;
 }
 
 void configureRankingOptions(ClipScoringPipelineOptions &options, const ReviewSuggestionBudget &budget,
@@ -429,6 +443,7 @@ QString semanticTargetFromReviewSettings(const CurationSettings &settings)
 			focusTerms.append(trimmed);
 	}
 
+
 	const QString prompt = settings.aiPrompt.simplified();
 	if (!prompt.isEmpty() && focusTerms.isEmpty())
 		focusTerms.append(prompt.left(240));
@@ -456,7 +471,7 @@ void applyClipLengthBoundsToOptions(ClipScoringPipelineOptions &options, const C
 	options.generation.emotionalAfterSec = std::min(options.generation.emotionalAfterSec, maxSec);
 	options.generation.adviceAfterSec = std::min(options.generation.adviceAfterSec, maxSec);
 	options.qualityGate.minDurationSec = minSec;
-	options.qualityGate.longCandidateDurationSec = std::min(options.qualityGate.longCandidateDurationSec, maxSec);
+	options.qualityGate.longCandidateDurationSec = std::min(90.0, maxSec);
 	options.ranking.overlapToleranceSec =
 		std::min(options.ranking.overlapToleranceSec, std::max(3.0, maxSec * 0.30));
 }
@@ -471,9 +486,14 @@ ClipScoringPipelineOptions optionsForTranscript(const RecordingTranscript &trans
 	const TranscriptScaleProfile scaleProfile = transcriptScaleProfileForDuration(durationSec);
 	const SemanticQualityProfile qualityProfile = semanticQualityProfile(reranker != nullptr);
 
+	const Curation::CurationPresetProfile presetProfile =
+		Curation::presetProfileForSettings(reviewSettings, reviewSettings.aiPrompt);
+
 	ClipScoringPipelineOptions options;
-	configureGenerationOptions(options, durationSec, budget, scaleProfile);
-	options.scoring.presetId = QStringLiteral("viewer_message_response");
+	configureGenerationOptions(options, durationSec, budget, scaleProfile, presetProfile);
+	options.scoring.presetId = presetProfile.id;
+	options.scoring.transcriptionLanguage = reviewSettings.transcriptionLanguage;
+	options.scoring.sourceLanguage = reviewSettings.sourceLanguage;
 	const QString semanticTarget = semanticTargetFromReviewSettings(reviewSettings);
 	if (!semanticTarget.isEmpty()) {
 		options.scoring.mainTarget = semanticTarget;
@@ -482,7 +502,7 @@ ClipScoringPipelineOptions optionsForTranscript(const RecordingTranscript &trans
 	configureCoarseRetrievalOptions(options, budget);
 	configureSemanticOptions(options);
 	configureRerankerOptions(options, qualityProfile);
-	configureQualityGateOptions(options, scaleProfile, qualityProfile);
+	configureQualityGateOptions(options, scaleProfile, qualityProfile, presetProfile);
 	configureRankingOptions(options, budget, scaleProfile, qualityProfile);
 	configurePipelineBudget(options, budget, scaleProfile);
 	applyClipLengthBoundsToOptions(options, reviewSettings);
@@ -493,7 +513,8 @@ ClipScoringPipelineOptions optionsForTranscript(const RecordingTranscript &trans
 
 CurationSettings scoringSettingsFromReviewSettings(CurationSettings settings)
 {
-	settings.curationPreset = QStringLiteral("viewer_message_response");
+	if (CurationPreset::normalizeId(settings.curationPreset) == CurationPreset::autoPresetId())
+		settings.curationPreset = CurationPreset::viewerMessageResponsePresetId();
 	if (settings.transcriptionLanguage.trimmed().isEmpty())
 		settings.transcriptionLanguage = QStringLiteral("auto");
 	if (settings.sourceLanguage.trimmed().isEmpty())
@@ -624,8 +645,10 @@ void prepare_review_scoring_async(QWidget *parent, const QString &videoPath, con
 					llamaOptions.cancellationCallback = [cancelRequested]() {
 						return cancelRequested && cancelRequested->load();
 					};
-					if (llamaOptions.maxTextChars <= 0 ||
-					    llamaOptions.maxTextChars > kMaxCandidateTextChars)
+					// Review scoring needs enough context to see both the opening and
+					// the resolution of one full exchange. Use the review cap even when
+					// an older saved config still has the previous short-fragment value.
+					if (llamaOptions.maxTextChars != kMaxCandidateTextChars)
 						llamaOptions.maxTextChars = kMaxCandidateTextChars;
 					blog(LOG_INFO,
 					     "Local embedding backend enabled for semantic review scoring. endpoint=%s model=%s maxTextChars=%d",
@@ -638,8 +661,9 @@ void prepare_review_scoring_async(QWidget *parent, const QString &videoPath, con
 						rerankerOptions.cancellationCallback = [cancelRequested]() {
 							return cancelRequested && cancelRequested->load();
 						};
-						if (rerankerOptions.maxTextChars <= 0 ||
-						    rerankerOptions.maxTextChars > kMaxRerankerTextChars)
+						// The reranker must see enough of the candidate to judge whether
+						// it actually reaches the first local resolution.
+						if (rerankerOptions.maxTextChars != kMaxRerankerTextChars)
 							rerankerOptions.maxTextChars = kMaxRerankerTextChars;
 						blog(LOG_INFO,
 						     "Local Qwen3 reranker backend enabled for semantic review scoring. endpoint=%s model=%s maxTextChars=%d",
@@ -669,12 +693,13 @@ void prepare_review_scoring_async(QWidget *parent, const QString &videoPath, con
 								update.value, update.maximum);
 				};
 
+				const QByteArray semanticTargetLog = options.scoring.mainTarget.left(160).toUtf8();
 				blog(LOG_INFO,
 				     "Semantic review suggestion budget. video=%s durationSec=%.2f maxRawCandidates=%d "
 				     "maxCandidatesBeforeEmbedding=%d maxReviewMarkers=%d minSpacingSec=%.2f "
 				     "clipBounds=%.2f-%.2f boundaryMin=%.2f coarseWindows=%d coarseRegions=%d "
 				     "coarseWindowSec=%.2f coarseStrideSec=%.2f maxPrototypeTexts=%d mmr=%s "
-				     "mmrRelevanceWeight=%.2f",
+				     "mmrRelevanceWeight=%.2f semanticLanguage=%s presetProfile=%s reliableTarget=%s semanticTarget=%s",
 				     videoPath.toUtf8().constData(), transcriptDurationSec(transcript),
 				     options.generation.maxRawCandidates, options.budget.maxCandidatesBeforeEmbedding,
 				     options.ranking.maxCandidates, options.ranking.minSpacingSec,
@@ -683,7 +708,11 @@ void prepare_review_scoring_async(QWidget *parent, const QString &videoPath, con
 				     options.coarseRetrieval.maxWindowsToEmbed, options.coarseRetrieval.maxRegions,
 				     options.coarseRetrieval.windowSec, options.coarseRetrieval.strideSec,
 				     options.semantic.maxPrototypeTexts, options.ranking.useMmr ? "true" : "false",
-				     options.ranking.mmrRelevanceWeight);
+				     options.ranking.mmrRelevanceWeight,
+				     normalizedSemanticLanguageCode(options.scoring.transcriptionLanguage,
+					     options.scoring.sourceLanguage).toUtf8().constData(),
+				     options.scoring.presetId.toUtf8().constData(),
+				     options.scoring.reliableMainTarget ? "true" : "false", semanticTargetLog.constData());
 
 				reportProgressToContext(safeContext, progressCallback,
 							QObject::tr("Running semantic marker analysis..."), 48);

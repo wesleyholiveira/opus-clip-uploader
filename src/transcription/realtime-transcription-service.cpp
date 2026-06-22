@@ -1,6 +1,8 @@
 #include "transcription/realtime-transcription-service.hpp"
 
 #include "transcription/transcript-store.hpp"
+#include "transcription/whisperx-alignment-service.hpp"
+#include "transcription/whisperx-settings.hpp"
 
 #ifdef __cplusplus
 extern "C" {
@@ -24,6 +26,7 @@ extern "C" {
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <initializer_list>
 #include <limits>
 #include <thread>
 #include <utility>
@@ -114,6 +117,217 @@ int whisperThreadCount()
 	// Post-recording transcription still runs inside the OBS process. Keep it conservative so
 	// the review dialog/player and OBS UI are less likely to freeze after recording stops.
 	return static_cast<int>(std::min<unsigned int>(hardwareThreads - 1, 4));
+}
+
+struct AudioSilenceInterval {
+	double startSec = 0.0;
+	double endSec = 0.0;
+
+	double durationSec() const { return std::max(0.0, endSec - startSec); }
+};
+
+static QVector<AudioSilenceInterval> detectAudioSilenceIntervals(const QVector<float> &pcm16k,
+		double chunkStartSec, double rangeStartSec, double rangeEndSec)
+{
+	QVector<AudioSilenceInterval> intervals;
+	if (pcm16k.isEmpty() || rangeEndSec <= rangeStartSec + 0.8)
+		return intervals;
+
+	constexpr double kFrameSec = 0.025;
+	constexpr double kMinSilenceSec = 0.70;
+	constexpr int kSampleRate = TargetSampleRate;
+	const int frameSamples = std::max(1, static_cast<int>(std::round(kFrameSec * kSampleRate)));
+	const int startSample = std::clamp(static_cast<int>(std::floor((rangeStartSec - chunkStartSec) * kSampleRate)),
+		0, std::max(0, static_cast<int>(pcm16k.size()) - 1));
+	const int endSample = std::clamp(static_cast<int>(std::ceil((rangeEndSec - chunkStartSec) * kSampleRate)),
+		startSample + 1, static_cast<int>(pcm16k.size()));
+
+	struct FrameEnergy {
+		double startSec = 0.0;
+		double endSec = 0.0;
+		double rms = 0.0;
+	};
+
+	QVector<FrameEnergy> frames;
+	QVector<double> rmsValues;
+	for (int start = startSample; start + frameSamples <= endSample; start += frameSamples) {
+		double energy = 0.0;
+		for (int i = start; i < start + frameSamples; ++i) {
+			const double sample = static_cast<double>(pcm16k.at(i));
+			energy += sample * sample;
+		}
+		const double rms = std::sqrt(energy / static_cast<double>(frameSamples));
+		frames.append({chunkStartSec + (static_cast<double>(start) / kSampleRate),
+			chunkStartSec + (static_cast<double>(start + frameSamples) / kSampleRate), rms});
+		rmsValues.append(rms);
+	}
+
+	if (frames.size() < 4)
+		return intervals;
+
+	std::sort(rmsValues.begin(), rmsValues.end());
+	const auto percentile = [&rmsValues](double value) {
+		return rmsValues.at(std::clamp(static_cast<int>(std::floor(rmsValues.size() * value)),
+			0, static_cast<int>(rmsValues.size()) - 1));
+	};
+	const double p10 = percentile(0.10);
+	const double p25 = percentile(0.25);
+	const double p50 = percentile(0.50);
+	const double adaptiveThreshold = std::clamp(std::max({0.0032, p10 * 3.25, p25 * 1.85}), 0.0032, 0.034);
+	const double speechAwareThreshold = std::min(adaptiveThreshold, std::max(0.006, p50 * 0.58));
+
+	bool inSilence = false;
+	double silenceStartSec = 0.0;
+	double silenceEndSec = 0.0;
+	for (const FrameEnergy &frame : frames) {
+		const bool silent = frame.rms <= speechAwareThreshold || frame.rms <= std::max(0.0042, p10 * 2.80);
+		if (silent && !inSilence) {
+			inSilence = true;
+			silenceStartSec = frame.startSec;
+		}
+		if (silent)
+			silenceEndSec = frame.endSec;
+
+		if (!silent && inSilence) {
+			if (silenceEndSec - silenceStartSec >= kMinSilenceSec)
+				intervals.append({silenceStartSec, silenceEndSec});
+			inSilence = false;
+		}
+	}
+
+	if (inSilence && silenceEndSec - silenceStartSec >= kMinSilenceSec)
+		intervals.append({silenceStartSec, silenceEndSec});
+
+	return intervals;
+}
+
+static int bestTextSplitPositionForPause(const QString &text, double ratio, bool allowSoftSplit)
+{
+	const QString simplified = text.simplified();
+	const int length = simplified.size();
+	if (length < 24)
+		return -1;
+
+	const int target = std::clamp(static_cast<int>(std::round(length * ratio)), 8, length - 8);
+	const int minSide = std::max(8, std::min(24, length / 6));
+	const int maxDistance = std::max(18, static_cast<int>(std::round(length * 0.34)));
+	int best = -1;
+	int bestScore = std::numeric_limits<int>::max();
+
+	auto consider = [&](int position, int penalty) {
+		if (position < minSide || length - position < minSide)
+			return;
+		const int distance = std::abs(position - target);
+		if (distance > maxDistance)
+			return;
+		const int score = distance + penalty;
+		if (score < bestScore) {
+			bestScore = score;
+			best = position;
+		}
+	};
+
+	for (int i = 0; i < length; ++i) {
+		const QChar ch = simplified.at(i);
+		if (ch == QLatin1Char('.') || ch == QLatin1Char('?') || ch == QLatin1Char('!'))
+			consider(i + 1, 0);
+		else if (ch == QLatin1Char(':') || ch == QLatin1Char(';'))
+			consider(i + 1, 8);
+		else if (ch == QLatin1Char(','))
+			consider(i + 1, 18);
+	}
+
+	if (best >= 0 || !allowSoftSplit)
+		return best;
+
+	for (int radius = 0; radius <= maxDistance; ++radius) {
+		const int left = target - radius;
+		if (left >= minSide && length - left >= minSide && simplified.at(left).isSpace())
+			return left;
+		const int right = target + radius;
+		if (right >= minSide && right < length - minSide && simplified.at(right).isSpace())
+			return right;
+	}
+
+	return -1;
+}
+
+static QVector<TranscriptSegment> splitSegmentByAudioSilence(const TranscriptSegment &segment,
+		const QVector<float> &pcm16k, double chunkStartSec, int recursionDepth = 0)
+{
+	QVector<TranscriptSegment> output;
+	TranscriptSegment current = segment;
+	current.text = current.text.simplified();
+	if (current.text.isEmpty() || current.endSec <= current.startSec + 0.4) {
+		if (!current.text.isEmpty())
+			output.append(current);
+		return output;
+	}
+
+	const QVector<AudioSilenceInterval> intervals = detectAudioSilenceIntervals(pcm16k, chunkStartSec,
+		current.startSec, current.endSec);
+	if (intervals.isEmpty() || recursionDepth >= 3) {
+		output.append(current);
+		return output;
+	}
+
+	// First trim leading/trailing silence that Whisper included inside a segment timestamp.
+	for (const AudioSilenceInterval &silence : intervals) {
+		if (silence.startSec <= current.startSec + 0.30 && silence.endSec < current.endSec - 0.45 &&
+		    silence.durationSec() >= 0.75) {
+			current.startSec = std::min(current.endSec - 0.30, silence.endSec);
+			break;
+		}
+	}
+	for (int i = static_cast<int>(intervals.size()) - 1; i >= 0; --i) {
+		const AudioSilenceInterval &silence = intervals.at(i);
+		if (silence.endSec >= current.endSec - 0.30 && silence.startSec > current.startSec + 0.45 &&
+		    silence.durationSec() >= 0.75) {
+			current.endSec = std::max(current.startSec + 0.30, silence.startSec);
+			break;
+		}
+	}
+
+	if (current.endSec <= current.startSec + 0.4) {
+		current.startSec = segment.startSec;
+		current.endSec = segment.endSec;
+	}
+
+	for (const AudioSilenceInterval &silence : intervals) {
+		const bool safelyInternal = silence.startSec >= current.startSec + 0.75 &&
+			silence.endSec <= current.endSec - 0.75;
+		if (!safelyInternal || silence.durationSec() < 0.90)
+			continue;
+
+		const double ratio = std::clamp((silence.startSec - current.startSec) /
+			std::max(0.1, current.endSec - current.startSec), 0.05, 0.95);
+		const int splitPosition = bestTextSplitPositionForPause(current.text, ratio, silence.durationSec() >= 1.40);
+		if (splitPosition <= 0)
+			continue;
+
+		TranscriptSegment left;
+		left.startSec = current.startSec;
+		left.endSec = std::max(left.startSec + 0.30, silence.startSec);
+		left.text = current.text.left(splitPosition).trimmed();
+
+		TranscriptSegment right;
+		right.startSec = std::min(current.endSec - 0.30, silence.endSec);
+		right.endSec = current.endSec;
+		right.text = current.text.mid(splitPosition).trimmed();
+
+		if (!left.text.isEmpty() && left.endSec > left.startSec + 0.20)
+			output.append(left);
+		if (!right.text.isEmpty() && right.endSec > right.startSec + 0.20) {
+			const QVector<TranscriptSegment> rightParts =
+				splitSegmentByAudioSilence(right, pcm16k, chunkStartSec, recursionDepth + 1);
+			for (const TranscriptSegment &part : rightParts)
+				output.append(part);
+		}
+		return output;
+	}
+
+	output.append(current);
+	return output;
 }
 
 QString transcriptionTempDirectory()
@@ -703,7 +917,9 @@ private:
 		}
 
 		const int segmentCount = whisper_full_n_segments(ctx);
-		blog(LOG_INFO, "[clip-cropper] Whisper chunk completed. rawSegmentCount=%d", segmentCount);
+		int emittedSegmentCount = 0;
+		int audioPauseAdjustedCount = 0;
+		int audioSilenceIntervalCount = 0;
 		for (int i = 0; i < segmentCount; ++i) {
 			const char *rawText = whisper_full_get_segment_text(ctx, i);
 			const QString text = QString::fromUtf8(rawText ? rawText : "").trimmed();
@@ -715,8 +931,29 @@ private:
 				chunkStartSec + whisper_full_get_segment_t0(ctx, i) * WhisperTimeUnitToSeconds;
 			segment.endSec = chunkStartSec + whisper_full_get_segment_t1(ctx, i) * WhisperTimeUnitToSeconds;
 			segment.text = text;
-			transcript.segments.append(segment);
+
+			const QVector<AudioSilenceInterval> detectedSilences =
+				detectAudioSilenceIntervals(pcm16k, chunkStartSec, segment.startSec, segment.endSec);
+			audioSilenceIntervalCount += static_cast<int>(detectedSilences.size());
+			const QVector<TranscriptSegment> adjustedSegments =
+				splitSegmentByAudioSilence(segment, pcm16k, chunkStartSec);
+			if (adjustedSegments.size() != 1 ||
+			    (!adjustedSegments.isEmpty() &&
+			     (std::fabs(adjustedSegments.first().startSec - segment.startSec) > 0.10 ||
+			      std::fabs(adjustedSegments.last().endSec - segment.endSec) > 0.10)))
+				++audioPauseAdjustedCount;
+
+			for (const TranscriptSegment &adjustedSegment : adjustedSegments) {
+				if (adjustedSegment.text.trimmed().isEmpty())
+					continue;
+				transcript.segments.append(adjustedSegment);
+				++emittedSegmentCount;
+			}
 		}
+
+		blog(LOG_INFO,
+		     "[clip-cropper] Whisper chunk completed. rawSegmentCount=%d emittedSegmentCount=%d audioPauseAdjusted=%d detectedAudioSilences=%d",
+		     segmentCount, emittedSegmentCount, audioPauseAdjustedCount, audioSilenceIntervalCount);
 	}
 
 	QString modelPath;
@@ -748,15 +985,54 @@ RecordingTranscript RealtimeTranscriptionService::transcribeVideoFile(const QStr
 								      TranscriptionCancelCallback cancelCallback)
 {
 	const QString normalizedLanguage = normalizeWhisperLanguage(transcriptionLanguage);
+	const Transcription::WhisperXSettings whisperXSettings = Transcription::whisperXSettingsFromConfig();
+
+	if (whisperXSettings.primaryTranscription()) {
+		RecordingTranscript alignedCache = TranscriptStore::loadAlignedForVideoPath(videoPath, normalizedLanguage);
+		if (!alignedCache.segments.isEmpty()) {
+			reportTranscriptionProgress(progressCallback, 100,
+						    QString::fromUtf8(obs_module_text("Status.TranscriptionComplete")));
+			blog(LOG_INFO,
+			     "[clip-cropper] WhisperX primary cache hit. Skipping whisper.cpp transcription. video=%s segments=%d language=%s cacheKey=%s wordAligned=%s",
+			     videoPath.toUtf8().constData(), static_cast<int>(alignedCache.segments.size()),
+			     normalizedLanguage.toUtf8().constData(),
+			     TranscriptStore::keyForAlignedVideoPath(videoPath, normalizedLanguage).toUtf8().constData(),
+			     boolText(alignedCache.hasWordTimings()));
+			return alignedCache;
+		}
+
+		blog(LOG_INFO,
+		     "[clip-cropper] WhisperX primary transcription selected. whisper.cpp will be skipped. video=%s language=%s cacheKey=%s",
+		     videoPath.toUtf8().constData(), normalizedLanguage.toUtf8().constData(),
+		     TranscriptStore::keyForAlignedVideoPath(videoPath, normalizedLanguage).toUtf8().constData());
+
+		Transcription::WhisperXAlignmentService service;
+		RecordingTranscript transcript = service.transcribeVideo(videoPath, normalizedLanguage, whisperXSettings,
+			progressCallback, cancelCallback);
+		if (!transcript.segments.isEmpty()) {
+			reportTranscriptionProgress(progressCallback, 100,
+						    QString::fromUtf8(obs_module_text("Status.TranscriptionComplete")));
+			return transcript;
+		}
+
+		blog(LOG_ERROR,
+		     "[clip-cropper] WhisperX primary transcription produced no transcript. video=%s",
+		     videoPath.toUtf8().constData());
+		return {};
+	}
+
 	RecordingTranscript cached = TranscriptStore::loadForVideoPath(videoPath, normalizedLanguage);
 	if (!cached.segments.isEmpty()) {
 		reportTranscriptionProgress(progressCallback, 100,
 					    QString::fromUtf8(obs_module_text("Status.TranscriptionComplete")));
 		blog(LOG_INFO,
-		     "[clip-cropper] Transcript cache hit before on-demand transcription. Skipping Whisper/GPU transcription. video=%s segments=%d language=%s cacheKey=%s",
+		     "[clip-cropper] Transcript cache hit before on-demand transcription. Skipping Whisper/GPU transcription. video=%s segments=%d language=%s cacheKey=%s wordAligned=%s",
 		     videoPath.toUtf8().constData(), static_cast<int>(cached.segments.size()),
 		     normalizedLanguage.toUtf8().constData(),
-		     TranscriptStore::keyForVideoPath(videoPath, normalizedLanguage).toUtf8().constData());
+		     TranscriptStore::keyForVideoPath(videoPath, normalizedLanguage).toUtf8().constData(),
+		     boolText(cached.hasWordTimings()));
+		if (!cached.hasWordTimings())
+			cached = alignTranscriptWithWhisperX(videoPath, normalizedLanguage, cached, progressCallback, cancelCallback);
 		return cached;
 	}
 
@@ -838,13 +1114,30 @@ RecordingTranscript RealtimeTranscriptionService::transcribeVideoFile(const QStr
 	reportTranscriptionProgress(progressCallback, 95,
 				    QString::fromUtf8(obs_module_text("Status.SavingTranscript")));
 	TranscriptStore::saveForVideoPath(videoPath, normalizedLanguage, transcript);
+	transcript = alignTranscriptWithWhisperX(videoPath, normalizedLanguage, transcript, progressCallback, cancelCallback);
 	reportTranscriptionProgress(progressCallback, 100,
 				    QString::fromUtf8(obs_module_text("Status.TranscriptionComplete")));
-	blog(LOG_INFO, "[clip-cropper] On-demand transcript saved for %s with %d segment(s). language=%s cacheKey=%s",
+	blog(LOG_INFO, "[clip-cropper] On-demand transcript saved for %s with %d segment(s). language=%s cacheKey=%s wordAligned=%s",
 	     videoPath.toUtf8().constData(), static_cast<int>(transcript.segments.size()),
 	     normalizedLanguage.toUtf8().constData(),
-	     TranscriptStore::keyForVideoPath(videoPath, normalizedLanguage).toUtf8().constData());
+	     TranscriptStore::keyForVideoPath(videoPath, normalizedLanguage).toUtf8().constData(),
+	     boolText(transcript.hasWordTimings()));
 	return transcript;
+}
+
+RecordingTranscript RealtimeTranscriptionService::alignTranscriptWithWhisperX(const QString &videoPath,
+								      const QString &transcriptionLanguage,
+								      const RecordingTranscript &baseTranscript,
+								      TranscriptionProgressCallback progressCallback,
+								      TranscriptionCancelCallback cancelCallback)
+{
+	const Transcription::WhisperXSettings settings = Transcription::whisperXSettingsFromConfig();
+	if (!settings.alignmentOnly() || baseTranscript.segments.isEmpty() || baseTranscript.hasWordTimings())
+		return baseTranscript;
+
+	Transcription::WhisperXAlignmentService service;
+	return service.alignVideoTranscript(videoPath, normalizeWhisperLanguage(transcriptionLanguage), baseTranscript,
+		settings, progressCallback, cancelCallback);
 }
 
 RecordingTranscript RealtimeTranscriptionService::transcribeVideoRanges(const QString &videoPath,

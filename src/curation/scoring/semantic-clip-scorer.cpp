@@ -1,8 +1,6 @@
 #include "curation/scoring/semantic-clip-scorer.hpp"
 
 #include "curation/scoring/semantic-prototypes.hpp"
-#include "curation/scoring/text-analysis.hpp"
-
 #include <algorithm>
 #include <cmath>
 #include <initializer_list>
@@ -30,6 +28,7 @@ struct SemanticPrototypeBudget {
 	QStringList noise;
 	QStringList topicShift;
 	QStringList clipValue;
+	QStringList empathy;
 	QStringList hook;
 	QStringList resolution;
 	QStringList metaNoise;
@@ -37,7 +36,7 @@ struct SemanticPrototypeBudget {
 	int total() const
 	{
 		return target.size() + viewerMessage.size() + directAnswer.size() + noise.size() + topicShift.size() +
-		       clipValue.size() + hook.size() + resolution.size() + metaNoise.size();
+		       clipValue.size() + empathy.size() + hook.size() + resolution.size() + metaNoise.size();
 	}
 };
 
@@ -68,8 +67,9 @@ static SemanticPrototypeBudget prototypeBudgetFor(const QStringList &targetProto
 		return budget;
 
 	appendLimited(budget.target, targetPrototypes, remaining, 2);
-	appendLimited(budget.clipValue, defaultPrototypes.clipValue, remaining, 4);
-	appendLimited(budget.metaNoise, defaultPrototypes.metaNoise, remaining, 4);
+	appendLimited(budget.clipValue, defaultPrototypes.clipValue, remaining, 3);
+	appendLimited(budget.empathy, defaultPrototypes.empathy, remaining, 2);
+	appendLimited(budget.metaNoise, defaultPrototypes.metaNoise, remaining, 3);
 	appendLimited(budget.hook, defaultPrototypes.hook, remaining, 2);
 	appendLimited(budget.resolution, defaultPrototypes.resolution, remaining, 2);
 	appendLimited(budget.viewerMessage, defaultPrototypes.viewerMessage, remaining, 1);
@@ -119,9 +119,11 @@ ClipCandidate SemanticClipScorer::score(const TranscriptIndex &index, const Clip
 	scored.semanticScoringAvailable = true;
 	scored.evidence.append(modelEvidence(*provider));
 
-	const SemanticPrototypeSet &prototypes = defaultSemanticPrototypes();
-	const QStringList targetPrototypes = targetPrototypesForPreset(context.presetId, context.mainTarget);
+	const QString languageCode = normalizedSemanticLanguageCode(context.transcriptionLanguage, context.sourceLanguage);
+	const SemanticPrototypeSet &prototypes = semanticPrototypesForLanguage(languageCode);
+	const QStringList targetPrototypes = targetPrototypesForPreset(context.presetId, context.mainTarget, languageCode);
 	const SemanticPrototypeBudget prototypeBudget = prototypeBudgetFor(targetPrototypes, prototypes, options.maxPrototypeTexts);
+	scored.evidence.append(QStringLiteral("semantic_language:%1").arg(languageCode));
 	scored.evidence.append(QStringLiteral("semantic_prototype_budget:%1").arg(prototypeBudget.total()));
 
 	scored.scores.embeddingTarget = maxPrototypeSimilarity(*provider, textEmbedding, prototypeBudget.target);
@@ -130,11 +132,15 @@ ClipCandidate SemanticClipScorer::score(const TranscriptIndex &index, const Clip
 	scored.scores.semanticNoise = maxPrototypeSimilarity(*provider, textEmbedding, prototypeBudget.noise);
 	scored.scores.semanticTopicShift = maxPrototypeSimilarity(*provider, textEmbedding, prototypeBudget.topicShift);
 	scored.scores.semanticClipValue = maxPrototypeSimilarity(*provider, textEmbedding, prototypeBudget.clipValue);
+	scored.scores.semanticEmpathy = maxPrototypeSimilarity(*provider, textEmbedding, prototypeBudget.empathy);
+	scored.scores.semanticClipValue = std::max(scored.scores.semanticClipValue, scored.scores.semanticEmpathy * 0.92);
 	scored.scores.semanticHook = maxPrototypeSimilarity(*provider, textEmbedding, prototypeBudget.hook);
 	scored.scores.semanticResolution = maxPrototypeSimilarity(*provider, textEmbedding, prototypeBudget.resolution);
 	scored.scores.semanticMetaNoise = maxPrototypeSimilarity(*provider, textEmbedding, prototypeBudget.metaNoise);
 
-	scoreOpeningAndEnding(index, scored, *provider, prototypeBudget.hook, prototypeBudget.resolution,
+	const QStringList openingHookPrototypes = prototypeBudget.hook + prototypeBudget.viewerMessage;
+	const QStringList endingResolutionPrototypes = prototypeBudget.resolution + prototypeBudget.directAnswer;
+	scoreOpeningAndEnding(index, scored, *provider, openingHookPrototypes, endingResolutionPrototypes,
 		prototypeBudget.metaNoise, prototypeBudget.topicShift);
 
 	if (options.enablePairwiseTopicContinuity) {
@@ -148,9 +154,10 @@ ClipCandidate SemanticClipScorer::score(const TranscriptIndex &index, const Clip
 	if (scored.scores.embeddingTarget > 0.0)
 		scored.scores.semanticTarget = std::max(scored.scores.semanticTarget, scored.scores.embeddingTarget);
 
-	const double viewerResponseSemantic = (scored.scores.semanticViewerMessage * 0.32) +
-					    (scored.scores.semanticDirectAnswer * 0.38) +
-					    (scored.scores.semanticClipValue * 0.30);
+	const double viewerResponseSemantic = (scored.scores.semanticViewerMessage * 0.26) +
+					    (scored.scores.semanticDirectAnswer * 0.34) +
+					    (scored.scores.semanticClipValue * 0.24) +
+					    (scored.scores.semanticEmpathy * 0.16);
 	if (viewerResponseSemantic > 0.0)
 		scored.scores.viewerResponse = std::max(scored.scores.viewerResponse, viewerResponseSemantic);
 
@@ -169,6 +176,11 @@ ClipCandidate SemanticClipScorer::score(const TranscriptIndex &index, const Clip
 		scored.evidence.append(QStringLiteral("semantic_direct_answer_match"));
 	if (scored.scores.semanticClipValue >= options.highConfidenceMatch)
 		scored.evidence.append(QStringLiteral("semantic_clip_value"));
+	if (scored.scores.semanticEmpathy >= 0.55)
+		scored.evidence.append(QStringLiteral("semantic_empathy_score:%1")
+			.arg(QString::number(scored.scores.semanticEmpathy, 'f', 2)));
+	if (scored.scores.semanticEmpathy >= options.highConfidenceMatch)
+		scored.evidence.append(QStringLiteral("semantic_empathy"));
 	if (scored.scores.semanticHook >= options.highConfidenceMatch)
 		scored.evidence.append(QStringLiteral("semantic_hook"));
 	if (scored.scores.semanticOpeningHook >= options.highConfidenceMatch)
@@ -253,26 +265,41 @@ double SemanticClipScorer::combineFinalScore(const ClipCandidate &candidate,
 {
 	const ClipCandidateScores &s = candidate.scores;
 	const double semanticNoisePenalty = std::max({s.noise, s.semanticNoise, s.semanticMetaNoise,
-		s.semanticOpeningMetaNoise, s.semanticEndingMetaNoise, s.semanticEndingTopicShift}) * 0.48;
-	const double valueSignal = std::max({s.semanticClipValue, s.advice, s.explanation, s.story, s.opinion, s.tutorial});
-	const double hookSignal = std::max({s.hook, s.semanticHook, s.semanticOpeningHook});
-	const double resolutionSignal = std::max({s.semanticResolution, s.semanticEndingResolution, s.topicContinuity});
+		s.semanticOpeningMetaNoise, s.semanticEndingMetaNoise, s.semanticEndingTopicShift}) *
+		(s.semanticEmpathy >= 0.64 ? 0.42 : 0.48);
+	const bool pauseWasTrimmed = candidate.evidence.contains(QStringLiteral("semantic_boundary_pause_tail_trimmed")) ||
+		candidate.evidence.contains(QStringLiteral("semantic_boundary_pause_tail_blocked")) ||
+		candidate.evidence.contains(QStringLiteral("exchange_arc_pause_tail_trimmed")) ||
+		candidate.evidence.contains(QStringLiteral("exchange_arc_pause_tail_blocked"));
+	const double unresolvedLongPausePenalty = (!pauseWasTrimmed && s.maxInternalPauseSec >= 4.0) ?
+		boundedScore((s.maxInternalPauseSec - 3.0) / 4.0) * 0.08 : 0.0;
+	const bool empathyClearlyUseful = s.semanticEmpathy >= 0.60 &&
+		(s.semanticEmpathy >= std::max({s.semanticMetaNoise, s.semanticOpeningMetaNoise, s.semanticEndingMetaNoise}) + 0.02 ||
+		 s.semanticDirectAnswer >= 0.62 || s.semanticViewerMessage >= 0.62 || s.semanticTarget >= 0.62);
+	const double empathySignal = empathyClearlyUseful ? s.semanticEmpathy : s.semanticEmpathy * 0.55;
+	const double valueSignal = std::max({s.semanticClipValue, empathySignal, s.advice, s.explanation, s.story, s.opinion, s.tutorial});
+	const double hookSignal = std::max({s.hook, s.semanticHook, s.semanticOpeningHook, s.arcOpening});
+	const double resolutionSignal = std::max({s.semanticResolution, s.semanticEndingResolution, s.topicContinuity, s.arcConclusion});
+	const double arcSignal = s.arcCompleteness > 0.0 ?
+		boundedScore((s.arcCompleteness * 0.46) + (s.arcBoundaryCleanliness * 0.24) +
+			(s.arcDevelopment * 0.18) + (s.arcConclusion * 0.12) - (s.arcTailRisk * 0.10)) : 0.0;
 
 	if (context.reliableMainTarget && !context.mainTarget.trimmed().isEmpty()) {
 		return boundedScore((s.semanticTarget * 0.28) + (s.viewerResponse * 0.18) + (valueSignal * 0.24) +
 				    (hookSignal * 0.08) + (resolutionSignal * 0.12) + (s.boundary * 0.10) -
-				    semanticNoisePenalty);
+				    semanticNoisePenalty - unresolvedLongPausePenalty);
 	}
 
 	if (context.presetId == QStringLiteral("viewer_message_response")) {
-		return boundedScore((s.viewerResponse * 0.22) + (valueSignal * 0.24) + (resolutionSignal * 0.16) +
-				    (hookSignal * 0.12) + (s.semanticTarget * 0.10) + (s.boundary * 0.10) +
-				    (s.duration * 0.06) - semanticNoisePenalty);
+		return boundedScore((s.viewerResponse * 0.18) + (valueSignal * 0.20) + (resolutionSignal * 0.14) +
+				    (hookSignal * 0.10) + (arcSignal * 0.18) + (s.semanticTarget * 0.08) +
+				    (s.boundary * 0.08) + (s.duration * 0.04) - semanticNoisePenalty -
+				    unresolvedLongPausePenalty);
 	}
 
 	return boundedScore((s.boundary * 0.16) + (s.duration * 0.08) + (hookSignal * 0.12) +
 			    (s.semanticTarget * 0.18) + (resolutionSignal * 0.16) + (valueSignal * 0.30) -
-			    semanticNoisePenalty);
+			    semanticNoisePenalty - unresolvedLongPausePenalty);
 }
 
 QString SemanticClipScorer::firstHalfText(const TranscriptIndex &index, const ClipCandidate &candidate) const

@@ -23,7 +23,6 @@ struct CurationDecision {
 	CurationPlan plan;
 	QString opusPrompt;
 	QStringList validationIssues;
-	bool usedGpt = false;
 	bool usedFallback = false;
 	bool blockedBySemanticGate = false;
 };

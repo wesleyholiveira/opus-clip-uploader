@@ -70,9 +70,10 @@ QJsonObject OpusCurationPayloadBuilder::build(const ClipDuration &rangeValue,
 	curationPref.insert("genre", settings.genre.trimmed().isEmpty() ? "Auto" : settings.genre);
 	curationPref.insert("skipCurate", settings.skipCurate);
 
-	if (!settings.aiPrompt.trimmed().isEmpty()) {
-		curationPref.insert("prompt", settings.aiPrompt.trimmed());
-		curationPref.insert("userPrompt", settings.aiPrompt.trimmed());
+	const QString opusPrompt = settings.aiPrompt.trimmed();
+	if (!opusPrompt.isEmpty()) {
+		curationPref.insert("prompt", opusPrompt);
+		curationPref.insert("userPrompt", opusPrompt);
 	}
 
 	return curationPref;

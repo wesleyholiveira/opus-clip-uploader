@@ -27,6 +27,8 @@ bool looksLikeSameTopicContinuation(const QString &text, const QString &contextT
 bool hasSharedSemanticTopic(const QString &text, const QString &contextText);
 bool hasNoiseOnlySemanticTopic(const QString &text);
 bool isBacklogOrGreetingText(const QString &text);
+bool isSocialOrStreamMetaText(const QString &text);
+bool looksLikeNewViewerTurnAfterPause(const QString &text);
 bool hasConcreteViewerQuestion(const QString &text);
 
 double lexicalTopicOverlap(const QString &text, const QString &contextText);

@@ -1,7 +1,5 @@
 #include "curation/scoring/semantic-coarse-retriever.hpp"
 
-#include "curation/scoring/text-analysis.hpp"
-
 #include <algorithm>
 #include <cmath>
 
@@ -67,7 +65,8 @@ QVector<SemanticCoarseRegion> SemanticCoarseRetriever::retrieve(const Transcript
 	if (!options.enabled || !provider || !provider->isAvailable() || index.isEmpty())
 		return selected;
 
-	const SemanticPrototypeSet &defaults = defaultSemanticPrototypes();
+	const QString languageCode = normalizedSemanticLanguageCode(context.transcriptionLanguage, context.sourceLanguage);
+	const SemanticPrototypeSet &defaults = semanticPrototypesForLanguage(languageCode);
 
 	const QVector<SemanticEmbedding> targetEmbeddings = embedPrototypes(*provider, prototypesForContext(context, defaults,
 		options.maxPrototypeTexts));
@@ -97,6 +96,7 @@ QVector<SemanticCoarseRegion> SemanticCoarseRetriever::retrieve(const Transcript
 			continue;
 
 		SemanticCoarseRegion region;
+		region.focusRange = window;
 		region.range = paddedRegion(window, index, options);
 		region.targetScore = maxSimilarity(windowEmbedding, targetEmbeddings);
 		region.viewerScore = maxSimilarity(windowEmbedding, viewerEmbeddings);
@@ -106,9 +106,17 @@ QVector<SemanticCoarseRegion> SemanticCoarseRetriever::retrieve(const Transcript
 		region.metaNoiseScore = maxSimilarity(windowEmbedding, metaNoiseEmbeddings);
 		region.score = scoreForWindow(region.targetScore, region.viewerScore, region.directAnswerScore,
 			region.clipValueScore, region.noiseScore, region.metaNoiseScore, context);
-		region.textSample = TextAnalysis::sampleForLog(text, 180);
+		region.textSample = text.simplified().left(180);
 		region.evidence.append(QStringLiteral("semantic_coarse_window"));
+		region.evidence.append(QStringLiteral("semantic_language:%1").arg(languageCode));
 		region.evidence.append(QStringLiteral("coarse_score:%1").arg(QString::number(region.score, 'f', 2)));
+		region.evidence.append(QStringLiteral("coarse_focus:%1-%2")
+			.arg(QString::number(region.focusRange.startSec, 'f', 1),
+			     QString::number(region.focusRange.endSec, 'f', 1)));
+		region.evidence.append(QStringLiteral("coarse_candidate_search:%1-%2")
+			.arg(QString::number(region.range.startSec, 'f', 1),
+			     QString::number(region.range.endSec, 'f', 1)));
+		region.evidence.append(QStringLiteral("coarse_boundary_hint_disabled"));
 		if (region.targetScore >= 0.65)
 			region.evidence.append(QStringLiteral("coarse_target_match"));
 		if (std::max(region.viewerScore, region.directAnswerScore) >= 0.65)
@@ -192,7 +200,7 @@ QStringList SemanticCoarseRetriever::prototypesForContext(const SemanticCoarseRe
 	if (remaining <= 0)
 		return result;
 
-	appendLimited(result, targetPrototypesForPreset(context.presetId, context.mainTarget), remaining, 4);
+	appendLimited(result, targetPrototypesForPreset(context.presetId, context.mainTarget, normalizedSemanticLanguageCode(context.transcriptionLanguage, context.sourceLanguage)), remaining, 4);
 	appendLimited(result, prototypes.clipValue, remaining, 5);
 	appendLimited(result, prototypes.viewerMessage, remaining, 2);
 	appendLimited(result, prototypes.directAnswer, remaining, 2);

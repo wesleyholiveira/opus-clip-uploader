@@ -20,6 +20,8 @@ struct SemanticClipScoringOptions {
 struct SemanticScoringContext {
 	QString presetId;
 	QString mainTarget;
+	QString transcriptionLanguage;
+	QString sourceLanguage;
 	bool reliableMainTarget = false;
 };
 

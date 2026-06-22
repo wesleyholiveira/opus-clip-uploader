@@ -23,11 +23,17 @@ public:
 	QVector<int> segmentIndicesForRange(const ClipDuration &range) const;
 	QString textForRange(const ClipDuration &range) const;
 	QString textForSegmentWindow(int firstIndex, int lastIndex) const;
+	QString timedTextForRange(const ClipDuration &range, double pauseMarkerThresholdSec = 1.2) const;
+	QString timedTextForSegmentWindow(int firstIndex, int lastIndex, double pauseMarkerThresholdSec = 1.2) const;
+	bool hasWordTimings() const;
+	QVector<WordTiming> wordsForRange(const ClipDuration &range) const;
+	ClipDuration snapRangeToWordBoundaries(const ClipDuration &range, const ClipDuration &bounds) const;
 
 	double silenceBeforeSegment(int index) const;
 	double silenceAfterSegment(int index) const;
 	double silenceBeforeRange(const ClipDuration &range) const;
 	double silenceAfterRange(const ClipDuration &range) const;
+	double maxInternalSilenceInRange(const ClipDuration &range) const;
 	ClipDuration clampRange(const ClipDuration &range, const ClipDuration &bounds) const;
 
 	static bool segmentOverlapsRange(const TranscriptSegment &segment, const ClipDuration &range);

@@ -26,14 +26,35 @@ static QString rangeKey(const ClipDuration &range)
 		.arg(QString::number(range.endSec, 'f', 1));
 }
 
-static ClipDuration clampCandidateRange(const TranscriptIndex &index, const ClipDuration &range,
-					       const ClipScoringPipelineOptions &options)
+static double rangeCenterSec(const ClipDuration &range)
 {
-	ClipDuration clamped = index.clampRange(range, options.generation.searchRange);
-	const double maxDurationSec = std::max(options.generation.minDurationSec, options.generation.maxDurationSec);
-	if ((clamped.endSec - clamped.startSec) > maxDurationSec)
-		clamped.endSec = std::min(options.generation.searchRange.endSec, clamped.startSec + maxDurationSec);
-	return clamped;
+	return range.startSec + ((range.endSec - range.startSec) * 0.5);
+}
+
+static double overlapSec(const ClipDuration &left, const ClipDuration &right)
+{
+	return std::max(0.0, std::min(left.endSec, right.endSec) - std::max(left.startSec, right.startSec));
+}
+
+static bool substantiallyOverlapsFocus(const ClipDuration &candidate, const ClipDuration &focus)
+{
+	const double focusDuration = std::max(0.0, focus.endSec - focus.startSec);
+	if (focusDuration <= 0.0)
+		return true;
+	const double overlap = overlapSec(candidate, focus);
+	return overlap >= std::min(8.0, focusDuration * 0.35) ||
+		(candidate.startSec <= rangeCenterSec(focus) && candidate.endSec >= rangeCenterSec(focus));
+}
+
+static void appendUniqueStart(QVector<double> &starts, double startSec)
+{
+	if (!std::isfinite(startSec))
+		return;
+	for (double existing : starts) {
+		if (std::fabs(existing - startSec) < 0.75)
+			return;
+	}
+	starts.append(startSec);
 }
 
 static bool isSelectionEvidence(const QString &evidence)
@@ -89,266 +110,6 @@ static void clearSelectionMetadata(QVector<ClipCandidate> &candidates)
 		candidate.evidence.erase(std::remove_if(candidate.evidence.begin(), candidate.evidence.end(), isSelectionEvidence),
 					     candidate.evidence.end());
 	}
-}
-
-struct TopicSpanChunk {
-	int firstIndex = -1;
-	int lastIndex = -1;
-	double startSec = 0.0;
-	double endSec = 0.0;
-	QString text;
-	SemanticEmbedding embedding;
-	double target = 0.0;
-	double value = 0.0;
-	double hook = 0.0;
-	double resolution = 0.0;
-	double meta = 0.0;
-	double shift = 0.0;
-};
-
-static double topicSpanDurationScore(double durationSec, const ClipScoringPipelineOptions &options)
-{
-	const double minSec = std::max(1.0, options.generation.minDurationSec);
-	const double maxSec = std::max(minSec, options.generation.maxDurationSec);
-	if (durationSec < minSec || durationSec > maxSec)
-		return 0.0;
-
-	// Viewer-message clips often have a short, self-contained local answer. When the
-	// active clip-length bounds are short, prefer the compact resolved exchange over
-	// the longest semantically similar answer tail. This prevents the topic span
-	// refiner from drifting from a 8-12s hook/answer into a 40-60s live segment.
-	if (maxSec <= 40.0) {
-		if (durationSec <= 14.0)
-			return 1.0;
-		if (durationSec <= 22.0)
-			return 0.94;
-		return boundedScore(0.82 - ((durationSec - 22.0) / std::max(1.0, maxSec - 22.0)) * 0.34);
-	}
-
-	if (durationSec >= 22.0 && durationSec <= 48.0)
-		return 1.0;
-	if (durationSec < 22.0)
-		return boundedScore(0.72 + ((durationSec - minSec) / std::max(1.0, 22.0 - minSec)) * 0.28);
-	return boundedScore(1.0 - ((durationSec - 48.0) / std::max(1.0, maxSec - 48.0)) * 0.45);
-}
-
-static QVector<TopicSpanChunk> topicSpanChunksForCandidate(const TranscriptIndex &index,
-	const ClipCandidate &candidate, const ClipScoringPipelineOptions &options)
-{
-	QVector<TopicSpanChunk> chunks;
-	if (!options.embeddingProvider || !options.embeddingProvider->isAvailable())
-		return chunks;
-
-	const QVector<int> indices = index.segmentIndicesForRange(candidate.range);
-	if (indices.isEmpty())
-		return chunks;
-
-	TopicSpanChunk current;
-	double previousEndSec = -1.0;
-	auto flushCurrent = [&]() {
-		const QString text = current.text.simplified();
-		if (current.firstIndex >= 0 && current.lastIndex >= current.firstIndex && text.size() >= 24) {
-			current.text = text;
-			current.embedding = options.embeddingProvider->embed(current.text);
-			if (current.embedding.isValid())
-				chunks.append(current);
-		}
-		current = {};
-	};
-
-	for (const int segmentIndex : indices) {
-		const TranscriptSegment *segment = index.segmentAt(segmentIndex);
-		if (!segment || segment->text.trimmed().isEmpty())
-			continue;
-
-		const QString text = segment->text.trimmed();
-		const bool startsNewChunk = current.firstIndex < 0;
-		const double gapSec = previousEndSec >= 0.0 ? std::max(0.0, segment->startSec - previousEndSec) : 0.0;
-		const double nextDurationSec = startsNewChunk ? std::max(0.0, segment->endSec - segment->startSec)
-							 : std::max(0.0, segment->endSec - current.startSec);
-		const int nextChars = current.text.size() + text.size() + 1;
-		const bool shouldFlush = !startsNewChunk &&
-			(gapSec > 1.25 || nextDurationSec > 4.25 || nextChars > 220);
-		if (shouldFlush)
-			flushCurrent();
-
-		if (current.firstIndex < 0) {
-			current.firstIndex = segmentIndex;
-			current.startSec = segment->startSec;
-		}
-		current.lastIndex = segmentIndex;
-		current.endSec = segment->endSec;
-		if (!current.text.isEmpty())
-			current.text.append(QLatin1Char(' '));
-		current.text.append(text);
-		previousEndSec = segment->endSec;
-	}
-	flushCurrent();
-	return chunks;
-}
-
-static double topicSpanCohesion(const QVector<TopicSpanChunk> &chunks, int first, int last)
-{
-	if (first < 0 || last < first || last >= static_cast<int>(chunks.size()))
-		return 0.0;
-	if (first == last)
-		return 0.66;
-
-	double sum = 0.0;
-	double minSimilarity = 1.0;
-	int comparisons = 0;
-	for (int i = first; i < last; ++i) {
-		const double similarity = cosineSimilarity(chunks.at(i).embedding, chunks.at(i + 1).embedding);
-		sum += similarity;
-		minSimilarity = std::min(minSimilarity, similarity);
-		++comparisons;
-	}
-	if (comparisons <= 0)
-		return 0.0;
-	const double average = sum / static_cast<double>(comparisons);
-	return boundedScore((average * 0.72) + (minSimilarity * 0.28));
-}
-
-static QString topicSpanEvidence(double cohesion, double score)
-{
-	return QStringLiteral("semantic_topic_span_cohesion:%1 score:%2")
-		.arg(QString::number(cohesion, 'f', 2), QString::number(score, 'f', 2));
-}
-
-
-static QStringList uniqueTexts(QStringList values)
-{
-	QStringList result;
-	for (const QString &value : values) {
-		const QString text = value.simplified();
-		if (!text.isEmpty() && !result.contains(text))
-			result.append(text);
-	}
-	return result;
-}
-
-static double maxPrototypeSimilarityForEmbedding(const SemanticEmbeddingProvider &provider,
-	const SemanticEmbedding &embedding, const QStringList &prototypes)
-{
-	if (!embedding.isValid() || prototypes.isEmpty())
-		return 0.0;
-
-	double best = 0.0;
-	for (const QString &prototype : prototypes) {
-		const QString text = prototype.simplified();
-		if (text.isEmpty())
-			continue;
-		best = std::max(best, cosineSimilarity(embedding, provider.embed(text)));
-	}
-	return boundedScore(best);
-}
-
-static void scoreTopicSpanChunks(QVector<TopicSpanChunk> &chunks, const ClipScoringPipelineOptions &options)
-{
-	if (!options.embeddingProvider || !options.embeddingProvider->isAvailable() || chunks.isEmpty())
-		return;
-
-	const SemanticPrototypeSet &defaults = defaultSemanticPrototypes();
-	QStringList targetPrototypes = targetPrototypesForPreset(options.scoring.presetId, options.scoring.mainTarget);
-	QStringList valuePrototypes = uniqueTexts(QStringList(defaults.clipValue) + targetPrototypes);
-	QStringList hookPrototypes = uniqueTexts(QStringList(defaults.hook) + defaults.viewerMessage + targetPrototypes);
-	QStringList resolutionPrototypes = uniqueTexts(QStringList(defaults.resolution) + defaults.directAnswer + targetPrototypes);
-	QStringList metaPrototypes = uniqueTexts(QStringList(defaults.metaNoise) + defaults.greetingNoise + defaults.streamManagement);
-	QStringList shiftPrototypes = uniqueTexts(QStringList(defaults.topicShift) + defaults.streamManagement);
-
-	for (TopicSpanChunk &chunk : chunks) {
-		chunk.target = maxPrototypeSimilarityForEmbedding(*options.embeddingProvider, chunk.embedding, targetPrototypes);
-		chunk.value = maxPrototypeSimilarityForEmbedding(*options.embeddingProvider, chunk.embedding, valuePrototypes);
-		chunk.hook = maxPrototypeSimilarityForEmbedding(*options.embeddingProvider, chunk.embedding, hookPrototypes);
-		chunk.resolution = maxPrototypeSimilarityForEmbedding(*options.embeddingProvider, chunk.embedding, resolutionPrototypes);
-		chunk.meta = maxPrototypeSimilarityForEmbedding(*options.embeddingProvider, chunk.embedding, metaPrototypes);
-		chunk.shift = maxPrototypeSimilarityForEmbedding(*options.embeddingProvider, chunk.embedding, shiftPrototypes);
-	}
-}
-
-static double averageChunkScore(const QVector<TopicSpanChunk> &chunks, int first, int last,
-	double TopicSpanChunk::*field)
-{
-	if (first < 0 || last < first || last >= static_cast<int>(chunks.size()))
-		return 0.0;
-
-	double sum = 0.0;
-	for (int i = first; i <= last; ++i)
-		sum += chunks.at(i).*field;
-	return boundedScore(sum / static_cast<double>(last - first + 1));
-}
-
-static double maxChunkScore(const QVector<TopicSpanChunk> &chunks, int first, int last,
-	double TopicSpanChunk::*field)
-{
-	if (first < 0 || last < first || last >= static_cast<int>(chunks.size()))
-		return 0.0;
-
-	double best = 0.0;
-	for (int i = first; i <= last; ++i)
-		best = std::max(best, chunks.at(i).*field);
-	return boundedScore(best);
-}
-
-static QString topicBoundaryEvidence(const QVector<TopicSpanChunk> &chunks, int first, int last)
-{
-	if (first < 0 || last < first || last >= static_cast<int>(chunks.size()))
-		return {};
-
-	return QStringLiteral("semantic_boundary openingHook:%1 openingMeta:%2 endingResolution:%3 endingMeta:%4 endingShift:%5")
-		.arg(QString::number(chunks.at(first).hook, 'f', 2), QString::number(chunks.at(first).meta, 'f', 2),
-		     QString::number(chunks.at(last).resolution, 'f', 2), QString::number(chunks.at(last).meta, 'f', 2),
-		     QString::number(chunks.at(last).shift, 'f', 2));
-}
-
-
-static double openingContextScore(const TopicSpanChunk &chunk)
-{
-	const double positive = std::max({chunk.target, chunk.value, chunk.hook});
-	return positive - (chunk.meta * 0.38) - (chunk.shift * 0.18);
-}
-
-static bool isUsefulLeadInChunk(const TopicSpanChunk &chunk, const TopicSpanChunk &currentOpening)
-{
-	const double leadScore = openingContextScore(chunk);
-	const double currentScore = openingContextScore(currentOpening);
-	const bool hasUsefulSignal = std::max({chunk.target, chunk.value, chunk.hook}) >= 0.54;
-	const bool notMostlyMeta = chunk.meta < 0.74 && chunk.meta <= std::max({chunk.target, chunk.value, chunk.hook}) + 0.14;
-	return hasUsefulSignal && notMostlyMeta && leadScore >= currentScore - 0.12;
-}
-
-static bool isUsefulTailContinuationChunk(const QVector<TopicSpanChunk> &chunks, int currentLast, int candidateNext)
-{
-	if (currentLast < 0 || candidateNext <= currentLast || candidateNext >= static_cast<int>(chunks.size()))
-		return false;
-
-	const TopicSpanChunk &current = chunks.at(currentLast);
-	const TopicSpanChunk &next = chunks.at(candidateNext);
-	const double continuity = cosineSimilarity(current.embedding, next.embedding);
-	const double nextPositive = std::max({next.target, next.value, next.resolution, next.hook * 0.82});
-	const double nextNoise = std::max(next.meta, next.shift);
-	const bool hasContinuationValue = nextPositive >= 0.52 || next.resolution >= 0.56 || continuity >= 0.66;
-	const bool sameExchange = continuity >= 0.58 || next.target >= current.target - 0.08 || next.value >= 0.54;
-	const bool clearlyDifferentMetaTopic = nextNoise >= 0.84 && nextNoise >= nextPositive + 0.10 && continuity < 0.68;
-	return hasContinuationValue && sameExchange && !clearlyDifferentMetaTopic;
-}
-
-static bool isHardNoisyEndingChunk(const TopicSpanChunk &chunk)
-{
-	const double endingNoise = std::max(chunk.meta, chunk.shift);
-	const double endingPositive = std::max({chunk.resolution, chunk.value, chunk.target});
-	return endingNoise >= 0.84 && endingNoise >= endingPositive + 0.12;
-}
-
-static bool canUseTopicSpanBounds(const QVector<TopicSpanChunk> &chunks, int first, int last,
-	const ClipScoringPipelineOptions &options)
-{
-	if (first < 0 || last < first || last >= static_cast<int>(chunks.size()))
-		return false;
-	const double durationSec = chunks.at(last).endSec - chunks.at(first).startSec;
-	const double minDurationSec = std::max(8.0, options.generation.boundaryMinDurationSec);
-	const double maxDurationSec = std::max(minDurationSec, options.generation.maxDurationSec);
-	return durationSec >= minDurationSec && durationSec <= maxDurationSec + 0.1;
 }
 
 } // namespace
@@ -483,6 +244,8 @@ SemanticCoarseRetrievalContext ClipScoringPipeline::coarseContextFromOptions(
 	SemanticCoarseRetrievalContext context;
 	context.presetId = options.scoring.presetId;
 	context.mainTarget = options.scoring.mainTarget;
+	context.transcriptionLanguage = options.scoring.transcriptionLanguage;
+	context.sourceLanguage = options.scoring.sourceLanguage;
 	context.reliableMainTarget = options.scoring.reliableMainTarget;
 	return context;
 }
@@ -492,6 +255,8 @@ SemanticScoringContext ClipScoringPipeline::semanticContextFromOptions(const Cli
 	SemanticScoringContext context;
 	context.presetId = options.scoring.presetId;
 	context.mainTarget = options.scoring.mainTarget;
+	context.transcriptionLanguage = options.scoring.transcriptionLanguage;
+	context.sourceLanguage = options.scoring.sourceLanguage;
 	context.reliableMainTarget = options.scoring.reliableMainTarget;
 	return context;
 }
@@ -501,6 +266,8 @@ SemanticRerankerContext ClipScoringPipeline::rerankerContextFromOptions(const Cl
 	SemanticRerankerContext context;
 	context.presetId = options.scoring.presetId;
 	context.mainTarget = options.scoring.mainTarget;
+	context.transcriptionLanguage = options.scoring.transcriptionLanguage;
+	context.sourceLanguage = options.scoring.sourceLanguage;
 	context.reliableMainTarget = options.scoring.reliableMainTarget;
 	return context;
 }
@@ -563,9 +330,11 @@ QVector<ClipCandidate> ClipScoringPipeline::candidatesFromSemanticCoarseRegions(
 	} else {
 		targetDurations = {
 			std::clamp(24.0, options.generation.minDurationSec, options.generation.maxDurationSec),
-			std::clamp(36.0, options.generation.minDurationSec, options.generation.maxDurationSec),
-			std::clamp(48.0, options.generation.minDurationSec, options.generation.maxDurationSec),
+			std::clamp(45.0, options.generation.minDurationSec, options.generation.maxDurationSec),
 			std::clamp(60.0, options.generation.minDurationSec, options.generation.maxDurationSec),
+			std::clamp(90.0, options.generation.minDurationSec, options.generation.maxDurationSec),
+			std::clamp(120.0, options.generation.minDurationSec, options.generation.maxDurationSec),
+			std::clamp(150.0, options.generation.minDurationSec, options.generation.maxDurationSec),
 			options.generation.maxDurationSec,
 		};
 	}
@@ -574,65 +343,85 @@ QVector<ClipCandidate> ClipScoringPipeline::candidatesFromSemanticCoarseRegions(
 	}), targetDurations.end());
 
 	for (const SemanticCoarseRegion &region : regions) {
-		const ClipDuration regionRange = index.clampRange(region.range, options.generation.searchRange);
-		if ((regionRange.endSec - regionRange.startSec) < options.generation.minDurationSec)
+		// The coarse retriever owns only semantic retrieval. Its padded range is a broad search area, not a boundary.
+		const ClipDuration searchRange = index.clampRange(region.range, options.generation.searchRange);
+		ClipDuration focusRange = region.focusRange;
+		if (focusRange.endSec <= focusRange.startSec)
+			focusRange = searchRange;
+		focusRange = index.clampRange(focusRange, searchRange);
+		if ((searchRange.endSec - searchRange.startSec) < options.generation.minDurationSec)
 			continue;
 
-		const QVector<int> segmentIndices = index.segmentIndicesForRange(regionRange);
-		if (segmentIndices.isEmpty())
+		const QVector<int> focusSegmentIndices = index.segmentIndicesForRange(focusRange);
+		const QVector<int> searchSegmentIndices = index.segmentIndicesForRange(searchRange);
+		if (focusSegmentIndices.isEmpty() || searchSegmentIndices.isEmpty())
 			continue;
 
-		QVector<int> anchorPositions;
-		const int desiredAnchors = std::max(4, maxCandidatesPerRegion * 2);
-		const int anchorStep = std::max(1, static_cast<int>(std::ceil(static_cast<double>(segmentIndices.size()) /
+		QVector<int> focusAnchorIndices;
+		const int desiredAnchors = std::max(5, maxCandidatesPerRegion * 2);
+		const int anchorStep = std::max(1, static_cast<int>(std::ceil(static_cast<double>(focusSegmentIndices.size()) /
 			static_cast<double>(desiredAnchors))));
-		for (int position = 0; position < static_cast<int>(segmentIndices.size()); position += anchorStep)
-			anchorPositions.append(position);
-		if (!anchorPositions.contains(0))
-			anchorPositions.prepend(0);
-		const int lastAnchor = static_cast<int>(segmentIndices.size()) - 1;
-		if (!anchorPositions.contains(lastAnchor))
-			anchorPositions.append(lastAnchor);
+		for (int position = 0; position < static_cast<int>(focusSegmentIndices.size()); position += anchorStep)
+			focusAnchorIndices.append(focusSegmentIndices.at(position));
+		if (!focusAnchorIndices.contains(focusSegmentIndices.first()))
+			focusAnchorIndices.prepend(focusSegmentIndices.first());
+		if (!focusAnchorIndices.contains(focusSegmentIndices.last()))
+			focusAnchorIndices.append(focusSegmentIndices.last());
 
 		QVector<ClipCandidate> regionCandidates;
-		regionCandidates.reserve(maxCandidatesPerRegion * 3);
+		regionCandidates.reserve(maxCandidatesPerRegion * 5);
 		QStringList regionSeen;
 
-		for (const int anchorPosition : anchorPositions) {
-			const int firstIndex = segmentIndices.at(anchorPosition);
-			const TranscriptSegment *firstSegment = index.segmentAt(firstIndex);
-			if (!firstSegment || firstSegment->text.trimmed().isEmpty())
-				continue;
-			if (firstSegment->startSec < regionRange.startSec - 0.5 || firstSegment->startSec > regionRange.endSec)
+		for (const int anchorIndex : focusAnchorIndices) {
+			const TranscriptSegment *anchorSegment = index.segmentAt(anchorIndex);
+			if (!anchorSegment || anchorSegment->text.trimmed().isEmpty())
 				continue;
 
 			for (const double requestedDurationSec : targetDurations) {
-				const double targetEndSec = firstSegment->startSec + requestedDurationSec;
-				int lastIndex = -1;
-				for (int position = anchorPosition; position < static_cast<int>(segmentIndices.size()); ++position) {
-					const int segmentIndex = segmentIndices.at(position);
-					const TranscriptSegment *segment = index.segmentAt(segmentIndex);
-					if (!segment)
+				QVector<double> startTimes;
+				appendUniqueStart(startTimes, anchorSegment->startSec - 2.0);
+				appendUniqueStart(startTimes, anchorSegment->startSec - 8.0);
+				appendUniqueStart(startTimes, anchorSegment->startSec - (requestedDurationSec * 0.25));
+				appendUniqueStart(startTimes, anchorSegment->startSec - (requestedDurationSec * 0.50));
+				appendUniqueStart(startTimes, rangeCenterSec(focusRange) - (requestedDurationSec * 0.50));
+				appendUniqueStart(startTimes, focusRange.startSec - 6.0);
+				appendUniqueStart(startTimes, focusRange.endSec - requestedDurationSec + 6.0);
+
+				for (double requestedStartSec : startTimes) {
+					ClipDuration range{requestedStartSec, requestedStartSec + requestedDurationSec};
+					if (range.startSec < searchRange.startSec) {
+						const double shift = searchRange.startSec - range.startSec;
+						range.startSec += shift;
+						range.endSec += shift;
+					}
+					if (range.endSec > searchRange.endSec) {
+						const double shift = range.endSec - searchRange.endSec;
+						range.startSec -= shift;
+						range.endSec -= shift;
+					}
+					range = index.clampRange(range, searchRange);
+					if ((range.endSec - range.startSec) < options.generation.minDurationSec)
 						continue;
-					lastIndex = segmentIndex;
-					if (segment->endSec >= targetEndSec || segment->endSec >= regionRange.endSec)
+					if (!substantiallyOverlapsFocus(range, focusRange))
+						continue;
+
+					ClipCandidate candidate = buildCandidateForRange(index, options, range, region);
+					candidate.evidence.append(QStringLiteral("coarse_focus_seed_only"));
+					candidate.evidence.append(QStringLiteral("candidate_generated_around_coarse_focus"));
+					candidate.evidence.removeDuplicates();
+					const QString key = rangeKey(candidate.range);
+					if (regionSeen.contains(key) || seen.contains(key) || !isStructurallyViable(candidate, options))
+						continue;
+
+					regionSeen.append(key);
+					regionCandidates.append(candidate);
+					if (static_cast<int>(regionCandidates.size()) >= maxCandidatesPerRegion * 5)
 						break;
 				}
-
-				if (lastIndex < firstIndex)
-					continue;
-
-				ClipCandidate candidate = buildCandidateForSegmentWindow(index, options, firstIndex, lastIndex, region);
-				const QString key = rangeKey(candidate.range);
-				if (regionSeen.contains(key) || seen.contains(key) || !isStructurallyViable(candidate, options))
-					continue;
-
-				regionSeen.append(key);
-				regionCandidates.append(candidate);
-				if (static_cast<int>(regionCandidates.size()) >= maxCandidatesPerRegion * 4)
+				if (static_cast<int>(regionCandidates.size()) >= maxCandidatesPerRegion * 5)
 					break;
 			}
-			if (static_cast<int>(regionCandidates.size()) >= maxCandidatesPerRegion * 4)
+			if (static_cast<int>(regionCandidates.size()) >= maxCandidatesPerRegion * 5)
 				break;
 		}
 
@@ -640,8 +429,8 @@ QVector<ClipCandidate> ClipScoringPipeline::candidatesFromSemanticCoarseRegions(
 								      const ClipCandidate &right) {
 			if (std::fabs(left.scores.final - right.scores.final) > 0.0001)
 				return left.scores.final > right.scores.final;
-			if (std::fabs(left.scores.boundary - right.scores.boundary) > 0.0001)
-				return left.scores.boundary > right.scores.boundary;
+			if (std::fabs(left.scores.coarseSemantic - right.scores.coarseSemantic) > 0.0001)
+				return left.scores.coarseSemantic > right.scores.coarseSemantic;
 			return left.range.startSec < right.range.startSec;
 		});
 
@@ -663,6 +452,7 @@ QVector<ClipCandidate> ClipScoringPipeline::candidatesFromSemanticCoarseRegions(
 
 	return candidates;
 }
+
 
 
 QVector<ClipCandidate> ClipScoringPipeline::refineCandidatesToSemanticTopicSpans(const TranscriptIndex &index,
@@ -691,171 +481,24 @@ QVector<ClipCandidate> ClipScoringPipeline::refineCandidatesToSemanticTopicSpans
 ClipCandidate ClipScoringPipeline::refineCandidateToSemanticTopicSpan(const TranscriptIndex &index,
 	const ClipScoringPipelineOptions &options, const ClipCandidate &candidate) const
 {
-	const double originalDurationSec = candidate.range.endSec - candidate.range.startSec;
-	if (originalDurationSec <= std::max(options.generation.minDurationSec + 4.0, 20.0))
+	ExchangeArcBoundaryRefinementOptions refinerOptions;
+	refinerOptions.generation = options.generation;
+	refinerOptions.scoring = options.scoring;
+	refinerOptions.qualityGate = options.qualityGate;
+	refinerOptions.embeddingProvider = options.embeddingProvider;
+
+	ExchangeArcBoundaryRefiner refiner;
+	ClipCandidate refined = refiner.refine(index, candidate, refinerOptions);
+	if (!isStructurallyViable(refined, options))
 		return candidate;
 
-	QVector<TopicSpanChunk> chunks = topicSpanChunksForCandidate(index, candidate, options);
-	if (chunks.size() < 2)
-		return candidate;
-	scoreTopicSpanChunks(chunks, options);
-
-	int bestFirst = -1;
-	int bestLast = -1;
-	double bestScore = 0.0;
-	double bestCohesion = 0.0;
-	const double minDurationSec = std::max(8.0, options.generation.boundaryMinDurationSec);
-	const double maxDurationSec = std::max(minDurationSec, options.generation.maxDurationSec);
-
-	for (int first = 0; first < static_cast<int>(chunks.size()); ++first) {
-		for (int last = first; last < static_cast<int>(chunks.size()); ++last) {
-			const double durationSec = chunks.at(last).endSec - chunks.at(first).startSec;
-			if (durationSec < minDurationSec)
-				continue;
-			if (durationSec > maxDurationSec)
-				break;
-
-			const QString spanText = index.textForSegmentWindow(chunks.at(first).firstIndex, chunks.at(last).lastIndex);
-			if (spanText.trimmed().size() < std::max(36, options.qualityGate.minTextChars / 2))
-				continue;
-
-			const double cohesion = topicSpanCohesion(chunks, first, last);
-			const double durationFit = topicSpanDurationScore(durationSec, options);
-			const double value = std::max(averageChunkScore(chunks, first, last, &TopicSpanChunk::value),
-				maxChunkScore(chunks, first, last, &TopicSpanChunk::target));
-			const double openingHook = std::max(chunks.at(first).hook, chunks.at(first).target * 0.92);
-			const double openingMeta = chunks.at(first).meta;
-			const double endingResolution = std::max(chunks.at(last).resolution, chunks.at(last).value * 0.72);
-			const double endingNoise = std::max(chunks.at(last).meta, chunks.at(last).shift);
-			const double averageMeta = averageChunkScore(chunks, first, last, &TopicSpanChunk::meta);
-			const double openingFit = boundedScore(openingHook - (openingMeta * 0.44));
-			const double endingFit = boundedScore(endingResolution - (endingNoise * 0.38));
-			const double valueFit = boundedScore(value - (averageMeta * 0.24));
-			const bool shortLocalBounds = options.generation.maxDurationSec <= 40.0;
-			const double conciseLocalBonus = shortLocalBounds ? boundedScore(1.0 - (durationSec /
-				std::max(1.0, options.generation.maxDurationSec))) * 0.08 : 0.0;
-			const double spanScore = boundedScore((valueFit * 0.25) + (openingFit * 0.25) +
-				(endingFit * 0.22) + (cohesion * 0.18) + (durationFit * 0.10) + conciseLocalBonus);
-
-			const bool betterScore = spanScore > bestScore + 0.012;
-			const bool similarButEarlier = shortLocalBounds && std::fabs(spanScore - bestScore) <= 0.012 &&
-				bestFirst >= 0 && chunks.at(first).startSec < chunks.at(bestFirst).startSec - 0.5 &&
-				openingFit >= 0.28;
-			const bool similarButShorter = shortLocalBounds && std::fabs(spanScore - bestScore) <= 0.012 &&
-				bestFirst >= 0 && durationSec + 1.0 < chunks.at(bestLast).endSec - chunks.at(bestFirst).startSec &&
-				endingFit >= 0.28;
-
-			if (betterScore || similarButEarlier || similarButShorter) {
-				bestScore = spanScore;
-				bestCohesion = cohesion;
-				bestFirst = first;
-				bestLast = last;
-			}
-		}
-	}
-
-	if (bestFirst < 0 || bestLast < bestFirst || bestScore < 0.42)
-		return candidate;
-
-	int adjustedFirst = bestFirst;
-	int adjustedLast = bestLast;
-	bool addedLeadInContext = false;
-	bool extendedTailContinuation = false;
-	bool trimmedHardNoisyEnding = false;
-
-	// The best scoring span often identifies the strongest answer core, but a good clip
-	// still needs the viewer issue/question immediately before it. Include one compact
-	// previous chunk when it is semantically useful and not just stream/meta chatter.
-	int leadInExtensions = 0;
-	while (leadInExtensions < 3 && adjustedFirst > 0 &&
-	       isUsefulLeadInChunk(chunks.at(adjustedFirst - 1), chunks.at(adjustedFirst))) {
-		const int candidateFirst = adjustedFirst - 1;
-		if (!canUseTopicSpanBounds(chunks, candidateFirst, adjustedLast, options))
-			break;
-		adjustedFirst = candidateFirst;
-		++leadInExtensions;
-		addedLeadInContext = true;
-	}
-
-	// The best core span can end slightly before the local answer resolves. Keep one
-	// or two compact next chunks when they still look like the same exchange instead
-	// of trimming merely because the last chunk has moderate meta/topic-shift scores.
-	int tailExtensions = 0;
-	const bool shortLocalBounds = options.generation.maxDurationSec <= 40.0;
-	while (tailExtensions < (shortLocalBounds ? 1 : 2) &&
-	       isUsefulTailContinuationChunk(chunks, adjustedLast, adjustedLast + 1) &&
-	       canUseTopicSpanBounds(chunks, adjustedFirst, adjustedLast + 1, options)) {
-		const double currentDurationSec = chunks.at(adjustedLast).endSec - chunks.at(adjustedFirst).startSec;
-		const TopicSpanChunk &currentTail = chunks.at(adjustedLast);
-		const TopicSpanChunk &nextTail = chunks.at(adjustedLast + 1);
-		const double currentResolution = std::max(currentTail.resolution, currentTail.value * 0.76);
-		const double nextPositive = std::max({nextTail.target, nextTail.value, nextTail.resolution});
-		const double nextNoise = std::max(nextTail.meta, nextTail.shift);
-		const bool localResolutionAlreadyReached = shortLocalBounds && currentDurationSec >= 8.0 &&
-			currentResolution >= 0.60 && nextPositive < currentResolution + 0.04 &&
-			nextNoise >= nextPositive - 0.02;
-		if (localResolutionAlreadyReached)
-			break;
-
-		++adjustedLast;
-		++tailExtensions;
-		extendedTailContinuation = true;
-	}
-
-	// Only remove the final chunk when it is a very strong meta/topic break. Moderate
-	// endingMeta/endingShift scores are intentionally not enough because they caused
-	// useful advice clips to end a few seconds too early.
-	while (adjustedLast > adjustedFirst && isHardNoisyEndingChunk(chunks.at(adjustedLast)) &&
-	       canUseTopicSpanBounds(chunks, adjustedFirst, adjustedLast - 1, options)) {
-		--adjustedLast;
-		trimmedHardNoisyEnding = true;
-	}
-
-	ClipDuration refinedRange{chunks.at(adjustedFirst).startSec, chunks.at(adjustedLast).endSec};
-	refinedRange = index.clampRange(refinedRange, options.generation.searchRange);
-	const double refinedDurationSec = refinedRange.endSec - refinedRange.startSec;
-	if (refinedDurationSec < minDurationSec || refinedDurationSec > maxDurationSec + 0.1)
-		return candidate;
-
-	const bool materiallyChanged = std::fabs(refinedRange.startSec - candidate.range.startSec) > 1.0 ||
-		std::fabs(refinedRange.endSec - candidate.range.endSec) > 1.0;
-	if (!materiallyChanged) {
-		ClipCandidate kept = candidate;
-		kept.evidence.append(QStringLiteral("semantic_topic_span_kept"));
-		kept.evidence.append(topicSpanEvidence(bestCohesion, bestScore));
-		kept.evidence.append(topicBoundaryEvidence(chunks, adjustedFirst, adjustedLast));
-		if (addedLeadInContext)
-			kept.evidence.append(QStringLiteral("semantic_boundary_lead_in_context"));
-		if (extendedTailContinuation)
-			kept.evidence.append(QStringLiteral("semantic_boundary_tail_continuation"));
-		if (trimmedHardNoisyEnding)
-			kept.evidence.append(QStringLiteral("semantic_boundary_hard_topic_break_trimmed"));
-		kept.evidence.removeDuplicates();
-		return kept;
-	}
-
-	ClipCandidate refined = candidate;
-	refined.range = refinedRange;
-	refined.firstSegmentIndex = index.firstSegmentIndexOverlapping(refined.range);
-	refined.lastSegmentIndex = index.lastSegmentIndexOverlapping(refined.range);
-	refined.text = index.textForRange(refined.range).simplified();
-	refined.anchorText = refined.text.left(220);
-	refined.evidence.append(QStringLiteral("semantic_topic_span_refined"));
-	if (std::fabs(refinedRange.startSec - candidate.range.startSec) > 1.0)
-		refined.evidence.append(QStringLiteral("semantic_boundary_start_refined"));
-	if (std::fabs(refinedRange.endSec - candidate.range.endSec) > 1.0)
-		refined.evidence.append(QStringLiteral("semantic_boundary_end_refined"));
-	refined.evidence.append(topicSpanEvidence(bestCohesion, bestScore));
-	refined.evidence.append(topicBoundaryEvidence(chunks, adjustedFirst, adjustedLast));
-	if (addedLeadInContext)
-		refined.evidence.append(QStringLiteral("semantic_boundary_lead_in_context"));
-	if (extendedTailContinuation)
-		refined.evidence.append(QStringLiteral("semantic_boundary_tail_continuation"));
-	if (trimmedHardNoisyEnding)
-		refined.evidence.append(QStringLiteral("semantic_boundary_hard_topic_break_trimmed"));
-	refined.evidence.removeDuplicates();
-	return scoreStructurally(index, refined);
+	const bool materiallyChanged = std::fabs(refined.range.startSec - candidate.range.startSec) > 1.0 ||
+		std::fabs(refined.range.endSec - candidate.range.endSec) > 1.0;
+	if (materiallyChanged)
+		return scoreStructurally(index, refined);
+	return refined;
 }
+
 
 QVector<ClipCandidate> ClipScoringPipeline::fallbackCandidatesFromLocalHeuristics(const TranscriptIndex &index,
 	const ClipScoringPipelineOptions &options) const
@@ -904,6 +547,7 @@ ClipCandidate ClipScoringPipeline::buildCandidateForRange(const TranscriptIndex 
 	candidate.firstSegmentIndex = index.firstSegmentIndexOverlapping(candidate.range);
 	candidate.lastSegmentIndex = index.lastSegmentIndexOverlapping(candidate.range);
 	candidate.text = index.textForRange(candidate.range).simplified();
+	candidate.timedText = index.timedTextForRange(candidate.range);
 	candidate.anchorText = candidate.text.left(220);
 	candidate.source = QStringLiteral("semantic_coarse_region");
 	candidate.hasReliableMainTarget = options.scoring.reliableMainTarget;
@@ -917,9 +561,16 @@ ClipCandidate ClipScoringPipeline::buildCandidateForRange(const TranscriptIndex 
 ClipCandidate ClipScoringPipeline::scoreStructurally(const TranscriptIndex &index, const ClipCandidate &candidate) const
 {
 	ClipCandidate scored = candidate;
+	if (scored.timedText.trimmed().isEmpty())
+		scored.timedText = index.timedTextForRange(scored.range);
 	const double durationSec = scored.range.endSec - scored.range.startSec;
 	scored.scores.duration = durationScore(durationSec);
-	scored.scores.boundary = boundaryScore(index, scored);
+	scored.scores.pauseBeforeSec = index.silenceBeforeRange(scored.range);
+	scored.scores.pauseAfterSec = index.silenceAfterRange(scored.range);
+	scored.scores.maxInternalPauseSec = index.maxInternalSilenceInRange(scored.range);
+	scored.scores.pauseBoundary = boundedScore((std::min(scored.scores.pauseBeforeSec, 4.0) * 0.12) +
+		(std::min(scored.scores.pauseAfterSec, 4.0) * 0.18));
+	scored.scores.boundary = boundedScore(boundaryScore(index, scored) + (scored.scores.pauseBoundary * 0.18));
 	const double coarseScore = scored.scores.coarseSemantic;
 	const double charsPerSecond = durationSec > 0.0 ? static_cast<double>(scored.text.trimmed().size()) / durationSec : 0.0;
 	const double textDensityScore = boundedScore(charsPerSecond / 8.0);
@@ -929,6 +580,10 @@ ClipCandidate ClipScoringPipeline::scoreStructurally(const TranscriptIndex &inde
 		scored.evidence.append(QStringLiteral("speech_density_ok"));
 	if (scored.scores.boundary >= 0.7)
 		scored.evidence.append(QStringLiteral("clean_boundary"));
+	if (scored.scores.pauseAfterSec >= 3.0)
+		scored.evidence.append(QStringLiteral("pause_after:%1").arg(QString::number(scored.scores.pauseAfterSec, 'f', 1)));
+	if (scored.scores.maxInternalPauseSec >= 2.0)
+		scored.evidence.append(QStringLiteral("internal_pause:%1").arg(QString::number(scored.scores.maxInternalPauseSec, 'f', 1)));
 	scored.evidence.append(QStringLiteral("structural_score_only"));
 	scored.evidence.removeDuplicates();
 	return scored;
@@ -942,12 +597,10 @@ double ClipScoringPipeline::durationScore(double durationSec) const
 		return 0.15;
 	if (durationSec < 18.0)
 		return 0.45;
-	if (durationSec <= 75.0)
+	if (durationSec <= 120.0)
 		return 1.0;
-	if (durationSec <= 90.0)
-		return 0.82;
-	if (durationSec <= 150.0)
-		return 0.62;
+	if (durationSec <= 180.0)
+		return 0.90;
 	return 0.30;
 }
 
@@ -1017,7 +670,7 @@ QString ClipScoringPipeline::buildSummary(const QVector<ClipCandidate> &candidat
 	const int limit = static_cast<int>(std::min(static_cast<long long>(5), static_cast<long long>(summaryCandidates.size())));
 	for (int i = 0; i < limit; ++i) {
 		const ClipCandidate &candidate = summaryCandidates.at(i);
-		parts.append(QStringLiteral("#%1 selectedRank=%2 %3-%4s score=%5 value=%6 hook=%7 openingHook=%8 resolution=%9 endingResolution=%10 metaNoise=%11 openingMeta=%12 endingMeta=%13 endingShift=%14 continuity=%15 semantic=%16 viewer=%17 boundary=%18 coarse=%19 reranker=%20 raw=%21 bad=%22 margin=%23 source=%24 evidence=%25")
+		parts.append(QStringLiteral("#%1 selectedRank=%2 %3-%4s score=%5 value=%6 hook=%7 openingHook=%8 resolution=%9 endingResolution=%10 metaNoise=%11 openingMeta=%12 endingMeta=%13 endingShift=%14 continuity=%15 arc=%16 arcOpen=%17 arcDev=%18 arcEnd=%19 arcClean=%20 arcTail=%21 semantic=%22 viewer=%23 boundary=%24 pauseBefore=%25 pauseAfter=%26 internalPause=%27 coarse=%28 reranker=%29 raw=%30 defect=%31 openDef=%32 endDef=%33 structDef=%34 margin=%35 source=%36 evidence=%37")
 			.arg(i + 1)
 			.arg(candidate.selectedRank > 0 ? candidate.selectedRank : i + 1)
 			.arg(QString::number(candidate.range.startSec, 'f', 2))
@@ -1033,13 +686,25 @@ QString ClipScoringPipeline::buildSummary(const QVector<ClipCandidate> &candidat
 			.arg(QString::number(candidate.scores.semanticEndingMetaNoise, 'f', 2))
 			.arg(QString::number(candidate.scores.semanticEndingTopicShift, 'f', 2))
 			.arg(QString::number(candidate.scores.topicContinuity, 'f', 2))
+			.arg(QString::number(candidate.scores.arcCompleteness, 'f', 2))
+			.arg(QString::number(candidate.scores.arcOpening, 'f', 2))
+			.arg(QString::number(candidate.scores.arcDevelopment, 'f', 2))
+			.arg(QString::number(candidate.scores.arcConclusion, 'f', 2))
+			.arg(QString::number(candidate.scores.arcBoundaryCleanliness, 'f', 2))
+			.arg(QString::number(candidate.scores.arcTailRisk, 'f', 2))
 			.arg(QString::number(candidate.scores.semanticTarget, 'f', 2))
 			.arg(QString::number(candidate.scores.viewerResponse, 'f', 2))
 			.arg(QString::number(candidate.scores.boundary, 'f', 2))
+			.arg(QString::number(candidate.scores.pauseBeforeSec, 'f', 1))
+			.arg(QString::number(candidate.scores.pauseAfterSec, 'f', 1))
+			.arg(QString::number(candidate.scores.maxInternalPauseSec, 'f', 1))
 			.arg(QString::number(candidate.scores.coarseSemantic, 'f', 2))
 			.arg(QString::number(candidate.scores.reranker, 'f', 2))
 			.arg(QString::number(candidate.scores.rerankerRaw, 'f', 2))
 			.arg(QString::number(candidate.scores.rerankerBadClip, 'f', 2))
+			.arg(QString::number(candidate.scores.rerankerOpeningDefect, 'f', 2))
+			.arg(QString::number(candidate.scores.rerankerEndingDefect, 'f', 2))
+			.arg(QString::number(candidate.scores.rerankerStructureDefect, 'f', 2))
 			.arg(QString::number(candidate.scores.rerankerClipQualityMargin, 'f', 2))
 			.arg(candidate.source)
 			.arg(candidate.evidence.join(QLatin1Char('|'))));
@@ -1112,7 +777,7 @@ QString ClipScoringPipeline::rejectionSummary(const QVector<ClipCandidate> &cand
 	const int rejectedLimit = static_cast<int>(std::min(static_cast<long long>(3), static_cast<long long>(topRejected.size())));
 	for (int i = 0; i < rejectedLimit; ++i) {
 		const ClipCandidate &candidate = topRejected.at(i);
-		rejectedParts.append(QStringLiteral("%1-%2:%3 final=%4 value=%5 hook=%6 res=%7 meta=%8 raw=%9 bad=%10 margin=%11")
+		rejectedParts.append(QStringLiteral("%1-%2:%3 final=%4 value=%5 hook=%6 res=%7 meta=%8 raw=%9 defect=%10 openDef=%11 endDef=%12 structDef=%13 margin=%14")
 			.arg(QString::number(candidate.range.startSec, 'f', 1))
 			.arg(QString::number(candidate.range.endSec, 'f', 1))
 			.arg(candidate.rejectionReason.left(40))
@@ -1123,6 +788,9 @@ QString ClipScoringPipeline::rejectionSummary(const QVector<ClipCandidate> &cand
 			.arg(QString::number(candidate.scores.semanticMetaNoise, 'f', 2))
 			.arg(QString::number(candidate.scores.rerankerRaw, 'f', 2))
 			.arg(QString::number(candidate.scores.rerankerBadClip, 'f', 2))
+			.arg(QString::number(candidate.scores.rerankerOpeningDefect, 'f', 2))
+			.arg(QString::number(candidate.scores.rerankerEndingDefect, 'f', 2))
+			.arg(QString::number(candidate.scores.rerankerStructureDefect, 'f', 2))
 			.arg(QString::number(candidate.scores.rerankerClipQualityMargin, 'f', 2)));
 	}
 

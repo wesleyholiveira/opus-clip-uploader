@@ -2,8 +2,8 @@
 
 #include "ui/ui-common.hpp"
 
-#include "gpt/gpt-prompt-client.hpp"
 #include "curation/scoring/semantic-embedding-settings.hpp"
+#include "transcription/whisperx-settings.hpp"
 
 #include <obs-frontend-api.h>
 #include <obs-module.h>
@@ -19,11 +19,10 @@
 #include <QFrame>
 #include <QLabel>
 #include <QLineEdit>
-#include <QPlainTextEdit>
 #include <QSize>
+#include <QSpinBox>
 #include <QMessageBox>
 #include <QPushButton>
-#include <QSignalBlocker>
 #include <QStandardPaths>
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
@@ -32,7 +31,6 @@
 
 static const QString &title = clipCropperTitle();
 static constexpr const char *CONFIG_UPLOAD_RESAMPLE_THRESHOLD_PERCENT = "upload_resample_threshold_percent";
-static constexpr const char *CONFIG_GPT_TRANSCRIPT_CONTEXT_PADDING_SEC = "gpt_transcript_context_padding_sec";
 
 static QString transcription_cache_directory_path()
 {
@@ -60,10 +58,9 @@ static int purge_plugin_cache_config_keys()
 		QStringLiteral("video_markers."),
 		QStringLiteral("review.settings."),
 		QStringLiteral("video_transcript."),
+		QStringLiteral("video_transcript_v3."),
 		QStringLiteral("video_transcript_range."),
-		QStringLiteral("gpt_prompt."),
-		QStringLiteral("gpt_prompt_input."),
-		QStringLiteral("gpt_prompt_pending."),
+		QStringLiteral("video_transcript_range_v3."),
 	});
 }
 static void set_combo_current_data(QComboBox *combo, const QString &value, int fallbackIndex = 0)
@@ -96,11 +93,6 @@ void open_settings_impl(void *private_data)
 
 	formLayout->addRow(obsText("Settings.OpusApiKey"), apiKeyInput);
 
-	QLineEdit *openAiApiKeyInput = new QLineEdit(&dialog);
-	openAiApiKeyInput->setEchoMode(QLineEdit::Password);
-	openAiApiKeyInput->setPlaceholderText("OpenAI API Key");
-	openAiApiKeyInput->setText(PluginConfig::getValue("openai_api_key"));
-	formLayout->addRow(obsText("Settings.OpenAiApiKey"), openAiApiKeyInput);
 
 	QComboBox *whisperModelInput = new QComboBox(&dialog);
 	whisperModelInput->addItem(obsText("WhisperModel.Tiny"), QStringLiteral("ggml-tiny.bin"));
@@ -167,22 +159,87 @@ void open_settings_impl(void *private_data)
 	resampleThresholdInput->setToolTip(obsText("Tooltip.UploadResampleThresholdPercent"));
 	treeWidget->setItemWidget(resampleThresholdItem, 1, resampleThresholdInput);
 
-	auto *gptContextPaddingItem = new QTreeWidgetItem(advancedItem);
-	gptContextPaddingItem->setText(0, obsText("Settings.GptTranscriptContextPaddingSec"));
+	auto *whisperXBackendItem = new QTreeWidgetItem(advancedItem);
+	whisperXBackendItem->setText(0, obsText("Settings.WhisperXBackend"));
 
-	QDoubleSpinBox *gptContextPaddingInput = new QDoubleSpinBox(treeWidget);
-	gptContextPaddingInput->setRange(0.0, 600.0);
-	gptContextPaddingInput->setDecimals(0);
-	gptContextPaddingInput->setSingleStep(15.0);
-	gptContextPaddingInput->setSuffix(QStringLiteral(" s"));
-	bool gptContextPaddingOk = false;
-	const double savedGptContextPadding =
-		PluginConfig::getValue(QString::fromLatin1(CONFIG_GPT_TRANSCRIPT_CONTEXT_PADDING_SEC),
-				       QStringLiteral("60"))
-			.toDouble(&gptContextPaddingOk);
-	gptContextPaddingInput->setValue(gptContextPaddingOk ? savedGptContextPadding : 60.0);
-	gptContextPaddingInput->setToolTip(obsText("Tooltip.GptTranscriptContextPaddingSec"));
-	treeWidget->setItemWidget(gptContextPaddingItem, 1, gptContextPaddingInput);
+	QComboBox *whisperXBackendInput = new QComboBox(treeWidget);
+	whisperXBackendInput->addItem(obsText("Combobox.Disabled"),
+					 QString::fromLatin1(Transcription::WHISPERX_BACKEND_DISABLED));
+	whisperXBackendInput->addItem(obsText("Combobox.WhisperXAlignmentOnly"),
+					 QString::fromLatin1(Transcription::WHISPERX_BACKEND_ALIGNMENT));
+	whisperXBackendInput->addItem(obsText("Combobox.WhisperXPrimary"),
+					 QString::fromLatin1(Transcription::WHISPERX_BACKEND_PRIMARY));
+	set_combo_current_data(whisperXBackendInput,
+		PluginConfig::getValue(QString::fromLatin1(Transcription::CONFIG_WHISPERX_BACKEND),
+			QString::fromLatin1(Transcription::WHISPERX_BACKEND_DISABLED)), 0);
+	treeWidget->setItemWidget(whisperXBackendItem, 1, whisperXBackendInput);
+
+	auto *whisperXPythonPathItem = new QTreeWidgetItem(advancedItem);
+	whisperXPythonPathItem->setText(0, obsText("Settings.WhisperXPythonPath"));
+
+	QLineEdit *whisperXPythonPathInput = new QLineEdit(treeWidget);
+	whisperXPythonPathInput->setPlaceholderText(QStringLiteral("C:/path/to/.venv-whisperx/Scripts/python.exe"));
+	whisperXPythonPathInput->setText(PluginConfig::getValue(
+		QString::fromLatin1(Transcription::CONFIG_WHISPERX_PYTHON_PATH)));
+	treeWidget->setItemWidget(whisperXPythonPathItem, 1, whisperXPythonPathInput);
+
+	auto *whisperXWorkerPathItem = new QTreeWidgetItem(advancedItem);
+	whisperXWorkerPathItem->setText(0, obsText("Settings.WhisperXWorkerPath"));
+
+	QLineEdit *whisperXWorkerPathInput = new QLineEdit(treeWidget);
+	whisperXWorkerPathInput->setPlaceholderText(Transcription::defaultWhisperXWorkerPath());
+	whisperXWorkerPathInput->setText(PluginConfig::getValue(
+		QString::fromLatin1(Transcription::CONFIG_WHISPERX_WORKER_PATH),
+		Transcription::defaultWhisperXWorkerPath()));
+	treeWidget->setItemWidget(whisperXWorkerPathItem, 1, whisperXWorkerPathInput);
+
+	auto *whisperXDeviceItem = new QTreeWidgetItem(advancedItem);
+	whisperXDeviceItem->setText(0, obsText("Settings.WhisperXDevice"));
+
+	QComboBox *whisperXDeviceInput = new QComboBox(treeWidget);
+	whisperXDeviceInput->addItem(QStringLiteral("CUDA/GPU"), QStringLiteral("cuda"));
+	whisperXDeviceInput->addItem(QStringLiteral("CPU"), QStringLiteral("cpu"));
+	set_combo_current_data(whisperXDeviceInput, PluginConfig::getValue(
+		QString::fromLatin1(Transcription::CONFIG_WHISPERX_DEVICE), QStringLiteral("cuda")), 0);
+	treeWidget->setItemWidget(whisperXDeviceItem, 1, whisperXDeviceInput);
+
+	auto *whisperXFfmpegPathItem = new QTreeWidgetItem(advancedItem);
+	whisperXFfmpegPathItem->setText(0, obsText("Settings.WhisperXFfmpegPath"));
+
+	QLineEdit *whisperXFfmpegPathInput = new QLineEdit(treeWidget);
+	whisperXFfmpegPathInput->setPlaceholderText(QStringLiteral("Optional ffmpeg.exe or ffmpeg bin directory"));
+	whisperXFfmpegPathInput->setText(PluginConfig::getValue(
+		QString::fromLatin1(Transcription::CONFIG_WHISPERX_FFMPEG_PATH)));
+	treeWidget->setItemWidget(whisperXFfmpegPathItem, 1, whisperXFfmpegPathInput);
+
+	auto *whisperXModelItem = new QTreeWidgetItem(advancedItem);
+	whisperXModelItem->setText(0, obsText("Settings.WhisperXModel"));
+
+	QLineEdit *whisperXModelInput = new QLineEdit(treeWidget);
+	whisperXModelInput->setPlaceholderText(QStringLiteral("large-v3"));
+	whisperXModelInput->setText(PluginConfig::getValue(
+		QString::fromLatin1(Transcription::CONFIG_WHISPERX_MODEL), QStringLiteral("large-v3")));
+	treeWidget->setItemWidget(whisperXModelItem, 1, whisperXModelInput);
+
+	auto *whisperXComputeTypeItem = new QTreeWidgetItem(advancedItem);
+	whisperXComputeTypeItem->setText(0, obsText("Settings.WhisperXComputeType"));
+
+	QComboBox *whisperXComputeTypeInput = new QComboBox(treeWidget);
+	whisperXComputeTypeInput->addItem(QStringLiteral("float16"), QStringLiteral("float16"));
+	whisperXComputeTypeInput->addItem(QStringLiteral("int8"), QStringLiteral("int8"));
+	whisperXComputeTypeInput->addItem(QStringLiteral("float32"), QStringLiteral("float32"));
+	set_combo_current_data(whisperXComputeTypeInput, PluginConfig::getValue(
+		QString::fromLatin1(Transcription::CONFIG_WHISPERX_COMPUTE_TYPE), QStringLiteral("float16")), 0);
+	treeWidget->setItemWidget(whisperXComputeTypeItem, 1, whisperXComputeTypeInput);
+
+	auto *whisperXBatchSizeItem = new QTreeWidgetItem(advancedItem);
+	whisperXBatchSizeItem->setText(0, obsText("Settings.WhisperXBatchSize"));
+
+	QSpinBox *whisperXBatchSizeInput = new QSpinBox(treeWidget);
+	whisperXBatchSizeInput->setRange(1, 128);
+	whisperXBatchSizeInput->setValue(PluginConfig::getValue(
+		QString::fromLatin1(Transcription::CONFIG_WHISPERX_BATCH_SIZE), QStringLiteral("8")).toInt());
+	treeWidget->setItemWidget(whisperXBatchSizeItem, 1, whisperXBatchSizeInput);
 
 	auto *localEmbeddingBackendItem = new QTreeWidgetItem(advancedItem);
 	localEmbeddingBackendItem->setText(0, obsText("Settings.LocalEmbeddingBackend"));
@@ -246,6 +303,20 @@ void open_settings_impl(void *private_data)
 		QStringLiteral("qwen3-reranker-0.6b-q8_0")));
 	treeWidget->setItemWidget(localRerankerModelItem, 1, localRerankerModelInput);
 
+	auto updateWhisperXFields = [whisperXBackendInput, whisperXPythonPathInput, whisperXWorkerPathInput,
+					   whisperXDeviceInput, whisperXFfmpegPathInput, whisperXModelInput, whisperXComputeTypeInput,
+					   whisperXBatchSizeInput]() {
+		const bool enabled = whisperXBackendInput->currentData().toString() !=
+			QString::fromLatin1(Transcription::WHISPERX_BACKEND_DISABLED);
+		whisperXPythonPathInput->setEnabled(enabled);
+		whisperXWorkerPathInput->setEnabled(enabled);
+		whisperXDeviceInput->setEnabled(enabled);
+		whisperXFfmpegPathInput->setEnabled(enabled);
+		whisperXModelInput->setEnabled(enabled);
+		whisperXComputeTypeInput->setEnabled(enabled);
+		whisperXBatchSizeInput->setEnabled(enabled);
+	};
+
 	auto updateLocalEmbeddingFields = [localEmbeddingBackendInput, localEmbeddingEndpointInput, localEmbeddingModelInput]() {
 		const bool enabled = localEmbeddingBackendInput->currentData().toString() ==
 			QString::fromLatin1(Curation::Scoring::LOCAL_EMBEDDING_BACKEND_LLAMA_SERVER);
@@ -264,6 +335,9 @@ void open_settings_impl(void *private_data)
 			 [&updateLocalEmbeddingFields](int) { updateLocalEmbeddingFields(); });
 	QObject::connect(localRerankerBackendInput, qOverload<int>(&QComboBox::currentIndexChanged), &dialog,
 			 [&updateLocalRerankerFields](int) { updateLocalRerankerFields(); });
+	QObject::connect(whisperXBackendInput, qOverload<int>(&QComboBox::currentIndexChanged), &dialog,
+			 [&updateWhisperXFields](int) { updateWhisperXFields(); });
+	updateWhisperXFields();
 	updateLocalEmbeddingFields();
 	updateLocalRerankerFields();
 
@@ -294,62 +368,6 @@ void open_settings_impl(void *private_data)
 		QMessageBox::information(&dialog, title, obsText("Message.PurgePluginCachesDone").arg(removedKeys));
 	});
 
-	auto *openAiModelItem = new QTreeWidgetItem(advancedItem);
-	openAiModelItem->setText(0, obsText("Settings.OpenAiModel"));
-
-	QComboBox *openAiModelInput = new QComboBox(treeWidget);
-	openAiModelInput->addItem(QStringLiteral("GPT-5.4 mini"), QStringLiteral("gpt-5.4-mini"));
-	openAiModelInput->addItem(QStringLiteral("GPT-5.4 nano"), QStringLiteral("gpt-5.4-nano"));
-	openAiModelInput->addItem(QStringLiteral("GPT-5.5"), QStringLiteral("gpt-5.5"));
-	openAiModelInput->addItem(QStringLiteral("GPT-5.4"), QStringLiteral("gpt-5.4"));
-	openAiModelInput->addItem(QStringLiteral("GPT-5.2"), QStringLiteral("gpt-5.2"));
-	openAiModelInput->addItem(QStringLiteral("GPT-5 mini"), QStringLiteral("gpt-5-mini"));
-	openAiModelInput->addItem(QStringLiteral("GPT-5"), QStringLiteral("gpt-5"));
-	openAiModelInput->addItem(QStringLiteral("GPT-4.1 mini"), QStringLiteral("gpt-4.1-mini"));
-	openAiModelInput->addItem(obsText("Combobox.Disabled"), OPENAI_MODEL_DISABLED);
-
-	set_combo_current_data(openAiModelInput, PluginConfig::getValue("openai_model", OPENAI_MODEL_DISABLED), 0);
-	treeWidget->setItemWidget(openAiModelItem, 1, openAiModelInput);
-
-	auto *openAiModelStatusItem = new QTreeWidgetItem(advancedItem);
-	openAiModelStatusItem->setText(0, obsText("Settings.OpenAiModelStatus"));
-
-	QLabel *openAiModelStatusLabel = new QLabel(treeWidget);
-	openAiModelStatusLabel->setWordWrap(true);
-	treeWidget->setItemWidget(openAiModelStatusItem, 1, openAiModelStatusLabel);
-
-	auto updateOpenAiModelAvailability = [whisperModelInput, openAiModelInput, openAiModelStatusLabel]() {
-		const QString selectedModelFile = whisperModelInput->currentData().toString().trimmed();
-		const bool modelExists = whisper_model_exists(selectedModelFile);
-
-		if (!modelExists) {
-			const QSignalBlocker blocker(openAiModelInput);
-			set_combo_current_data(openAiModelInput, OPENAI_MODEL_DISABLED, openAiModelInput->count() - 1);
-			openAiModelInput->setEnabled(false);
-			openAiModelStatusLabel->setText(
-				obsText("Status.OpenAiModelDisabledMissingWhisper").arg(selectedModelFile));
-			return;
-		}
-
-		openAiModelInput->setEnabled(true);
-		openAiModelStatusLabel->setText(obsText("Status.OpenAiModelEnabledWhisperFound"));
-	};
-
-	QObject::connect(whisperModelInput, qOverload<int>(&QComboBox::currentIndexChanged), &dialog,
-			 [&updateOpenAiModelAvailability](int) { updateOpenAiModelAvailability(); });
-	updateOpenAiModelAvailability();
-
-	auto *gptDefaultPromptItem = new QTreeWidgetItem(advancedItem);
-	gptDefaultPromptItem->setText(0, obsText("Settings.GptInputTemplate"));
-	gptDefaultPromptItem->setSizeHint(0, QSize(220, 180));
-	gptDefaultPromptItem->setSizeHint(1, QSize(520, 180));
-
-	QPlainTextEdit *gptDefaultPromptInput = new QPlainTextEdit(treeWidget);
-	gptDefaultPromptInput->setMinimumHeight(170);
-	gptDefaultPromptInput->setPlaceholderText(obsText("Placeholder.GptInputTemplate"));
-	gptDefaultPromptInput->setPlainText(GptPromptClient::configuredInputTextTemplate(QStringLiteral("auto")));
-	treeWidget->setItemWidget(gptDefaultPromptItem, 1, gptDefaultPromptInput);
-
 	treeWidget->resizeColumnToContents(0);
 
 	QPushButton *btn = new QPushButton(obsText("Button.Save"), &dialog);
@@ -368,34 +386,34 @@ void open_settings_impl(void *private_data)
 
 	QObject::connect(
 		btn, &QPushButton::clicked,
-		[&dialog, apiKeyInput, openAiApiKeyInput, whisperModelInput, brandTemplateIdInput,
-		 resampleThresholdInput, gptContextPaddingInput, localEmbeddingBackendInput, localEmbeddingEndpointInput,
-		 localEmbeddingModelInput, localRerankerBackendInput, localRerankerEndpointInput, localRerankerModelInput,
-		 openAiModelInput, gptDefaultPromptInput]() {
+		[&dialog, apiKeyInput, whisperModelInput, brandTemplateIdInput, resampleThresholdInput,
+		 whisperXBackendInput, whisperXPythonPathInput, whisperXWorkerPathInput, whisperXDeviceInput,
+		 whisperXFfmpegPathInput, whisperXModelInput, whisperXComputeTypeInput, whisperXBatchSizeInput,
+		 localEmbeddingBackendInput, localEmbeddingEndpointInput, localEmbeddingModelInput,
+		 localRerankerBackendInput, localRerankerEndpointInput, localRerankerModelInput]() {
 			PluginConfig::setValue("opus_api_key", apiKeyInput->text().trimmed());
 			PluginConfig::setValue("opus_brand_template_id", brandTemplateIdInput->text().trimmed());
-			PluginConfig::setValue("openai_api_key", openAiApiKeyInput->text().trimmed());
 			const QString selectedWhisperModel = whisperModelInput->currentData().toString().trimmed();
 			PluginConfig::setValue("whisper_model_file", selectedWhisperModel);
 
-			const bool selectedWhisperModelExists = whisper_model_exists(selectedWhisperModel);
-			QString openAiModel = openAiModelInput->currentData().toString().trimmed();
-			if (openAiModel.isEmpty())
-				openAiModel = QStringLiteral("disabled");
-
-			if (!selectedWhisperModelExists) {
-				openAiModel = QStringLiteral("disabled");
-				blog(LOG_WARNING,
-				     "[clip-cropper] Selected Whisper model was not found. Saving OpenAI model as disabled.");
-			}
-
-			PluginConfig::setValue("openai_model", openAiModel);
-			PluginConfig::setValue(GptPromptClient::inputTemplateConfigKey(QStringLiteral("auto")),
-					       gptDefaultPromptInput->toPlainText().trimmed());
 			PluginConfig::setValue(QString::fromLatin1(CONFIG_UPLOAD_RESAMPLE_THRESHOLD_PERCENT),
 					       QString::number(resampleThresholdInput->value(), 'f', 0));
-			PluginConfig::setValue(QString::fromLatin1(CONFIG_GPT_TRANSCRIPT_CONTEXT_PADDING_SEC),
-					       QString::number(gptContextPaddingInput->value(), 'f', 0));
+			PluginConfig::setValue(QString::fromLatin1(Transcription::CONFIG_WHISPERX_BACKEND),
+					       whisperXBackendInput->currentData().toString().trimmed());
+			PluginConfig::setValue(QString::fromLatin1(Transcription::CONFIG_WHISPERX_PYTHON_PATH),
+					       whisperXPythonPathInput->text().trimmed());
+			PluginConfig::setValue(QString::fromLatin1(Transcription::CONFIG_WHISPERX_WORKER_PATH),
+					       whisperXWorkerPathInput->text().trimmed());
+			PluginConfig::setValue(QString::fromLatin1(Transcription::CONFIG_WHISPERX_DEVICE),
+					       whisperXDeviceInput->currentData().toString().trimmed());
+			PluginConfig::setValue(QString::fromLatin1(Transcription::CONFIG_WHISPERX_FFMPEG_PATH),
+					       whisperXFfmpegPathInput->text().trimmed());
+			PluginConfig::setValue(QString::fromLatin1(Transcription::CONFIG_WHISPERX_MODEL),
+					       whisperXModelInput->text().trimmed());
+			PluginConfig::setValue(QString::fromLatin1(Transcription::CONFIG_WHISPERX_COMPUTE_TYPE),
+					       whisperXComputeTypeInput->currentData().toString().trimmed());
+			PluginConfig::setValue(QString::fromLatin1(Transcription::CONFIG_WHISPERX_BATCH_SIZE),
+					       QString::number(whisperXBatchSizeInput->value()));
 			PluginConfig::setValue(QString::fromLatin1(Curation::Scoring::CONFIG_LOCAL_EMBEDDING_BACKEND),
 					       localEmbeddingBackendInput->currentData().toString().trimmed());
 			PluginConfig::setValue(QString::fromLatin1(Curation::Scoring::CONFIG_LOCAL_EMBEDDING_ENDPOINT),

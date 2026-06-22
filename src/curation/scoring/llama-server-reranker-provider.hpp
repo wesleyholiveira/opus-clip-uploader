@@ -12,7 +12,7 @@ struct LlamaServerRerankerProviderOptions {
 	QString endpoint = QStringLiteral("http://127.0.0.1:8081/v1/rerank");
 	QString modelId = QStringLiteral("qwen3-reranker-0.6b-q8_0");
 	int timeoutMs = 20000;
-	int maxTextChars = 900;
+	int maxTextChars = 2400;
 	bool enabled = false;
 	std::function<bool()> cancellationCallback = {};
 };

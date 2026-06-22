@@ -27,11 +27,17 @@ struct SemanticCoarseRetrievalOptions {
 struct SemanticCoarseRetrievalContext {
 	QString presetId;
 	QString mainTarget;
+	QString transcriptionLanguage;
+	QString sourceLanguage;
 	bool reliableMainTarget = false;
 };
 
 struct SemanticCoarseRegion {
+	// Broad candidate search range around a semantically promising focus window.
+	// This range is intentionally not a clip boundary; exact start/end must be selected later by the boundary refiner.
 	ClipDuration range;
+	// The actual coarse window that matched the semantic prototypes. This is a retrieval focus only, not a boundary hint.
+	ClipDuration focusRange;
 	double score = 0.0;
 	double targetScore = 0.0;
 	double viewerScore = 0.0;

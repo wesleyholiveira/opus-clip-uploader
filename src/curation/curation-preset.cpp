@@ -1,8 +1,10 @@
 #include "curation/curation-preset.hpp"
 
-#include "curation/opus-prompt-renderer.hpp"
+#include "curation/curation-preset-profile.hpp"
 
 #include <QStringList>
+
+#include <utility>
 
 namespace {
 
@@ -50,14 +52,21 @@ static bool clipLengthBoundsForPreset(const QString &preset, double &minSec, dou
 	return false;
 }
 
-static bool promptContainsAll(const QString &prompt, const QStringList &tokens)
+static bool shouldApplyProfileClipLength(const Curation::CurationPresetProfile &profile,
+	const QString &clipLengthPreset)
 {
-	const QString lower = prompt.toLower();
-	for (const QString &token : tokens) {
-		if (!lower.contains(token))
-			return false;
+	const QString normalized = normalizedClipLengthPreset(clipLengthPreset);
+	switch (profile.clipLengthPolicy) {
+	case Curation::PresetClipLengthPolicy::Always:
+		return true;
+	case Curation::PresetClipLengthPolicy::AutoOnly:
+		return normalized == QStringLiteral("Auto");
+	case Curation::PresetClipLengthPolicy::UnlessLong:
+		return normalized != QStringLiteral("Long");
+	case Curation::PresetClipLengthPolicy::None:
+		return false;
 	}
-	return true;
+	return false;
 }
 
 } // namespace
@@ -66,149 +75,37 @@ namespace CurationPreset {
 
 QString autoPresetId()
 {
-	return QStringLiteral("auto");
+	return Curation::autoPresetProfileId();
 }
 
 QString viewerMessageResponsePresetId()
 {
-	return QStringLiteral("viewer_message_response");
+	return Curation::viewerMessageResponsePresetProfileId();
 }
 
 QString normalizeId(QString presetId)
 {
-	presetId = presetId.trimmed().toLower();
-	presetId.replace(QLatin1Char('-'), QLatin1Char('_'));
-	presetId.replace(QLatin1Char(' '), QLatin1Char('_'));
-
-	if (presetId.isEmpty() || presetId == QStringLiteral("auto"))
-		return autoPresetId();
-
-	if (presetId == viewerMessageResponsePresetId() || presetId == QStringLiteral("viewer") ||
-	    presetId == QStringLiteral("chat") || presetId == QStringLiteral("q&a") ||
-	    presetId == QStringLiteral("qa") || presetId == QStringLiteral("viewer_response") ||
-	    presetId == QStringLiteral("viewer_message") || presetId == QStringLiteral("viewer_message_response"))
-		return viewerMessageResponsePresetId();
-
-	if (presetId == QStringLiteral("advice") || presetId == QStringLiteral("advice_answer"))
-		return QStringLiteral("advice_answer");
-
-	if (presetId == QStringLiteral("emotional") || presetId == QStringLiteral("emotional_reaction"))
-		return QStringLiteral("emotional_reaction");
-
-	if (presetId == QStringLiteral("explanation"))
-		return QStringLiteral("explanation");
-
-	if (presetId == QStringLiteral("story") || presetId == QStringLiteral("story_arc"))
-		return QStringLiteral("story_arc");
-
-	if (presetId == QStringLiteral("opinion") || presetId == QStringLiteral("hot_take"))
-		return QStringLiteral("opinion");
-
-	if (presetId == QStringLiteral("tutorial") || presetId == QStringLiteral("tutorial_step"))
-		return QStringLiteral("tutorial_step");
-
-	return autoPresetId();
+	return Curation::normalizePresetProfileId(std::move(presetId));
 }
 
 QVector<QPair<QString, QString>> options()
 {
-	return {
-		{autoPresetId(), QStringLiteral("Auto")},
-		{viewerMessageResponsePresetId(), QStringLiteral("Viewer message response")},
-		{QStringLiteral("advice_answer"), QStringLiteral("Advice answer")},
-		{QStringLiteral("emotional_reaction"), QStringLiteral("Emotional reaction")},
-		{QStringLiteral("explanation"), QStringLiteral("Explanation")},
-		{QStringLiteral("story_arc"), QStringLiteral("Story arc")},
-		{QStringLiteral("opinion"), QStringLiteral("Opinion / hot take")},
-		{QStringLiteral("tutorial_step"), QStringLiteral("Tutorial step")},
-	};
+	return Curation::presetProfileOptions();
 }
 
 QString labelForId(const QString &presetId)
 {
-	const QString normalized = normalizeId(presetId);
-	for (const auto &option : options()) {
-		if (option.first == normalized)
-			return option.second;
-	}
-	return QStringLiteral("Auto");
+	return Curation::presetProfileLabelForId(presetId);
 }
 
 bool isViewerMessageResponsePrompt(const QString &prompt)
 {
-	return promptContainsAll(prompt, {QStringLiteral("viewer message"), QStringLiteral("same message")}) ||
-	       promptContainsAll(prompt,
-				 {QStringLiteral("viewer message"), QStringLiteral("first resolved response")}) ||
-	       promptContainsAll(prompt, {QStringLiteral("viewer message"), QStringLiteral("next viewer message")});
+	return Curation::isViewerMessageResponsePrompt(prompt);
 }
 
 QString resolveId(const CurationSettings &settings, const QString &prompt)
 {
-	const QString explicitPreset = normalizeId(settings.curationPreset);
-	if (explicitPreset != autoPresetId())
-		return explicitPreset;
-
-	if (isViewerMessageResponsePrompt(prompt) || isViewerMessageResponsePrompt(settings.aiPrompt))
-		return viewerMessageResponsePresetId();
-
-	const QString metadata = (settings.genre + QLatin1Char(' ') + settings.topicKeywords.join(QLatin1Char(' ')) +
-				  QLatin1Char(' ') + prompt + QLatin1Char(' ') + settings.aiPrompt)
-					 .toLower();
-
-	const bool liveOrViewerMetadata =
-		metadata.contains(QStringLiteral("chat")) || metadata.contains(QStringLiteral("q&a")) ||
-		metadata.contains(QStringLiteral("viewer")) || metadata.contains(QStringLiteral("comment")) ||
-		metadata.contains(QStringLiteral("message")) || metadata.contains(QStringLiteral("live")) ||
-		metadata.contains(QStringLiteral("stream")) || metadata.contains(QStringLiteral("espectador")) ||
-		metadata.contains(QStringLiteral("comentário")) || metadata.contains(QStringLiteral("comentario")) ||
-		metadata.contains(QStringLiteral("mensagem")) || metadata.contains(QStringLiteral("pergunta"));
-
-	if (liveOrViewerMetadata)
-		return viewerMessageResponsePresetId();
-
-	if (metadata.contains(QStringLiteral("advice")) || metadata.contains(QStringLiteral("conselho")) ||
-	    metadata.contains(QStringLiteral("relationship")) || metadata.contains(QStringLiteral("relacionamento")))
-		return QStringLiteral("advice_answer");
-
-	return autoPresetId();
-}
-
-QString gptContextForId(const QString &presetId)
-{
-	const QString id = normalizeId(presetId);
-	if (id == viewerMessageResponsePresetId())
-		return QStringLiteral(
-			"Use the viewer-message-response preset: find one continuous, unbroken exchange with one viewer message plus the speaker's direct response to that same message. Start with the message's clearest self-contained sentence that states the issue and finish as soon as the speaker leaves that exchange.");
-	if (id == QStringLiteral("advice_answer"))
-		return QStringLiteral(
-			"Use the advice-answer preset: find one concrete question or problem and the speaker's useful answer. Prefer the full coherent advice, but stop before adjacent chat, examples, or a new problem if they start a separate arc.");
-	if (id == QStringLiteral("emotional_reaction"))
-		return QStringLiteral(
-			"Use the emotional-reaction preset: find one emotionally consequential message and the speaker's immediate resolved reaction. A short complete reaction is better than extending into unrelated chat.");
-	if (id == QStringLiteral("explanation"))
-		return QStringLiteral(
-			"Use the explanation preset: find one clear idea explained from setup through conclusion with continuous spoken development.");
-	if (id == QStringLiteral("story_arc"))
-		return QStringLiteral(
-			"Use the story-arc preset: find one story with setup, development, and payoff without merging adjacent stories.");
-	if (id == QStringLiteral("opinion"))
-		return QStringLiteral(
-			"Use the opinion preset: find one focused claim or take and the reasoning that resolves it.");
-	if (id == QStringLiteral("tutorial_step"))
-		return QStringLiteral(
-			"Use the tutorial-step preset: find one actionable step or walkthrough segment that can stand alone.");
-	return QStringLiteral(
-		"Use Auto preset selection based on the transcript: choose the strongest self-contained local arc without mixing adjacent topics.");
-}
-
-QString opusPromptForId(const QString &presetId, bool multipleClips)
-{
-	return OpusPromptRenderer::renderPresetPrompt(presetId, multipleClips);
-}
-
-QString fallbackOpusPrompt(const CurationSettings &settings, bool multipleClips)
-{
-	return opusPromptForId(resolveId(settings, settings.aiPrompt), multipleClips);
+	return Curation::resolvePresetProfileId(settings, prompt);
 }
 
 ClipLengthBounds clipLengthBoundsForSettings(const CurationSettings &settings)
@@ -217,30 +114,13 @@ ClipLengthBounds clipLengthBoundsForSettings(const CurationSettings &settings)
 	if (settings.skipCurate)
 		return result;
 
-	const QString normalizedPreset = normalizedClipLengthPreset(settings.clipLengthPreset);
-	const QString presetId = resolveId(settings, settings.aiPrompt);
-
-	if (presetId == viewerMessageResponsePresetId() && normalizedPreset != QStringLiteral("Long")) {
+	const Curation::CurationPresetProfile profile = Curation::presetProfileForSettings(settings);
+	if (shouldApplyProfileClipLength(profile, settings.clipLengthPreset) && profile.maxDurationSec > 0.0 &&
+	    profile.maxDurationSec >= profile.minDurationSec) {
 		result.enabled = true;
-		result.minSec = 8.0;
-		result.maxSec = 35.0;
-		result.source = QStringLiteral("preset:viewer-message-response");
-		return result;
-	}
-
-	if (presetId == QStringLiteral("emotional_reaction") && normalizedPreset != QStringLiteral("Long")) {
-		result.enabled = true;
-		result.minSec = 6.0;
-		result.maxSec = 30.0;
-		result.source = QStringLiteral("preset:emotional-reaction");
-		return result;
-	}
-
-	if (presetId == QStringLiteral("advice_answer") && normalizedPreset == QStringLiteral("Auto")) {
-		result.enabled = true;
-		result.minSec = 12.0;
-		result.maxSec = 45.0;
-		result.source = QStringLiteral("preset:advice-answer");
+		result.minSec = profile.minDurationSec;
+		result.maxSec = profile.maxDurationSec;
+		result.source = profile.clipLengthSource;
 		return result;
 	}
 

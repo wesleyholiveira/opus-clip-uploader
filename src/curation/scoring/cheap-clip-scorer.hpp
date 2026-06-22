@@ -11,6 +11,8 @@ namespace Curation::Scoring {
 struct CheapScoringContext {
 	QString presetId;
 	QString mainTarget;
+	QString transcriptionLanguage;
+	QString sourceLanguage;
 	bool reliableMainTarget = false;
 };
 

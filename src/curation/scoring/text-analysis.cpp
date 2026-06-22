@@ -18,21 +18,239 @@ QSet<QString> baseStopWords()
 		QStringLiteral("uma"), QStringLiteral("um"), QStringLiteral("de"), QStringLiteral("da"),
 		QStringLiteral("do"), QStringLiteral("dos"), QStringLiteral("das"), QStringLiteral("para"),
 		QStringLiteral("com"), QStringLiteral("como"), QStringLiteral("sobre"), QStringLiteral("por"),
-		QStringLiteral("que"), QStringLiteral("voce"), QStringLiteral("voces"), QStringLiteral("acho"),
-		QStringLiteral("assim"), QStringLiteral("aqui"), QStringLiteral("aquela"), QStringLiteral("aquele"),
-		QStringLiteral("cara"), QStringLiteral("mano"), QStringLiteral("tipo"), QStringLiteral("porque"),
-		QStringLiteral("entao"), QStringLiteral("tambem"), QStringLiteral("quando"), QStringLiteral("onde"),
-		QStringLiteral("isso"), QStringLiteral("esse"), QStringLiteral("essa"), QStringLiteral("esses"),
-		QStringLiteral("essas"), QStringLiteral("pela"), QStringLiteral("pelo"), QStringLiteral("tava"),
-		QStringLiteral("estava"), QStringLiteral("agora"), QStringLiteral("muito"), QStringLiteral("mesmo"),
-		QStringLiteral("meio"), QStringLiteral("ne"), QStringLiteral("ta")
+		QStringLiteral("que"), QStringLiteral("voce"), QStringLiteral("voces"), QStringLiteral("vc"),
+		QStringLiteral("ce"), QStringLiteral("acho"), QStringLiteral("assim"), QStringLiteral("aqui"),
+		QStringLiteral("aquela"), QStringLiteral("aquele"), QStringLiteral("cara"), QStringLiteral("mano"),
+		QStringLiteral("tipo"), QStringLiteral("porque"), QStringLiteral("entao"), QStringLiteral("tambem"),
+		QStringLiteral("quando"), QStringLiteral("onde"), QStringLiteral("isso"), QStringLiteral("esse"),
+		QStringLiteral("essa"), QStringLiteral("esses"), QStringLiteral("essas"), QStringLiteral("pela"),
+		QStringLiteral("pelo"), QStringLiteral("tava"), QStringLiteral("estava"), QStringLiteral("agora"),
+		QStringLiteral("muito"), QStringLiteral("mesmo"), QStringLiteral("meio"), QStringLiteral("ne"),
+		QStringLiteral("ta"), QStringLiteral("pra"), QStringLiteral("pro"), QStringLiteral("num"),
+		QStringLiteral("numa"), QStringLiteral("meu"), QStringLiteral("minha"), QStringLiteral("teu"),
+		QStringLiteral("sua"), QStringLiteral("seu")
 	};
 }
 
 bool isNoiseCategory(const QString &category)
 {
-	return category == QStringLiteral("stream_operation") || category == QStringLiteral("greeting") ||
-	       category == QStringLiteral("gameplay");
+	return category == QStringLiteral("stream_operation") || category == QStringLiteral("social_meta") ||
+	       category == QStringLiteral("greeting") || category == QStringLiteral("topic_transition");
+}
+
+bool hasAnyTokenPrefix(const QStringList &words, const QStringList &prefixes);
+bool hasAnyPhrase(const QString &normalizedText, const QStringList &phrases);
+
+
+bool hasAnyTokenPrefix(const QStringList &words, const QStringList &prefixes)
+{
+	for (const QString &word : words) {
+		for (const QString &prefix : prefixes) {
+			if (!prefix.isEmpty() && word.startsWith(prefix))
+				return true;
+		}
+	}
+	return false;
+}
+
+
+bool hasAnyPhrase(const QString &normalizedText, const QStringList &phrases)
+{
+	for (const QString &phrase : phrases) {
+		if (!phrase.isEmpty() && normalizedText.contains(phrase))
+			return true;
+	}
+	return false;
+}
+
+bool startsWithAnyPhrase(const QString &normalizedText, const QStringList &phrases)
+{
+	for (const QString &phrase : phrases) {
+		if (!phrase.isEmpty() && normalizedText.startsWith(phrase))
+			return true;
+	}
+	return false;
+}
+
+QStringList greetingPhrases()
+{
+	return {QStringLiteral("bom dia"), QStringLiteral("boa tarde"), QStringLiteral("boa noite"),
+		QStringLiteral("seja bem vindo"), QStringLiteral("seja bem vinda"), QStringLiteral("bem vindo"),
+		QStringLiteral("bem vinda"), QStringLiteral("e ai"), QStringLiteral("oi"), QStringLiteral("ola"),
+		QStringLiteral("salve"), QStringLiteral("hello"), QStringLiteral("hi"), QStringLiteral("hey"),
+		QStringLiteral("welcome")};
+}
+
+QStringList gratitudePrefixes()
+{
+	return {QStringLiteral("obrig"), QStringLiteral("agradec"), QStringLiteral("valeu"),
+		QStringLiteral("vlw"), QStringLiteral("thanks"), QStringLiteral("thank"), QStringLiteral("tks")};
+}
+
+QStringList supportOrTransactionPrefixes()
+{
+	return {QStringLiteral("presente"), QStringLiteral("gift"), QStringLiteral("doa"), QStringLiteral("donat"),
+		QStringLiteral("sub"), QStringLiteral("inscri"), QStringLiteral("segu"), QStringLiteral("follow"),
+		QStringLiteral("moeda"), QStringLiteral("coin"), QStringLiteral("pix"), QStringLiteral("like"),
+		QStringLiteral("estrela"), QStringLiteral("ponto"), QStringLiteral("membro"), QStringLiteral("member")};
+}
+
+QStringList streamOperationPrefixes()
+{
+	return {QStringLiteral("convite"), QStringLiteral("fila"), QStringLiteral("lobby"), QStringLiteral("modera"),
+		QStringLiteral("spam"), QStringLiteral("ban"), QStringLiteral("timeout"), QStringLiteral("regra"),
+		QStringLiteral("live"), QStringLiteral("stream"), QStringLiteral("chat"), QStringLiteral("audio"),
+		QStringLiteral("microfone"), QStringLiteral("camera"), QStringLiteral("tela"), QStringLiteral("config"),
+		QStringLiteral("link"), QStringLiteral("canal"), QStringLiteral("meta")};
+}
+
+QStringList complimentPrefixes()
+{
+	return {QStringLiteral("elog"), QStringLiteral("lind"), QStringLiteral("bonit"), QStringLiteral("perfeit"),
+		QStringLiteral("incrivel"), QStringLiteral("incrivel"), QStringLiteral("maravilh"),
+		QStringLiteral("nice"), QStringLiteral("beautiful"), QStringLiteral("great"), QStringLiteral("amazing")};
+}
+
+QStringList topicTransitionPhrases()
+{
+	return {QStringLiteral("mudando de assunto"), QStringLiteral("mudar de assunto"),
+		QStringLiteral("proxima pergunta"), QStringLiteral("próxima pergunta"), QStringLiteral("outra pergunta"),
+		QStringLiteral("outro assunto"), QStringLiteral("outra coisa"), QStringLiteral("agora vamos"),
+		QStringLiteral("anyway"), QStringLiteral("by the way"), QStringLiteral("next question"),
+		QStringLiteral("another question")};
+}
+
+QStringList questionStartPhrases()
+{
+	return {QStringLiteral("como"), QStringLiteral("por que"), QStringLiteral("porque"),
+		QStringLiteral("o que"), QStringLiteral("qual"), QStringLiteral("quando"), QStringLiteral("onde"),
+		QStringLiteral("quem"), QStringLiteral("sera que"), QStringLiteral("será que"), QStringLiteral("devo"),
+		QStringLiteral("posso"), QStringLiteral("what"), QStringLiteral("how"), QStringLiteral("why"),
+		QStringLiteral("when"), QStringLiteral("where"), QStringLiteral("who"), QStringLiteral("should"),
+		QStringLiteral("can i"), QStringLiteral("do i")};
+}
+
+QStringList viewerCuePrefixes()
+{
+	return {QStringLiteral("pergunt"), QStringLiteral("coment"), QStringLiteral("fal"), QStringLiteral("diss"),
+		QStringLiteral("mand"), QStringLiteral("escrev"), QStringLiteral("viewer"), QStringLiteral("spectator"),
+		QStringLiteral("espectador"), QStringLiteral("chat"), QStringLiteral("asked"), QStringLiteral("comment")};
+}
+
+QStringList personalIssuePhrases()
+{
+	return {QStringLiteral("nao sei se"), QStringLiteral("não sei se"), QStringLiteral("nao sei como"),
+		QStringLiteral("não sei como"), QStringLiteral("nao sei o que"), QStringLiteral("não sei o que"),
+		QStringLiteral("me sinto"), QStringLiteral("eu sinto"), QStringLiteral("sinto que"),
+		QStringLiteral("tenho medo"), QStringLiteral("preciso de ajuda"), QStringLiteral("o que faco"),
+		QStringLiteral("o que faço"), QStringLiteral("como faco"), QStringLiteral("como faço"),
+		QStringLiteral("i feel"), QStringLiteral("i don't know"), QStringLiteral("what should i"),
+		QStringLiteral("how can i")};
+}
+
+QStringList adviceOrResolutionPrefixes()
+{
+	return {QStringLiteral("recomend"), QStringLiteral("aconselh"), QStringLiteral("dever"),
+		QStringLiteral("faria"), QStringLiteral("precisa"), QStringLiteral("entend"), QStringLiteral("conclu"),
+		QStringLiteral("resum"), QStringLiteral("portanto"), QStringLiteral("entao"), QStringLiteral("so que"),
+		QStringLiteral("mas"), QStringLiteral("because"), QStringLiteral("therefore"), QStringLiteral("recommend"),
+		QStringLiteral("advice"), QStringLiteral("should")};
+}
+
+bool hasGreeting(const QString &normalizedText)
+{
+	if (startsWithAnyPhrase(normalizedText,
+			{QStringLiteral("bom dia"), QStringLiteral("boa tarde"), QStringLiteral("boa noite"),
+			 QStringLiteral("seja bem vindo"), QStringLiteral("seja bem vinda"), QStringLiteral("bem vindo"),
+			 QStringLiteral("bem vinda"), QStringLiteral("e ai"), QStringLiteral("hello"), QStringLiteral("welcome")}))
+		return true;
+
+	const QStringList words = normalizedText.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+	const int limit = std::min(4, static_cast<int>(words.size()));
+	for (int i = 0; i < limit; ++i) {
+		const QString &word = words.at(i);
+		if (word == QStringLiteral("oi") || word == QStringLiteral("ola") ||
+		    word == QStringLiteral("salve") || word == QStringLiteral("hi") || word == QStringLiteral("hey"))
+			return true;
+	}
+
+	return false;
+}
+
+bool hasGratitude(const QStringList &words)
+{
+	return hasAnyTokenPrefix(words, gratitudePrefixes());
+}
+
+bool hasSupportOrTransactionCue(const QStringList &words)
+{
+	return hasAnyTokenPrefix(words, supportOrTransactionPrefixes());
+}
+
+bool hasStreamOperationCue(const QStringList &words)
+{
+	return hasAnyTokenPrefix(words, streamOperationPrefixes());
+}
+
+bool hasComplimentCue(const QStringList &words)
+{
+	return hasAnyTokenPrefix(words, complimentPrefixes());
+}
+
+int contentTokenCount(const QString &text)
+{
+	return Curation::Scoring::TextAnalysis::contentTokens(text).size();
+}
+
+bool looksLikeGenericSocialMeta(const QString &text)
+{
+	const QString value = Curation::Scoring::TextAnalysis::normalized(text);
+	if (value.isEmpty())
+		return false;
+
+	const QStringList words = value.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+	const int contentCount = contentTokenCount(text);
+	const bool greeting = hasGreeting(value);
+	const bool gratitude = hasGratitude(words);
+	const bool support = hasSupportOrTransactionCue(words);
+	const bool streamOps = hasStreamOperationCue(words);
+	const bool compliment = hasComplimentCue(words);
+	const bool question = text.contains(QLatin1Char('?')) || startsWithAnyPhrase(value, questionStartPhrases());
+	const bool personalIssue = hasAnyPhrase(value, personalIssuePhrases());
+
+	if (question || personalIssue)
+		return false;
+	if (greeting && (words.size() <= 12 || contentCount <= 4))
+		return true;
+	if (gratitude && (support || compliment || words.size() <= 14 || contentCount <= 5))
+		return true;
+	if (streamOps && (contentCount <= 6 || support || gratitude))
+		return true;
+	if (support && contentCount <= 5)
+		return true;
+	return false;
+}
+
+bool looksLikeLikelyVocativeTurn(const QString &text)
+{
+	const QString trimmed = text.simplified();
+	if (trimmed.isEmpty() || trimmed.size() > 140)
+		return false;
+
+	if (trimmed.contains(QLatin1Char('?')))
+		return true;
+
+	static const QRegularExpression trailingCommaName(
+		QStringLiteral(",\\s*([\\p{L}][\\p{L}0-9_]{2,24})\\s*[!?.]?$"),
+		QRegularExpression::UseUnicodePropertiesOption);
+	const QRegularExpressionMatch match = trailingCommaName.match(trimmed);
+	if (!match.hasMatch())
+		return false;
+
+	const QString possibleName = Curation::Scoring::TextAnalysis::normalized(match.captured(1));
+	if (possibleName.isEmpty())
+		return false;
+	return !baseStopWords().contains(possibleName);
 }
 
 } // namespace
@@ -81,11 +299,7 @@ bool containsAny(const QString &text, const QStringList &phrases)
 
 bool normalizedContainsAny(const QString &normalizedText, const QStringList &markers)
 {
-	for (const QString &marker : markers) {
-		if (normalizedText.contains(marker))
-			return true;
-	}
-	return false;
+	return hasAnyPhrase(normalizedText, markers);
 }
 
 QStringList meaningfulTerms(const QString &text, const QSet<QString> &extraStopWords)
@@ -120,72 +334,49 @@ bool looksLikeMentalHealthContext(const QString &text)
 	if (value.isEmpty())
 		return false;
 
-	if (normalizedContainsAny(value,
-			{QStringLiteral("depress"), QStringLiteral("ansiedade"), QStringLiteral("ansioso"),
-			 QStringLiteral("saude mental"), QStringLiteral("psicolog"), QStringLiteral("terapia"),
-			 QStringLiteral("crise"), QStringLiteral("fobia social"), QStringLiteral("tdah"),
-			 QStringLiteral("transtorno"), QStringLiteral("diagnostic")}))
-		return true;
-
-	return normalizedContainsAny(value,
-		{QStringLiteral("nao sei se"), QStringLiteral("acho que tenho"), QStringLiteral("sera que eu tenho"),
-		 QStringLiteral("eu acho que"), QStringLiteral("eu tenho medo"), QStringLiteral("eu sinto que"),
-		 QStringLiteral("sinto que"), QStringLiteral("me sinto"), QStringLiteral("eu to com"),
-		 QStringLiteral("to com"), QStringLiteral("estou com")});
+	const QStringList words = value.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+	const bool personalStruggle = hasAnyPhrase(value, personalIssuePhrases()) ||
+		hasAnyPhrase(value, {QStringLiteral("estou com"), QStringLiteral("eu estou com"), QStringLiteral("eu to com"),
+			QStringLiteral("eu tô com"), QStringLiteral("sinto falta"), QStringLiteral("me incomoda"),
+			QStringLiteral("i am struggling"), QStringLiteral("i need help")});
+	const bool adviceContext = hasAnyTokenPrefix(words,
+		{QStringLiteral("ajud"), QStringLiteral("terap"), QStringLiteral("crise"), QStringLiteral("medo"),
+		 QStringLiteral("ansiedad"), QStringLiteral("transtorn"), QStringLiteral("diagnostic"), QStringLiteral("health"),
+		 QStringLiteral("therapy")});
+	return personalStruggle || adviceContext;
 }
 
 bool looksLikeGamblingContext(const QString &text)
 {
 	const QString value = normalized(text);
-	return normalizedContainsAny(value,
-		{QStringLiteral("aposta"), QStringLiteral("apostam"), QStringLiteral("apostar"),
-		 QStringLiteral("vicio"), QStringLiteral("cassino"), QStringLiteral("jogo de azar"),
-		 QStringLiteral("bet"), QStringLiteral("publicidade"), QStringLiteral("influencia"),
-		 QStringLiteral("influenciador"), QStringLiteral("receber um valor"), QStringLiteral("moralmente"),
-		 QStringLiteral("legalmente"), QStringLiteral("felipe")});
+	const QStringList words = value.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+	return hasAnyTokenPrefix(words,
+		{QStringLiteral("apost"), QStringLiteral("cassino"), QStringLiteral("bet"), QStringLiteral("vici"),
+		 QStringLiteral("gambl")});
 }
 
 QSet<QString> semanticCategories(const QString &text)
 {
 	const QString value = normalized(text);
+	const QStringList words = value.split(QLatin1Char(' '), Qt::SkipEmptyParts);
 	QSet<QString> categories;
 	if (value.isEmpty())
 		return categories;
 
-	if (looksLikeMentalHealthContext(value))
-		categories.insert(QStringLiteral("mental_health"));
-	if (looksLikeGamblingContext(value))
-		categories.insert(QStringLiteral("gambling"));
-	if (normalizedContainsAny(value,
-			{QStringLiteral("esquecer"), QStringLiteral("garota"), QStringLiteral("relacionamento"),
-			 QStringLiteral("namor"), QStringLiteral("gostei"), QStringLiteral("termin"),
-			 QStringLiteral("ficante")}))
-		categories.insert(QStringLiteral("relationship"));
-	if (normalizedContainsAny(value,
-			{QStringLiteral("aumento"), QStringLiteral("chefe"), QStringLiteral("empresa"),
-			 QStringLiteral("trabalho"), QStringLiteral("salario"), QStringLiteral("merecedor")}))
-		categories.insert(QStringLiteral("career"));
-	if (normalizedContainsAny(value,
-			{QStringLiteral("usado"), QStringLiteral("me sinto"), QStringLiteral("sinto que"),
-			 QStringLiteral("valor"), QStringLiteral("amizade"), QStringLiteral("amigo")}))
-		categories.insert(QStringLiteral("self_worth"));
-	if (normalizedContainsAny(value,
-			{QStringLiteral("perdi meu pai"), QStringLiteral("pai pra aposta"), QStringLiteral("minha mae"),
-			 QStringLiteral("padrasto"), QStringLiteral("familia")}))
-		categories.insert(QStringLiteral("family"));
-	if (normalizedContainsAny(value,
-			{QStringLiteral("convite"), QStringLiteral("lobby"), QStringLiteral("alice"),
-			 QStringLiteral("aceita esse"), QStringLiteral("cancela"), QStringLiteral("entrar na sala")}))
-		categories.insert(QStringLiteral("stream_operation"));
-	if (normalizedContainsAny(value,
-			{QStringLiteral("boa noite"), QStringLiteral("bom dia"), QStringLiteral("boa tarde"),
-			 QStringLiteral("seja bem vindo"), QStringLiteral("bem vindo"), QStringLiteral("salve"),
-			 QStringLiteral("e ai "), QStringLiteral("oi ")}))
+	if (hasGreeting(value))
 		categories.insert(QStringLiteral("greeting"));
-	if (normalizedContainsAny(value,
-			{QStringLiteral("block blast"), QStringLiteral("sand bricks"), QStringLiteral("jogo parecido"),
-			 QStringLiteral("partida"), QStringLiteral("personagem"), QStringLiteral("tela de jogo")}))
-		categories.insert(QStringLiteral("gameplay"));
+	if (looksLikeGenericSocialMeta(text))
+		categories.insert(QStringLiteral("social_meta"));
+	if (hasAnyPhrase(value, topicTransitionPhrases()))
+		categories.insert(QStringLiteral("topic_transition"));
+	if (hasStreamOperationCue(words) && !looksLikeQuestionOrViewerMessage(text))
+		categories.insert(QStringLiteral("stream_operation"));
+	if (looksLikeQuestionOrViewerMessage(text) || looksLikeMentalHealthContext(text))
+		categories.insert(QStringLiteral("viewer_issue"));
+	if (hasAnyTokenPrefix(words, adviceOrResolutionPrefixes()))
+		categories.insert(QStringLiteral("advice_or_resolution"));
+	if (looksLikeGamblingContext(text))
+		categories.insert(QStringLiteral("risk_or_habit"));
 
 	return categories;
 }
@@ -233,6 +424,9 @@ bool hasSharedSemanticTopic(const QString &text, const QString &contextText)
 
 bool hasNoiseOnlySemanticTopic(const QString &text)
 {
+	if (isSocialOrStreamMetaText(text))
+		return true;
+
 	const QSet<QString> categories = semanticCategories(text);
 	if (categories.isEmpty())
 		return false;
@@ -250,21 +444,19 @@ bool looksLikeSameExchangeContinuation(const QString &text)
 	if (value.isEmpty())
 		return false;
 
-	for (const QString &marker : {QStringLiteral("mas "), QStringLiteral("porque "), QStringLiteral("imagina"),
-		     QStringLiteral("uma coisa"), QStringLiteral("outra coisa"), QStringLiteral("por exemplo"),
-		     QStringLiteral("entao assim"), QStringLiteral("e se"), QStringLiteral("so que"),
-		     QStringLiteral("olha so"), QStringLiteral("tipo assim")}) {
-		if (value.startsWith(marker))
-			return true;
-	}
+	if (startsWithAnyPhrase(value,
+			{QStringLiteral("mas"), QStringLiteral("porque"), QStringLiteral("por exemplo"),
+			 QStringLiteral("entao"), QStringLiteral("então"), QStringLiteral("so que"),
+			 QStringLiteral("só que"), QStringLiteral("olha so"), QStringLiteral("olha só"),
+			 QStringLiteral("tipo assim"), QStringLiteral("a questao"), QStringLiteral("a questão"),
+			 QStringLiteral("o ponto"), QStringLiteral("but"), QStringLiteral("because"), QStringLiteral("for example"),
+			 QStringLiteral("the point"), QStringLiteral("so") }))
+		return true;
 
-	return normalizedContainsAny(value,
-		{QStringLiteral("ja parou pra pensar"), QStringLiteral("voce ja parou pra pensar"),
-		 QStringLiteral("ce ja parou pra pensar"), QStringLiteral("ja parou para pensar"),
-		 QStringLiteral("parou pra pensar"), QStringLiteral("parou para pensar"),
-		 QStringLiteral("na minha opiniao"), QStringLiteral("moralmente incorreto"),
-		 QStringLiteral("legalmente correto"), QStringLiteral("felipe"), QStringLiteral("entendendo"),
-		 QStringLiteral("entendeu")});
+	return hasAnyPhrase(value,
+		{QStringLiteral("na minha opiniao"), QStringLiteral("na minha opinião"), QStringLiteral("vamos pensar"),
+		 QStringLiteral("parou pra pensar"), QStringLiteral("parou para pensar"), QStringLiteral("entendeu"),
+		 QStringLiteral("faz sentido"), QStringLiteral("in my opinion"), QStringLiteral("does that make sense")});
 }
 
 bool looksLikeSameTopicContinuation(const QString &text, const QString &contextText)
@@ -276,9 +468,10 @@ bool looksLikeSameTopicContinuation(const QString &text, const QString &contextT
 
 	if (hasSharedSemanticTopic(value, context))
 		return true;
-	if (looksLikeGamblingContext(context) && looksLikeGamblingContext(value))
+	if (looksLikeSameExchangeContinuation(text))
 		return true;
-	if (looksLikeMentalHealthContext(context) && looksLikeMentalHealthContext(value))
+	if ((looksLikeMentalHealthContext(contextText) && looksLikeMentalHealthContext(text)) ||
+	    (looksLikeGamblingContext(contextText) && looksLikeGamblingContext(text)))
 		return true;
 
 	return false;
@@ -290,18 +483,18 @@ bool looksLikeQuestionOrViewerMessage(const QString &text)
 		return true;
 
 	const QString value = normalized(text);
-	const bool explicitQuestion = normalizedContainsAny(value,
-		{QStringLiteral("como eu"), QStringLiteral("como posso"), QStringLiteral("por que"),
-		 QStringLiteral("porque eu"), QStringLiteral("o que eu"), QStringLiteral("what should"),
-		 QStringLiteral("how can"), QStringLiteral("why do"), QStringLiteral("should i")});
-	const bool viewerCue = normalizedContainsAny(value,
-		{QStringLiteral("mandou"), QStringLiteral("perguntou"), QStringLiteral("comentou"),
-		 QStringLiteral("falou"), QStringLiteral("disse"), QStringLiteral("asked"),
-		 QStringLiteral("commented"), QStringLiteral("viewer"), QStringLiteral("chat")});
-	const bool firstPersonViewerIssue = normalizedContainsAny(value,
-		{QStringLiteral("nao sei se"), QStringLiteral("nao sei como"), QStringLiteral("me sinto"),
-		 QStringLiteral("sinto falta"), QStringLiteral("tenho medo"), QStringLiteral("como faco"),
-		 QStringLiteral("o que faco")});
+	if (value.isEmpty())
+		return false;
+
+	const QStringList words = value.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+	const bool explicitQuestion = startsWithAnyPhrase(value, questionStartPhrases()) ||
+		hasAnyPhrase(value,
+			{QStringLiteral("o que eu"), QStringLiteral("o que voce"), QStringLiteral("o que você"),
+			 QStringLiteral("qual sua"), QStringLiteral("qual a sua"), QStringLiteral("voce acha"),
+			 QStringLiteral("você acha"), QStringLiteral("vc acha"), QStringLiteral("what should"),
+			 QStringLiteral("how can"), QStringLiteral("why do")});
+	const bool viewerCue = hasAnyTokenPrefix(words, viewerCuePrefixes());
+	const bool firstPersonViewerIssue = hasAnyPhrase(value, personalIssuePhrases());
 	return explicitQuestion || viewerCue || firstPersonViewerIssue;
 }
 
@@ -311,6 +504,8 @@ bool looksLikeHardTopicShift(const QString &text, const QString &contextText)
 	if (value.isEmpty())
 		return false;
 
+	if (hasAnyPhrase(value, topicTransitionPhrases()))
+		return true;
 	if (hasNoiseOnlySemanticTopic(text) && !hasSharedSemanticTopic(text, contextText))
 		return true;
 
@@ -319,14 +514,11 @@ bool looksLikeHardTopicShift(const QString &text, const QString &contextText)
 	if (!textCategories.isEmpty() && !contextCategories.isEmpty() && !hasSharedSemanticTopic(text, contextText))
 		return true;
 
-	if (looksLikeQuestionOrViewerMessage(text) && !hasSharedSemanticTopic(text, contextText) &&
-	    !looksLikeSameExchangeContinuation(text))
+	if ((looksLikeQuestionOrViewerMessage(text) || looksLikeLikelyVocativeTurn(text)) &&
+	    !hasSharedSemanticTopic(text, contextText) && !looksLikeSameExchangeContinuation(text))
 		return true;
 
-	return normalizedContainsAny(value,
-		{QStringLiteral("mudando de assunto"), QStringLiteral("proxima pergunta"),
-		 QStringLiteral("outra coisa"), QStringLiteral("agora vamos"), QStringLiteral("next question"),
-		 QStringLiteral("by the way")});
+	return false;
 }
 
 bool looksLikeViewerContextPrelude(const QString &previousText, const QString &anchorText)
@@ -336,54 +528,51 @@ bool looksLikeViewerContextPrelude(const QString &previousText, const QString &a
 	if (previous.isEmpty() || anchor.isEmpty())
 		return false;
 
-	if (normalizedContainsAny(previous, {QStringLiteral("seja bem vindo"), QStringLiteral("bem vindo"), QStringLiteral("salve")}))
+	if (isSocialOrStreamMetaText(previousText))
 		return false;
+	if (looksLikeQuestionOrViewerMessage(previousText) && !hasNoiseOnlySemanticTopic(previousText))
+		return hasSharedSemanticTopic(previousText, anchorText) || looksLikeQuestionOrViewerMessage(anchorText);
 
-	if (looksLikeMentalHealthContext(anchorText) && looksLikeMentalHealthContext(previousText))
-		return true;
-
-	const bool anchorIsRelationship = normalizedContainsAny(anchor,
-		{QStringLiteral("esquecer"), QStringLiteral("garota"), QStringLiteral("relacionamento")});
-	if (anchorIsRelationship && normalizedContainsAny(previous,
-			{QStringLiteral("gostei"), QStringLiteral("relacionamento"), QStringLiteral("garota")}))
-		return true;
-
-	return hasSharedSemanticTopic(previousText, anchorText) && looksLikeQuestionOrViewerMessage(previousText);
+	return hasSharedSemanticTopic(previousText, anchorText) && contentTokenCount(previousText) >= 3;
 }
 
 bool isBacklogOrGreetingText(const QString &text)
+{
+	return looksLikeGenericSocialMeta(text);
+}
+
+bool isSocialOrStreamMetaText(const QString &text)
+{
+	return looksLikeGenericSocialMeta(text);
+}
+
+bool looksLikeNewViewerTurnAfterPause(const QString &text)
 {
 	const QString value = normalized(text);
 	if (value.isEmpty())
 		return false;
 
-	if (normalizedContainsAny(value,
-			{QStringLiteral("nao sei como e que ele ta"), QStringLiteral("nao sei como ele ta"),
-			 QStringLiteral("j2 tambem"), QStringLiteral("o j2"), QStringLiteral("ta indo ai"),
-			 QStringLiteral("nao sei nem se ele"), QStringLiteral("seja bem vindo"),
-			 QStringLiteral("bem vindo"), QStringLiteral("pessoa sem nick"), QStringLiteral("sem nick"),
-			 QStringLiteral("estamos entendidos"), QStringLiteral("tambem seguir"),
-			 QStringLiteral("ok estamos"), QStringLiteral("salve"), QStringLiteral("boa noite"),
-			 QStringLiteral("bom dia"), QStringLiteral("boa tarde"), QStringLiteral("convite errado"),
-			 QStringLiteral("mandei o convite"), QStringLiteral("nao aceita esse"),
-			 QStringLiteral("cancela cancela"), QStringLiteral("alice"), QStringLiteral("block blast"),
-			 QStringLiteral("sand bricks"), QStringLiteral("jogo parecido")}))
+	if (isSocialOrStreamMetaText(text))
 		return true;
-
-	return value.startsWith(QStringLiteral("e ai ")) || value == QStringLiteral("e ai") || value.startsWith(QStringLiteral("ok "));
+	if (looksLikeQuestionOrViewerMessage(text))
+		return true;
+	return looksLikeLikelyVocativeTurn(text);
 }
 
 bool hasConcreteViewerQuestion(const QString &text)
 {
 	const QString value = normalized(text);
-	return normalizedContainsAny(value,
-		{QStringLiteral("como posso"), QStringLiteral("como eu posso"), QStringLiteral("o que eu faco"),
-		 QStringLiteral("o que faco"), QStringLiteral("por que"), QStringLiteral("ansiedade"),
-		 QStringLiteral("depress"), QStringLiteral("aumento"), QStringLiteral("chefe"),
-		 QStringLiteral("esquecer"), QStringLiteral("relacionamento"), QStringLiteral("conselho"),
-		 QStringLiteral("me sinto"), QStringLiteral("tenho"), QStringLiteral("perdi"),
-		 QStringLiteral("lembra"), QStringLiteral("nao sei se"), QStringLiteral("nao sei o que"),
-		 QStringLiteral("nao sei como fazer"), QStringLiteral("na ansiedade")});
+	if (value.isEmpty())
+		return false;
+
+	if (text.contains(QLatin1Char('?')))
+		return true;
+	return startsWithAnyPhrase(value, questionStartPhrases()) || hasAnyPhrase(value, personalIssuePhrases()) ||
+	       hasAnyPhrase(value,
+		       {QStringLiteral("o que eu"), QStringLiteral("o que voce"), QStringLiteral("o que você"),
+		        QStringLiteral("qual sua"), QStringLiteral("qual a sua"), QStringLiteral("voce acha"),
+		        QStringLiteral("você acha"), QStringLiteral("vc acha"), QStringLiteral("devo fazer"),
+		        QStringLiteral("what should"), QStringLiteral("how can")});
 }
 
 bool isGenericFocusTarget(const QString &target)

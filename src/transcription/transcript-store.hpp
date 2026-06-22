@@ -10,6 +10,8 @@ class TranscriptStore {
 public:
 	static QString keyForVideoPath(const QString &videoPath);
 	static QString keyForVideoPath(const QString &videoPath, const QString &transcriptionLanguage);
+	static QString keyForAlignedVideoPath(const QString &videoPath, const QString &transcriptionLanguage);
+	static QString alignedTranscriptFilePath(const QString &videoPath, const QString &transcriptionLanguage);
 	static QString keyForVideoRanges(const QString &videoPath, const QString &transcriptionLanguage,
 					 const QVector<ClipDuration> &ranges);
 	static void saveForVideoPath(const QString &videoPath, const RecordingTranscript &transcript);
@@ -17,6 +19,9 @@ public:
 				     const RecordingTranscript &transcript);
 	static RecordingTranscript loadForVideoPath(const QString &videoPath);
 	static RecordingTranscript loadForVideoPath(const QString &videoPath, const QString &transcriptionLanguage);
+	static void saveAlignedForVideoPath(const QString &videoPath, const QString &transcriptionLanguage,
+					     const RecordingTranscript &transcript);
+	static RecordingTranscript loadAlignedForVideoPath(const QString &videoPath, const QString &transcriptionLanguage);
 	static void saveForVideoRanges(const QString &videoPath, const QString &transcriptionLanguage,
 				       const QVector<ClipDuration> &ranges, const RecordingTranscript &transcript);
 	static RecordingTranscript loadForVideoRanges(const QString &videoPath, const QString &transcriptionLanguage,

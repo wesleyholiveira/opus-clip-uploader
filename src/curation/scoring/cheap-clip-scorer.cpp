@@ -46,6 +46,8 @@ ClipCandidate CheapClipScorer::score(const TranscriptIndex &index, const ClipCan
 {
 	ClipCandidate scored = candidate;
 	scored.text = scored.text.trimmed().isEmpty() ? index.textForRange(scored.range) : scored.text.simplified();
+	if (scored.timedText.trimmed().isEmpty())
+		scored.timedText = index.timedTextForRange(scored.range);
 	scored.firstSegmentIndex = scored.firstSegmentIndex >= 0 ? scored.firstSegmentIndex :
 		index.firstSegmentIndexOverlapping(scored.range);
 	scored.lastSegmentIndex = scored.lastSegmentIndex >= 0 ? scored.lastSegmentIndex :
@@ -61,7 +63,12 @@ ClipCandidate CheapClipScorer::score(const TranscriptIndex &index, const ClipCan
 	scored.scores.opinion = Curation::opinionScoreForText(scored.text);
 	scored.scores.tutorial = Curation::tutorialScoreForText(scored.text);
 	scored.scores.duration = durationScore(scored.range.endSec - scored.range.startSec);
-	scored.scores.boundary = boundaryScore(index, scored);
+	scored.scores.pauseBeforeSec = index.silenceBeforeRange(scored.range);
+	scored.scores.pauseAfterSec = index.silenceAfterRange(scored.range);
+	scored.scores.maxInternalPauseSec = index.maxInternalSilenceInRange(scored.range);
+	scored.scores.pauseBoundary = boundedScore((std::min(scored.scores.pauseBeforeSec, 4.0) * 0.12) +
+		(std::min(scored.scores.pauseAfterSec, 4.0) * 0.18));
+	scored.scores.boundary = boundedScore(boundaryScore(index, scored) + (scored.scores.pauseBoundary * 0.18));
 	scored.scores.hook = hookScore(scored.text);
 	scored.scores.topicContinuity = topicContinuityScore(scored.text);
 	scored.scores.noise = TextAnalysis::isBacklogOrGreetingText(scored.text) || TextAnalysis::hasNoiseOnlySemanticTopic(scored.text) ? 1.0 : 0.0;
@@ -78,6 +85,10 @@ ClipCandidate CheapClipScorer::score(const TranscriptIndex &index, const ClipCan
 		scored.evidence.append(QStringLiteral("explanation_cue"));
 	if (scored.scores.viewerResponse > 0.0)
 		scored.evidence.append(QStringLiteral("viewer_response_cue"));
+	if (scored.scores.pauseAfterSec >= 3.0)
+		scored.evidence.append(QStringLiteral("pause_after:%1").arg(QString::number(scored.scores.pauseAfterSec, 'f', 1)));
+	if (scored.scores.maxInternalPauseSec >= 2.0)
+		scored.evidence.append(QStringLiteral("internal_pause:%1").arg(QString::number(scored.scores.maxInternalPauseSec, 'f', 1)));
 	if (scored.scores.semanticTarget > 0.0)
 		scored.evidence.append(QStringLiteral("target_keyword_match"));
 	if (scored.scores.boundary >= 0.7)

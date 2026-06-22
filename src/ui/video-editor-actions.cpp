@@ -2,12 +2,10 @@
 
 #include "ui/ui-common.hpp"
 
-#include "ui/gpt-review-prompt.hpp"
 #include "ui/upload-flow.hpp"
 #include "ui/upload-review-dialog.hpp"
 #include "ui/video-marker-editor.hpp"
 
-#include <gpt/gpt-prompt-client.hpp>
 
 #include <obs-frontend-api.h>
 #include <obs-module.h>
@@ -28,34 +26,6 @@
 #include <QWidget>
 
 static const QString &title = clipCropperTitle();
-
-static bool is_openai_model_enabled()
-{
-	const QString model = get_openai_model().trimmed();
-	return !model.isEmpty() && model != OPENAI_MODEL_DISABLED;
-}
-
-static bool show_prompt_blocker_if_needed(QWidget *parent, const QString &videoPath, const QString &generatedPrompt)
-{
-	if (GptPromptClient::isPromptGenerationBlockedPrompt(generatedPrompt)) {
-		const QString reason = GptPromptClient::promptGenerationBlockedReason(generatedPrompt);
-		blog(LOG_WARNING, "GPT prompt generation blocked Opus upload from video editor for %s: %s",
-		     videoPath.toUtf8().constData(), reason.toUtf8().constData());
-		QMessageBox::warning(parent, obsText("Dialog.GptPromptRequiredTitle"),
-				     obsText("Message.GptPromptRequiredButUnavailable").arg(reason));
-		return true;
-	}
-
-	if (!GptPromptClient::isSemanticGateFailurePrompt(generatedPrompt))
-		return false;
-
-	const QString reason = GptPromptClient::semanticGateFailureReason(generatedPrompt);
-	blog(LOG_WARNING, "Semantic gate blocked Opus upload from video editor for %s: %s",
-	     videoPath.toUtf8().constData(), reason.toUtf8().constData());
-	QMessageBox::warning(parent, obsText("Dialog.SemanticGateFailedTitle"),
-			     obsText("Message.SemanticGateFailed").arg(reason));
-	return true;
-}
 
 static void upload_reviewed_video(QWidget *parent, const QString &videoPath, const CurationSettings &curationSettings)
 {
@@ -119,66 +89,11 @@ static void upload_reviewed_video(QWidget *parent, const QString &videoPath, con
 	uploadDialog->raise();
 }
 
-static void generate_prompt_and_upload_reviewed_video(QWidget *parent, const QString &videoPath,
-						      const CurationSettings &curationSettings)
+static void upload_after_video_review(QWidget *parent, const QString &videoPath,
+                                      const CurationSettings &curationSettings)
 {
-	auto startUpload = [parent, videoPath, curationSettings](GeneratedCurationPromptResult promptResult) mutable {
-		const QString generatedPrompt = promptResult.prompt.trimmed();
-		if (show_prompt_blocker_if_needed(parent, videoPath, generatedPrompt))
-			return;
-
-		CurationSettings finalSettings = promptResult.curationSettings;
-		const bool gptGeneratedPrompt = finalSettings.aiPrompt.trimmed().isEmpty() &&
-						!generatedPrompt.trimmed().isEmpty();
-
-		if (gptGeneratedPrompt)
-			finalSettings.aiPrompt = generatedPrompt.trimmed();
-
-		if (!gptGeneratedPrompt) {
-			upload_reviewed_video(parent, videoPath, finalSettings);
-			return;
-		}
-
-		QPointer<QWidget> safeParent(parent);
-		QObject *context = parent ? static_cast<QObject *>(parent) : QCoreApplication::instance();
-		if (!context) {
-			blog(LOG_WARNING,
-			     "Could not open GPT-generated prompt confirmation because no Qt context is available: %s",
-			     videoPath.toUtf8().constData());
-			return;
-		}
-
-		blog(LOG_INFO,
-		     "Scheduling GPT-generated Opus prompt confirmation after video editor review/GPT flow: %s",
-		     videoPath.toUtf8().constData());
-
-		QTimer::singleShot(0, context, [safeParent, videoPath, finalSettings]() mutable {
-			QWidget *dialogParent = safeParent
-							? safeParent.data()
-							: reinterpret_cast<QWidget *>(obs_frontend_get_main_window());
-
-			blog(LOG_INFO, "Opening GPT-generated Opus prompt confirmation from video editor flow: %s",
-			     videoPath.toUtf8().constData());
-
-			if (!review_generated_prompt_before_upload(dialogParent, videoPath, finalSettings)) {
-				blog(LOG_INFO,
-				     "GPT-generated Opus prompt confirmation canceled before video editor upload: %s",
-				     videoPath.toUtf8().constData());
-				return;
-			}
-
-			upload_reviewed_video(dialogParent, videoPath, finalSettings);
-		});
-	};
-
-	if (!is_openai_model_enabled() || !curationSettings.aiPrompt.trimmed().isEmpty()) {
-		if (!is_openai_model_enabled())
-			blog(LOG_INFO, "OpenAI model is disabled. Skipping GPT prompt generation after review.");
-		startUpload(GeneratedCurationPromptResult{curationSettings.aiPrompt, curationSettings});
-		return;
-	}
-
-	generate_custom_prompt_for_curation_result_async(parent, videoPath, curationSettings, true, startUpload);
+	blog(LOG_INFO, "Starting Opus upload after video editor review: %s", videoPath.toUtf8().constData());
+	upload_reviewed_video(parent, videoPath, curationSettings);
 }
 
 void open_video_editor_impl(void *private_data)
@@ -217,18 +132,18 @@ void open_video_editor_impl(void *private_data)
 							? reviewParent.data()
 							: reinterpret_cast<QWidget *>(obs_frontend_get_main_window());
 
-			blog(LOG_INFO, "Opening upload review dialog before GPT/Opus upload flow: %s",
+			blog(LOG_INFO, "Opening upload review dialog before Opus upload flow: %s",
 			     videoPath.toUtf8().constData());
 
 			UploadReviewDialog reviewDialog(videoPath, initialSettings, false, parentWidget);
 			if (reviewDialog.exec() == QDialog::Accepted) {
 				blog(LOG_INFO,
-				     "Upload review accepted. Generating GPT prompt after review ranges were confirmed: %s",
+				     "Upload review accepted. Starting Opus upload with reviewed ranges: %s",
 				     videoPath.toUtf8().constData());
 				const CurationSettings curationSettings = reviewDialog.curationSettings();
-				generate_prompt_and_upload_reviewed_video(parentWidget, videoPath, curationSettings);
+				upload_after_video_review(parentWidget, videoPath, curationSettings);
 			} else {
-				blog(LOG_INFO, "Upload review canceled before GPT/Opus upload flow: %s",
+				blog(LOG_INFO, "Upload review canceled before Opus upload flow: %s",
 				     videoPath.toUtf8().constData());
 			}
 

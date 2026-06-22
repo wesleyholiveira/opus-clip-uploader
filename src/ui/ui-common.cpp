@@ -177,25 +177,6 @@ QString get_opus_api_key()
 	return PluginConfig::getValue("opus_api_key").trimmed();
 }
 
-QString get_openai_api_key()
-{
-	return PluginConfig::getValue("openai_api_key").trimmed();
-}
-
-QString get_openai_model()
-{
-	QString model = PluginConfig::getValue("openai_model", OPENAI_MODEL_DISABLED).trimmed();
-	if (model.isEmpty())
-		model = QStringLiteral("disabled");
-
-	if (model != QStringLiteral("disabled") && !configured_whisper_model_exists()) {
-		blog(LOG_WARNING, "[clip-cropper] Whisper model was not found. Disabling OpenAI model setting.");
-		PluginConfig::setValue("openai_model", OPENAI_MODEL_DISABLED);
-		return QStringLiteral("disabled");
-	}
-
-	return model;
-}
 
 QStringList whisper_model_search_paths(const QString &modelFile)
 {

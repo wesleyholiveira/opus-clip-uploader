@@ -108,6 +108,115 @@ QString TranscriptIndex::textForSegmentWindow(int firstIndex, int lastIndex) con
 	return text.simplified();
 }
 
+QString TranscriptIndex::timedTextForRange(const ClipDuration &range, double pauseMarkerThresholdSec) const
+{
+	const int first = firstSegmentIndexOverlapping(range);
+	const int last = lastSegmentIndexOverlapping(range);
+	return timedTextForSegmentWindow(first, last, pauseMarkerThresholdSec);
+}
+
+QString TranscriptIndex::timedTextForSegmentWindow(int firstIndex, int lastIndex, double pauseMarkerThresholdSec) const
+{
+	if (firstIndex < 0 || lastIndex < firstIndex)
+		return {};
+
+	QString text;
+	const int safeLast = std::min(lastIndex, static_cast<int>(transcript.segments.size()) - 1);
+	int previousNonEmpty = -1;
+	for (int i = firstIndex; i <= safeLast; ++i) {
+		const TranscriptSegment &segment = transcript.segments.at(i);
+		const QString segmentText = segment.text.trimmed();
+		if (segmentText.isEmpty())
+			continue;
+
+		if (previousNonEmpty >= 0) {
+			const double pauseSec = std::max(0.0, segment.startSec - transcript.segments.at(previousNonEmpty).endSec);
+			if (pauseSec >= pauseMarkerThresholdSec) {
+				if (!text.isEmpty())
+					text += QLatin1Char(' ');
+				text += QStringLiteral("[PAUSA %1s]").arg(QString::number(pauseSec, 'f', 1));
+			}
+		}
+
+		if (!text.isEmpty())
+			text += QLatin1Char(' ');
+		text += QStringLiteral("[%1-%2] %3")
+			.arg(QString::number(segment.startSec, 'f', 2), QString::number(segment.endSec, 'f', 2), segmentText);
+		previousNonEmpty = i;
+	}
+	return text.simplified();
+}
+
+bool TranscriptIndex::hasWordTimings() const
+{
+	return transcript.hasWordTimings();
+}
+
+QVector<WordTiming> TranscriptIndex::wordsForRange(const ClipDuration &range) const
+{
+	QVector<WordTiming> words;
+	for (const TranscriptSegment &segment : transcript.segments) {
+		if (segment.words.isEmpty())
+			continue;
+		if (!segmentOverlapsRange(segment, range))
+			continue;
+		for (const WordTiming &word : segment.words) {
+			if (std::min(word.endSec, range.endSec) > std::max(word.startSec, range.startSec))
+				words.append(word);
+		}
+	}
+	std::sort(words.begin(), words.end(), [](const WordTiming &left, const WordTiming &right) {
+		return left.startSec < right.startSec;
+	});
+	return words;
+}
+
+ClipDuration TranscriptIndex::snapRangeToWordBoundaries(const ClipDuration &range, const ClipDuration &bounds) const
+{
+	if (!hasWordTimings())
+		return clampRange(range, bounds);
+
+	const ClipDuration search{std::max(bounds.startSec, range.startSec - 0.55),
+		std::min(bounds.endSec, range.endSec + 0.80)};
+	const QVector<WordTiming> words = wordsForRange(search);
+	if (words.isEmpty())
+		return clampRange(range, bounds);
+
+	auto isBoundarySafe = [](const WordTiming &word) {
+		const double durationSec = word.endSec - word.startSec;
+		return !word.word.trimmed().isEmpty() && durationSec >= 0.015 && durationSec <= 1.85;
+	};
+
+	double start = range.startSec;
+	for (const WordTiming &word : words) {
+		if (word.endSec < range.startSec - 0.55)
+			continue;
+		if (word.startSec > range.startSec + 1.25)
+			break;
+		if (isBoundarySafe(word)) {
+			start = word.startSec;
+			break;
+		}
+	}
+
+	double end = range.endSec;
+	for (int i = static_cast<int>(words.size()) - 1; i >= 0; --i) {
+		const WordTiming &word = words.at(i);
+		if (word.startSec > range.endSec + 0.80)
+			continue;
+		if (word.endSec < range.endSec - 1.75)
+			break;
+		if (isBoundarySafe(word)) {
+			end = word.endSec;
+			break;
+		}
+	}
+
+	ClipDuration snapped{start, end};
+	return clampRange(snapped, bounds);
+}
+
+
 double TranscriptIndex::silenceBeforeSegment(int index) const
 {
 	if (index <= 0 || index >= static_cast<int>(transcript.segments.size()))
@@ -134,6 +243,24 @@ double TranscriptIndex::silenceAfterRange(const ClipDuration &range) const
 {
 	const int last = lastSegmentIndexOverlapping(range);
 	return last >= 0 ? silenceAfterSegment(last) : 0.0;
+}
+
+
+double TranscriptIndex::maxInternalSilenceInRange(const ClipDuration &range) const
+{
+	const QVector<int> indices = segmentIndicesForRange(range);
+	if (indices.size() < 2)
+		return 0.0;
+
+	double maxSilence = 0.0;
+	for (int i = 1; i < static_cast<int>(indices.size()); ++i) {
+		const TranscriptSegment *previous = segmentAt(indices.at(i - 1));
+		const TranscriptSegment *current = segmentAt(indices.at(i));
+		if (!previous || !current)
+			continue;
+		maxSilence = std::max(maxSilence, current->startSec - previous->endSec);
+	}
+	return std::max(0.0, maxSilence);
 }
 
 ClipDuration TranscriptIndex::clampRange(const ClipDuration &range, const ClipDuration &bounds) const

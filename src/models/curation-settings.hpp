@@ -22,6 +22,8 @@ struct CurationSettings {
 	QString clipLengthPreset = "Medium";
 	QString sourceLanguage = "auto";
 	QString transcriptionLanguage = "auto";
+	// Optional manual ClipAnything prompt sent directly to Opus.
+	// This is user-provided guidance for Opus curation.
 	QString aiPrompt;
 	QString reviewSettingsKey;
 	bool uploadClipRangesIndependently = false;

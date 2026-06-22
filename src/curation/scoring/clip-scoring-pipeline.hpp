@@ -4,6 +4,7 @@
 #include "curation/scoring/candidate-quality-gate.hpp"
 #include "curation/scoring/cheap-clip-scorer.hpp"
 #include "curation/scoring/clip-ranker.hpp"
+#include "curation/scoring/exchange-arc-boundary-refiner.hpp"
 #include "curation/scoring/semantic-clip-scorer.hpp"
 #include "curation/scoring/semantic-coarse-retriever.hpp"
 #include "curation/scoring/semantic-reranker.hpp"

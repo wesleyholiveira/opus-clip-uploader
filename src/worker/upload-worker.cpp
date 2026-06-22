@@ -349,7 +349,6 @@ void saveReviewSettingsForVideoPath(const QString &videoPath, CurationSettings &
 	root.insert(QStringLiteral("sourceLanguage"), normalizeTranscriptionLanguage(settings.sourceLanguage));
 	root.insert(QStringLiteral("transcriptionLanguage"),
 		    normalizeTranscriptionLanguage(settings.transcriptionLanguage));
-	root.insert(QStringLiteral("aiPrompt"), settings.aiPrompt.trimmed());
 
 	PluginConfig::setValue(settings.reviewSettingsKey,
 			       QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact)));
@@ -420,8 +419,7 @@ void saveTranscriptCacheForResampledVideo(const QString &sourcePath, const QStri
 } // namespace
 
 UploadWorker::UploadWorker(QString apiKey, QString filePath, QString fileName, QString mimeType,
-			   QString brandTemplateId, QString sourceLang, CurationSettings curationSettings,
-			   QString openAiApiKey, QString openAiModel, QObject *parent)
+			   QString brandTemplateId, QString sourceLang, CurationSettings curationSettings, QObject *parent)
 	: QObject(parent),
 	  apiKey(std::move(apiKey)),
 	  filePath(std::move(filePath)),
@@ -429,9 +427,7 @@ UploadWorker::UploadWorker(QString apiKey, QString filePath, QString fileName, Q
 	  mimeType(std::move(mimeType)),
 	  brandTemplateId(std::move(brandTemplateId)),
 	  sourceLang(std::move(sourceLang)),
-	  curationSettings(std::move(curationSettings)),
-	  openAiApiKey(std::move(openAiApiKey)),
-	  openAiModel(std::move(openAiModel))
+	  curationSettings(std::move(curationSettings))
 {
 	if (this->sourceLang.trimmed().isEmpty())
 		this->sourceLang = "auto";

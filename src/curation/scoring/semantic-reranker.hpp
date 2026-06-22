@@ -15,6 +15,8 @@ struct SemanticRerankerOptions {
 struct SemanticRerankerContext {
 	QString presetId;
 	QString mainTarget;
+	QString transcriptionLanguage;
+	QString sourceLanguage;
 	bool reliableMainTarget = false;
 };
 
@@ -36,9 +38,11 @@ public:
 
 private:
 	QString queryForContext(const SemanticRerankerContext &context) const;
-	QString badClipQueryForContext(const SemanticRerankerContext &context) const;
-	QString documentForCandidate(const ClipCandidate &candidate) const;
-	double rerankerScoreFromRaw(double rawScore, double normalizedScore, double badClipScore) const;
+	QString openingDefectQueryForContext(const SemanticRerankerContext &context) const;
+	QString endingDefectQueryForContext(const SemanticRerankerContext &context) const;
+	QString structureDefectQueryForContext(const SemanticRerankerContext &context) const;
+	QString documentForCandidate(const ClipCandidate &candidate, const SemanticRerankerContext &context) const;
+	double rerankerScoreFromRaw(double rawScore, double normalizedScore, double defectScore) const;
 	double combineFinalScore(const ClipCandidate &candidate, double rerankerScore, double contributionWeight) const;
 };
 

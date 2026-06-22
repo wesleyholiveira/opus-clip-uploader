@@ -183,8 +183,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 	src/ui/upload-flow.cpp
 	src/ui/upload-flow.hpp
 	src/ui/upload-confirm-dialog.cpp
-	src/ui/gpt-review-prompt.cpp
-	src/ui/gpt-review-prompt.hpp
+	src/ui/curation-transcript-preparation.cpp
+	src/ui/curation-transcript-preparation.hpp
 	src/ui/review-scoring-preparation.cpp
 	src/ui/review-scoring-preparation.hpp
 	src/ui/video-editor-actions.cpp
@@ -199,20 +199,6 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 	src/models/transcript.hpp
 
 	src/curation/domain/curation-plan.hpp
-	src/curation/analysis/named-reference-detector.cpp
-	src/curation/analysis/named-reference-detector.hpp
-	src/curation/compiler/opus-prompt-compiler.cpp
-	src/curation/compiler/opus-prompt-compiler.hpp
-	src/curation/compiler/prompt-compiler-internal.hpp
-	src/curation/compiler/prompt-compiler-text.cpp
-	src/curation/compiler/prompt-compiler-viewer.cpp
-	src/curation/compiler/prompt-compiler-target.cpp
-	src/curation/compiler/opus-prompt-plan-renderer.cpp
-	src/curation/compiler/opus-prompt-output-normalizer.cpp
-	src/curation/compiler/opus-prompt-fallback.cpp
-	src/curation/compiler/opus-prompt-guard.cpp
-	src/curation/compiler/prompt-quality-gate.cpp
-	src/curation/compiler/prompt-quality-gate.hpp
 	src/curation/range/curation-range-strategy.cpp
 	src/curation/range/curation-range-strategy.hpp
 	src/curation/range/viewer-message-focus-range.cpp
@@ -252,55 +238,26 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 	src/curation/scoring/semantic-reranker.hpp
 	src/curation/scoring/candidate-quality-gate.cpp
 	src/curation/scoring/candidate-quality-gate.hpp
+	src/curation/scoring/exchange-arc-boundary-refiner.cpp
+	src/curation/scoring/exchange-arc-boundary-refiner.hpp
 	src/curation/scoring/clip-scoring-pipeline.cpp
 	src/curation/scoring/clip-scoring-pipeline.hpp
-	src/curation/prompt/curation-prompt-recipe.cpp
-	src/curation/prompt/curation-prompt-recipe.hpp
-	src/curation/rules/curation-rule-helpers.cpp
-	src/curation/rules/curation-rule-helpers.hpp
-	src/curation/rules/curation-preset-rule.hpp
-	src/curation/rules/curation-rule-engine.cpp
-	src/curation/rules/curation-rule-engine.hpp
-	src/curation/rules/auto-rule.cpp
-	src/curation/rules/auto-rule.hpp
-	src/curation/rules/viewer-message-response-rule.cpp
-	src/curation/rules/viewer-message-response-rule.hpp
-	src/curation/rules/advice-answer-rule.cpp
-	src/curation/rules/advice-answer-rule.hpp
-	src/curation/rules/emotional-reaction-rule.cpp
-	src/curation/rules/emotional-reaction-rule.hpp
-	src/curation/rules/explanation-rule.cpp
-	src/curation/rules/explanation-rule.hpp
-	src/curation/rules/story-arc-rule.cpp
-	src/curation/rules/story-arc-rule.hpp
-	src/curation/rules/opinion-rule.cpp
-	src/curation/rules/opinion-rule.hpp
-	src/curation/rules/tutorial-step-rule.cpp
-	src/curation/rules/tutorial-step-rule.hpp
-	src/curation/service/curation-service.cpp
-	src/curation/service/curation-service.hpp
 	src/curation/curation-preset.cpp
+	src/curation/curation-preset-profile.cpp
 	src/curation/curation-preset.hpp
+	src/curation/curation-preset-profile.hpp
 	src/curation/curation-signals.cpp
 	src/curation/curation-signals.hpp
-	src/curation/curation-intent.cpp
-	src/curation/curation-intent.hpp
-	src/curation/curation-rules.cpp
-	src/curation/curation-rules.hpp
-	src/curation/opus-prompt-renderer.cpp
-	src/curation/opus-prompt-renderer.hpp
 
 	src/transcription/transcript-store.cpp
 	src/transcription/transcript-store.hpp
+	src/transcription/whisperx-settings.cpp
+	src/transcription/whisperx-settings.hpp
+	src/transcription/whisperx-alignment-service.cpp
+	src/transcription/whisperx-alignment-service.hpp
 	src/transcription/realtime-transcription-service.cpp
 	src/transcription/realtime-transcription-service.hpp
 
-	src/gpt/openai-chat-payload.cpp
-	src/gpt/openai-chat-payload.hpp
-	src/gpt/gpt-prompt-client.cpp
-	src/gpt/gpt-prompt-client.hpp
-	src/gpt/gpt-prompt-store.cpp
-	src/gpt/gpt-prompt-store.hpp
 
 	src/utils/config.cpp
 	src/utils/config.hpp
@@ -728,10 +685,16 @@ if (WIN32)
 		DESTINATION "data/obs-plugins/${OBS_PLUGIN_NAME}"
 		PATTERN "models" EXCLUDE
 	)
+	install(DIRECTORY tools/
+		DESTINATION "data/obs-plugins/${OBS_PLUGIN_NAME}/tools"
+	)
 elseif (NOT APPLE)
 	install(DIRECTORY data/
 		DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/obs/obs-plugins/${OBS_PLUGIN_NAME}"
 		PATTERN "models" EXCLUDE
+	)
+	install(DIRECTORY tools/
+		DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/obs/obs-plugins/${OBS_PLUGIN_NAME}/tools"
 	)
 endif ()
 

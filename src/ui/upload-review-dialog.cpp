@@ -29,9 +29,9 @@ extern "C" {
 #include <QLabel>
 #include <QMetaObject>
 #include <QLineEdit>
-#include <QPlainTextEdit>
 #include <QProgressDialog>
 #include <QPointer>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QTableWidget>
 #include <QTableWidgetItem>
@@ -200,10 +200,8 @@ UploadReviewDialog::UploadReviewDialog(const QString &videoPath, const CurationS
 	  initialSettings(initialCurationSettings),
 	  advancedSettingsOnly(showAdvancedSettingsOnly)
 {
-	setWindowTitle(QString("Clip Cropper - %1")
-			       .arg(advancedSettingsOnly ? obsText("Dialog.ReviewGeneratedPromptTitle")
-							 : obsText("Dialog.ReviewVideoTitle")));
-	resize(advancedSettingsOnly ? 780 : 920, advancedSettingsOnly ? 560 : 720);
+	setWindowTitle(QString("Clip Cropper - %1").arg(obsText("Dialog.ReviewVideoTitle")));
+	resize(920, advancedSettingsOnly ? 560 : 720);
 
 	auto *mainLayout = new QVBoxLayout(this);
 	mainLayout->setContentsMargins(14, 14, 14, 12);
@@ -247,6 +245,10 @@ UploadReviewDialog::UploadReviewDialog(const QString &videoPath, const CurationS
 	topicKeywordsInput = new QLineEdit(this);
 	topicKeywordsInput->setPlaceholderText(obsText("Placeholder.TopicKeywords"));
 
+	opusPromptInput = new QPlainTextEdit(this);
+	opusPromptInput->setMinimumHeight(advancedSettingsOnly ? 260 : 96);
+	opusPromptInput->setPlaceholderText(obsText("Placeholder.OpusPrompt"));
+
 	modelInput = new QComboBox(this);
 	modelInput->addItems(QStringList{"ClipBasic", "ClipAnything"});
 	setOpusModelOrDefault(modelInput);
@@ -280,9 +282,6 @@ UploadReviewDialog::UploadReviewDialog(const QString &videoPath, const CurationS
 
 	skipCurateInput = new QCheckBox(obsText("Label.SkipCurate"), this);
 
-	customPromptInput = new QPlainTextEdit(this);
-	customPromptInput->setMinimumHeight(advancedSettingsOnly ? 280 : 110);
-	customPromptInput->setPlaceholderText(obsText("Placeholder.CustomPrompt"));
 
 	if (!advancedSettingsOnly) {
 		suggestClipRangesButton = new QPushButton(obsText("Button.SuggestBestClips"), this);
@@ -315,10 +314,10 @@ UploadReviewDialog::UploadReviewDialog(const QString &videoPath, const CurationS
 	advancedTree->addField(obsText("Settings.Model"), modelInput);
 	advancedTree->addField(obsText("Settings.ClipLength"), clipLengthInput);
 	advancedTree->addField(obsText("Settings.TopicKeywords"), topicKeywordsInput);
+	advancedTree->addField(obsText("Settings.OpusPrompt"), opusPromptInput);
 	advancedTree->addField(obsText("Settings.Genre"), genreInput);
 	advancedTree->addField(obsText("Settings.CurationPreset"), curationPresetInput);
 	advancedTree->addField(obsText("Settings.SkipCurate"), skipCurateInput);
-	advancedTree->addField(obsText("Settings.CustomPrompt"), customPromptInput);
 
 	if (advancedSettingsOnly) {
 		applyCurationSettings(initialSettings);
@@ -351,9 +350,6 @@ UploadReviewDialog::UploadReviewDialog(const QString &videoPath, const CurationS
 		mainLayout->addLayout(languageRow);
 
 	if (advancedSettingsOnly) {
-		auto *promptReviewLabel = new QLabel(obsText("Message.ReviewGeneratedPromptBeforeUpload"), this);
-		promptReviewLabel->setWordWrap(true);
-		mainLayout->addWidget(promptReviewLabel);
 		mainLayout->addWidget(advancedTree, 1);
 	} else {
 		mainLayout->addWidget(videoEditor, 1);
@@ -415,8 +411,9 @@ void UploadReviewDialog::applyCurationSettings(const CurationSettings &settings)
 	if (skipCurateInput)
 		skipCurateInput->setChecked(settings.skipCurate);
 
-	if (customPromptInput)
-		customPromptInput->setPlainText(settings.aiPrompt.trimmed());
+	if (opusPromptInput)
+		opusPromptInput->setPlainText(settings.aiPrompt.trimmed());
+
 }
 
 void UploadReviewDialog::showSemanticSuggestionProgressDialog()
@@ -628,8 +625,9 @@ void UploadReviewDialog::loadSavedCurationOptions()
 	if (skipCurateInput && root.contains(QStringLiteral("skipCurate")))
 		skipCurateInput->setChecked(root.value(QStringLiteral("skipCurate")).toBool(false));
 
-	if (customPromptInput && root.contains(QStringLiteral("aiPrompt")))
-		customPromptInput->setPlainText(root.value(QStringLiteral("aiPrompt")).toString().trimmed());
+	if (opusPromptInput && root.contains(QStringLiteral("aiPrompt")))
+		opusPromptInput->setPlainText(root.value(QStringLiteral("aiPrompt")).toString().trimmed());
+
 }
 
 void UploadReviewDialog::saveCurationOptions() const
@@ -682,8 +680,7 @@ void UploadReviewDialog::saveCurationOptions() const
 		    transcriptionLanguageInput
 			    ? normalizeLanguageSetting(transcriptionLanguageInput->currentData().toString())
 			    : QString::fromLatin1(LANGUAGE_AUTO));
-	root.insert(QStringLiteral("aiPrompt"),
-		    customPromptInput ? customPromptInput->toPlainText().trimmed() : QString{});
+	root.insert(QStringLiteral("aiPrompt"), opusPromptInput ? opusPromptInput->toPlainText().trimmed() : QString{});
 
 	PluginConfig::setValue(key, QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact)));
 }
@@ -733,7 +730,7 @@ CurationSettings UploadReviewDialog::curationSettings() const
 		transcriptionLanguageInput
 			? normalizeLanguageSetting(transcriptionLanguageInput->currentData().toString())
 			: QString::fromLatin1(LANGUAGE_AUTO);
-	settings.aiPrompt = customPromptInput ? customPromptInput->toPlainText().trimmed() : QString{};
+	settings.aiPrompt = opusPromptInput ? opusPromptInput->toPlainText().trimmed() : QString{};
 
 	settings.topicKeywords.clear();
 	const QStringList keywords = topicKeywordsInput->text().split(",", Qt::SkipEmptyParts);

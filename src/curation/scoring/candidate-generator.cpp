@@ -25,11 +25,14 @@ bool validRange(const ClipDuration &range)
 double candidateAfterSeconds(const CandidateGenerationOptions &options, double emotionalScore, double adviceScore,
 			     bool targetHit)
 {
-	if (targetHit || adviceScore >= 0.35)
-		return std::max(options.defaultAfterSec, options.adviceAfterSec);
-	if (emotionalScore >= 0.35)
-		return std::max(options.defaultAfterSec, options.emotionalAfterSec);
-	return options.defaultAfterSec;
+	const double requestedAfterSec = [&]() {
+		if (targetHit || adviceScore >= 0.35)
+			return std::max(options.defaultAfterSec, options.adviceAfterSec);
+		if (emotionalScore >= 0.35)
+			return std::max(options.defaultAfterSec, options.emotionalAfterSec);
+		return options.defaultAfterSec;
+	}();
+	return std::clamp(requestedAfterSec, options.minDurationSec, options.maxDurationSec);
 }
 
 bool shouldExtendCandidate(const QString &text)
@@ -118,7 +121,7 @@ QVector<ClipCandidate> CandidateGenerator::slidingWindowCandidates(const Transcr
 								   const CandidateGenerationOptions &options) const
 {
 	QVector<ClipCandidate> candidates;
-	const QVector<double> durations{30.0, 45.0, 60.0};
+	const QVector<double> durations{30.0, 45.0, 60.0, 90.0, 120.0, 150.0, options.maxDurationSec};
 	const double stepSec = std::max(5.0, options.slidingWindowStepSec);
 
 	for (double startSec = options.searchRange.startSec; startSec < options.searchRange.endSec;
@@ -153,6 +156,7 @@ ClipCandidate CandidateGenerator::buildCandidate(const TranscriptIndex &index,
 	candidate.firstSegmentIndex = index.firstSegmentIndexOverlapping(candidate.range);
 	candidate.lastSegmentIndex = index.lastSegmentIndexOverlapping(candidate.range);
 	candidate.text = index.textForRange(candidate.range);
+	candidate.timedText = index.timedTextForRange(candidate.range);
 	candidate.anchorText = TextAnalysis::sampleForLog(candidate.text.left(220), 220);
 	candidate.source = source;
 	candidate.startsNearViewerCue = startsNearViewerCue;

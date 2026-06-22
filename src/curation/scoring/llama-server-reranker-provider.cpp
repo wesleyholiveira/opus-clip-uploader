@@ -10,6 +10,7 @@
 #include <QStringList>
 #include <QTimer>
 
+#include <algorithm>
 #include <utility>
 
 using namespace Curation::Scoring;
@@ -17,7 +18,7 @@ using namespace Curation::Scoring;
 namespace {
 
 static constexpr int DEFAULT_TIMEOUT_MS = 20000;
-static constexpr int DEFAULT_MAX_TEXT_CHARS = 900;
+static constexpr int DEFAULT_MAX_TEXT_CHARS = 2400;
 
 static QString payloadPreview(const QByteArray &payload)
 {
@@ -70,8 +71,9 @@ static QJsonArray responseResults(const QJsonDocument &document)
 		return {};
 
 	const QJsonObject root = document.object();
-	for (const QString &key : QStringList{QStringLiteral("results"), QStringLiteral("data"), QStringLiteral("rankings"),
-	     QStringLiteral("rerank"), QStringLiteral("scores")}) {
+	for (const QString &key :
+	     QStringList{QStringLiteral("results"), QStringLiteral("data"), QStringLiteral("rankings"),
+			 QStringLiteral("rerank"), QStringLiteral("scores")}) {
 		const QJsonArray array = root.value(key).toArray();
 		if (!array.isEmpty())
 			return array;
@@ -85,7 +87,7 @@ static double rerankScoreFromItem(const QJsonObject &item, bool *ok)
 		*ok = false;
 
 	for (const QString &key : QStringList{QStringLiteral("relevance_score"), QStringLiteral("relevanceScore"),
-		     QStringLiteral("score"), QStringLiteral("rank_score")}) {
+					      QStringLiteral("score"), QStringLiteral("rank_score")}) {
 		double value = 0.0;
 		if (jsonNumber(item.value(key), &value)) {
 			if (ok)
@@ -104,7 +106,7 @@ static double rerankScoreFromItem(const QJsonObject &item, bool *ok)
 static int rerankIndexFromItem(const QJsonObject &item, int fallbackIndex)
 {
 	int index = intValue(item, QStringList{QStringLiteral("index"), QStringLiteral("document_index"),
-		QStringLiteral("documentIndex"), QStringLiteral("corpus_id")});
+					       QStringLiteral("documentIndex"), QStringLiteral("corpus_id")});
 	if (index >= 0)
 		return index;
 
@@ -148,7 +150,8 @@ double LlamaServerRerankerProvider::score(const QString &query, const QString &c
 	return scores.isEmpty() ? 0.0 : scores.first();
 }
 
-QVector<double> LlamaServerRerankerProvider::scoreBatch(const QString &query, const QVector<QString> &candidateTexts) const
+QVector<double> LlamaServerRerankerProvider::scoreBatch(const QString &query,
+							const QVector<QString> &candidateTexts) const
 {
 	if (!isAvailable() || query.trimmed().isEmpty() || candidateTexts.isEmpty())
 		return {};
@@ -260,7 +263,7 @@ QUrl LlamaServerRerankerProvider::normalizedEndpoint(const QString &value) const
 }
 
 QByteArray LlamaServerRerankerProvider::buildRequestPayload(const QString &query,
-	const QVector<QString> &candidateTexts) const
+							    const QVector<QString> &candidateTexts) const
 {
 	QJsonObject root;
 	root.insert(QStringLiteral("query"), query);
@@ -270,13 +273,14 @@ QByteArray LlamaServerRerankerProvider::buildRequestPayload(const QString &query
 	root.insert(QStringLiteral("documents"), documents);
 
 	// llama-server's native reranking endpoint only documents `query` and `documents`.
-	// Some builds accept OpenAI/Jina-style optional fields, but others return HTTP 500
+	// Some server builds accept optional ranking fields, but others return HTTP 500
 	// when extra keys such as `model`, `top_n`, or `return_documents` are present.
 	// The model is already selected by the llama-server process launched on the reranker port.
 	return QJsonDocument(root).toJson(QJsonDocument::Compact);
 }
 
-QVector<double> LlamaServerRerankerProvider::parseRerankResponse(const QByteArray &payload, qsizetype expectedSize) const
+QVector<double> LlamaServerRerankerProvider::parseRerankResponse(const QByteArray &payload,
+								 qsizetype expectedSize) const
 {
 	QJsonParseError parseError;
 	const QJsonDocument document = QJsonDocument::fromJson(payload, &parseError);
@@ -331,8 +335,13 @@ QVector<double> LlamaServerRerankerProvider::parseRerankResponse(const QByteArra
 QString LlamaServerRerankerProvider::preparedText(const QString &text) const
 {
 	QString value = text.simplified();
-	if (value.size() > options_.maxTextChars)
-		value = value.left(options_.maxTextChars);
+	if (value.size() > options_.maxTextChars) {
+		const QString marker = QStringLiteral(" ... [MIDDLE TRUNCATED] ... ");
+		const int budget = std::max(64, static_cast<int>(options_.maxTextChars - marker.size()));
+		const int headChars = std::clamp(static_cast<int>(budget * 0.58), 32, budget);
+		const int tailChars = std::max(0, budget - headChars);
+		value = value.left(headChars).trimmed() + marker + value.right(tailChars).trimmed();
+	}
 	return value;
 }
 

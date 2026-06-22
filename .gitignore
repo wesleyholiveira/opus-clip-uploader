@@ -37,3 +37,8 @@
 /models/**
 !/models/**/
 !/models/**/.gitkeep
+
+!docs
+!tools
+tools/**
+!tools/*.py

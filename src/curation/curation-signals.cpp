@@ -333,7 +333,7 @@ Signals analyzeSignals(const RecordingTranscript &transcript, const CurationSett
 
 	QString metadata =
 		curationSettings.genre + QLatin1Char(' ') + curationSettings.topicKeywords.join(QLatin1Char(' '));
-	metadata += QLatin1Char(' ') + generatedPrompt + QLatin1Char(' ') + curationSettings.aiPrompt;
+	metadata += QLatin1Char(' ') + generatedPrompt;
 
 	const QString transcriptText = joinedTranscriptText(transcript);
 	const QString combinedText = metadata + QLatin1Char(' ') + transcriptText;

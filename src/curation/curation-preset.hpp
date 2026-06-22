@@ -21,9 +21,6 @@ QString normalizeId(QString presetId);
 QVector<QPair<QString, QString>> options();
 QString labelForId(const QString &presetId);
 QString resolveId(const CurationSettings &settings, const QString &prompt = QString());
-QString gptContextForId(const QString &presetId);
-QString opusPromptForId(const QString &presetId, bool multipleClips);
-QString fallbackOpusPrompt(const CurationSettings &settings, bool multipleClips);
 ClipLengthBounds clipLengthBoundsForSettings(const CurationSettings &settings);
 bool isViewerMessageResponsePrompt(const QString &prompt);
 
