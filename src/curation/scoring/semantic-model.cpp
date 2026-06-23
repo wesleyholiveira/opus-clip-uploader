@@ -20,6 +20,15 @@ SemanticEmbedding DisabledSemanticEmbeddingProvider::embed(const QString &text) 
 	return {};
 }
 
+QVector<SemanticEmbedding> SemanticEmbeddingProvider::embedBatch(const QVector<QString> &texts) const
+{
+	QVector<SemanticEmbedding> result;
+	result.reserve(static_cast<long long>(texts.size()));
+	for (const QString &text : texts)
+		result.append(embed(text));
+	return result;
+}
+
 double Curation::Scoring::cosineSimilarity(const SemanticEmbedding &left, const SemanticEmbedding &right)
 {
 	if (!left.isValid() || !right.isValid() || left.values.size() != right.values.size())

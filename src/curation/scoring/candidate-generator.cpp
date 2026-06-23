@@ -1,6 +1,7 @@
 #include "curation/scoring/candidate-generator.hpp"
 
 #include "curation/scoring/cheap-clip-scorer.hpp"
+#include "curation/scoring/candidate-arc-planner.hpp"
 #include "curation/scoring/text-analysis.hpp"
 
 #include "curation/curation-signals.hpp"
@@ -53,6 +54,12 @@ QVector<ClipCandidate> CandidateGenerator::generate(const TranscriptIndex &index
 		return candidates;
 
 	candidates = cueAnchoredCandidates(index, options);
+	const QVector<ClipCandidate> arcCandidates = arcDpCandidates(index, options);
+	for (const ClipCandidate &candidate : arcCandidates) {
+		candidates.append(candidate);
+		if (static_cast<int>(candidates.size()) >= options.maxRawCandidates)
+			break;
+	}
 	const QVector<ClipCandidate> windows = slidingWindowCandidates(index, options);
 	for (const ClipCandidate &candidate : windows) {
 		candidates.append(candidate);
@@ -114,6 +121,27 @@ QVector<ClipCandidate> CandidateGenerator::cueAnchoredCandidates(const Transcrip
 			break;
 	}
 
+	return candidates;
+}
+
+
+QVector<ClipCandidate> CandidateGenerator::arcDpCandidates(const TranscriptIndex &index,
+	const CandidateGenerationOptions &options) const
+{
+	QVector<ClipCandidate> candidates;
+	CandidateArcPlanner planner;
+	const QVector<PlannedArcCandidateRange> plannedRanges = planner.plan(index, options);
+	candidates.reserve(plannedRanges.size());
+	for (const PlannedArcCandidateRange &planned : plannedRanges) {
+		ClipCandidate candidate = buildCandidate(index, options, planned.range.startSec, planned.range.endSec,
+			planned.source, planned.startsNearViewerCue);
+		for (const QString &evidence : planned.evidence)
+			candidate.evidence.append(evidence);
+		candidate.evidence.append(QStringLiteral("candidate_generation_arc_dp"));
+		candidate.evidence.removeDuplicates();
+		if (!candidate.text.trimmed().isEmpty())
+			candidates.append(candidate);
+	}
 	return candidates;
 }
 

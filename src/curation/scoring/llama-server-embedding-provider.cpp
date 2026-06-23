@@ -19,6 +19,7 @@ namespace {
 
 static constexpr int DEFAULT_TIMEOUT_MS = 10000;
 static constexpr int DEFAULT_MAX_TEXT_CHARS = 6000;
+static constexpr int DEFAULT_MAX_BATCH_SIZE = 64;
 
 } // namespace
 
@@ -30,6 +31,9 @@ LlamaServerEmbeddingProvider::LlamaServerEmbeddingProvider(LlamaServerEmbeddingP
 		options_.timeoutMs = DEFAULT_TIMEOUT_MS;
 	if (options_.maxTextChars <= 0)
 		options_.maxTextChars = DEFAULT_MAX_TEXT_CHARS;
+	if (options_.maxBatchSize <= 0)
+		options_.maxBatchSize = DEFAULT_MAX_BATCH_SIZE;
+	options_.maxBatchSize = std::clamp(options_.maxBatchSize, 1, 256);
 	if (options_.modelId.trimmed().isEmpty())
 		options_.modelId = QStringLiteral("llama-server-embedding");
 }
@@ -137,6 +141,60 @@ SemanticEmbedding LlamaServerEmbeddingProvider::embed(const QString &text) const
 	return embedding;
 }
 
+QVector<SemanticEmbedding> LlamaServerEmbeddingProvider::embedBatch(const QVector<QString> &texts) const
+{
+	QVector<SemanticEmbedding> result;
+	result.resize(static_cast<long long>(texts.size()));
+	if (!isAvailable() || texts.isEmpty())
+		return result;
+
+	QVector<QString> pendingTexts;
+	QVector<int> pendingIndexes;
+	pendingTexts.reserve(std::min(static_cast<int>(texts.size()), options_.maxBatchSize));
+	pendingIndexes.reserve(std::min(static_cast<int>(texts.size()), options_.maxBatchSize));
+
+	auto flushPending = [&]() {
+		if (pendingTexts.isEmpty())
+			return;
+		const QVector<SemanticEmbedding> embeddings = postEmbeddingBatch(pendingTexts);
+		if (embeddings.size() == pendingTexts.size()) {
+			for (int i = 0; i < static_cast<int>(embeddings.size()); ++i) {
+				if (embeddings.at(i).isValid()) {
+					result[pendingIndexes.at(i)] = embeddings.at(i);
+					cache_.put(modelId(), pendingTexts.at(i), embeddings.at(i));
+				}
+			}
+		} else {
+			// Keep the batch path safe for server builds that do not support array input.
+			for (int i = 0; i < static_cast<int>(pendingTexts.size()); ++i)
+				result[pendingIndexes.at(i)] = embed(pendingTexts.at(i));
+		}
+		pendingTexts.clear();
+		pendingIndexes.clear();
+	};
+
+	for (int i = 0; i < static_cast<int>(texts.size()); ++i) {
+		if (options_.cancellationCallback && options_.cancellationCallback())
+			break;
+		const QString input = preparedText(texts.at(i));
+		if (input.isEmpty())
+			continue;
+
+		SemanticEmbedding cached;
+		if (cache_.tryGet(modelId(), input, &cached)) {
+			result[i] = cached;
+			continue;
+		}
+
+		pendingTexts.append(input);
+		pendingIndexes.append(i);
+		if (pendingTexts.size() >= options_.maxBatchSize)
+			flushPending();
+	}
+	flushPending();
+	return result;
+}
+
 QString LlamaServerEmbeddingProvider::endpoint() const
 {
 	return options_.endpoint;
@@ -180,6 +238,18 @@ QByteArray LlamaServerEmbeddingProvider::buildRequestPayload(const QString &text
 	return QJsonDocument(root).toJson(QJsonDocument::Compact);
 }
 
+QByteArray LlamaServerEmbeddingProvider::buildBatchRequestPayload(const QVector<QString> &texts) const
+{
+	QJsonObject root;
+	QJsonArray input;
+	for (const QString &text : texts)
+		input.append(text);
+	root.insert(QStringLiteral("input"), input);
+	if (!options_.modelId.trimmed().isEmpty())
+		root.insert(QStringLiteral("model"), options_.modelId.trimmed());
+	return QJsonDocument(root).toJson(QJsonDocument::Compact);
+}
+
 SemanticEmbedding LlamaServerEmbeddingProvider::parseEmbeddingResponse(const QByteArray &payload) const
 {
 	QJsonParseError parseError;
@@ -210,6 +280,125 @@ SemanticEmbedding LlamaServerEmbeddingProvider::parseEmbeddingResponse(const QBy
 		embedding.values.append(static_cast<float>(value.toDouble()));
 	}
 	return embedding;
+}
+
+QVector<SemanticEmbedding> LlamaServerEmbeddingProvider::parseEmbeddingBatchResponse(const QByteArray &payload,
+	qsizetype expectedSize) const
+{
+	QJsonParseError parseError;
+	const QJsonDocument document = QJsonDocument::fromJson(payload, &parseError);
+	if (parseError.error != QJsonParseError::NoError || !document.isObject())
+		return {};
+
+	const QJsonObject root = document.object();
+	const QJsonArray data = root.value(QStringLiteral("data")).toArray();
+	if (data.isEmpty())
+		return {};
+
+	QVector<SemanticEmbedding> embeddings;
+	embeddings.resize(static_cast<long long>(expectedSize));
+	int sequentialIndex = 0;
+	int validCount = 0;
+	for (const QJsonValue &value : data) {
+		const QJsonObject item = value.toObject();
+		if (item.isEmpty()) {
+			++sequentialIndex;
+			continue;
+		}
+		int index = item.value(QStringLiteral("index")).toInt(sequentialIndex);
+		++sequentialIndex;
+		if (index < 0 || index >= expectedSize)
+			continue;
+
+		const QJsonArray embeddingArray = item.value(QStringLiteral("embedding")).toArray();
+		SemanticEmbedding embedding;
+		embedding.values.reserve(static_cast<long long>(embeddingArray.size()));
+		for (const QJsonValue &number : embeddingArray) {
+			if (number.isDouble())
+				embedding.values.append(static_cast<float>(number.toDouble()));
+		}
+		if (embedding.isValid()) {
+			embeddings[index] = embedding;
+			++validCount;
+		}
+	}
+	return validCount > 0 ? embeddings : QVector<SemanticEmbedding>{};
+}
+
+QVector<SemanticEmbedding> LlamaServerEmbeddingProvider::postEmbeddingBatch(const QVector<QString> &preparedTexts) const
+{
+	if (preparedTexts.isEmpty())
+		return {};
+
+	QNetworkAccessManager manager;
+	QNetworkRequest request(normalizedEndpoint(options_.endpoint));
+	request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+	request.setRawHeader("Accept", "application/json");
+
+	QNetworkReply *reply = manager.post(request, buildBatchRequestPayload(preparedTexts));
+
+	QEventLoop loop;
+	QTimer timer;
+	QTimer cancelTimer;
+	timer.setSingleShot(true);
+	cancelTimer.setInterval(100);
+
+	QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+	QObject::connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
+	QObject::connect(&cancelTimer, &QTimer::timeout, &loop, [&loop, reply, this]() {
+		if (!options_.cancellationCallback || !options_.cancellationCallback())
+			return;
+		if (reply && !reply->isFinished())
+			reply->abort();
+		loop.quit();
+	});
+	timer.start(options_.timeoutMs);
+	if (options_.cancellationCallback)
+		cancelTimer.start();
+	loop.exec();
+
+	if (timer.isActive())
+		timer.stop();
+	if (cancelTimer.isActive())
+		cancelTimer.stop();
+	if (!reply->isFinished())
+		reply->abort();
+
+	const QNetworkReply::NetworkError error = reply->error();
+	const QString errorString = reply->errorString();
+	QByteArray response;
+	if (reply->isOpen() && reply->isReadable())
+		response = reply->readAll();
+	reply->deleteLater();
+
+	if (options_.cancellationCallback && options_.cancellationCallback()) {
+		setLastError(QStringLiteral("embedding_canceled"));
+		return {};
+	}
+
+	if (error != QNetworkReply::NoError) {
+		QString message = QStringLiteral("llama_server_batch_http_error:%1").arg(errorString);
+		if (!response.isEmpty()) {
+			QString preview = QString::fromUtf8(response).simplified();
+			if (preview.size() > 240)
+				preview = preview.left(240) + QStringLiteral("...");
+			message += QStringLiteral(":") + preview;
+		}
+		markFailure(message);
+		return {};
+	}
+
+	QVector<SemanticEmbedding> embeddings = parseEmbeddingBatchResponse(response, preparedTexts.size());
+	if (embeddings.size() != preparedTexts.size()) {
+		QString preview = QString::fromUtf8(response).simplified();
+		if (preview.size() > 240)
+			preview = preview.left(240) + QStringLiteral("...");
+		markFailure(preview.isEmpty() ? QStringLiteral("llama_server_invalid_batch_embedding_response")
+					: QStringLiteral("llama_server_invalid_batch_embedding_response:%1").arg(preview));
+		return {};
+	}
+	markSuccess();
+	return embeddings;
 }
 
 QString LlamaServerEmbeddingProvider::preparedText(const QString &text) const

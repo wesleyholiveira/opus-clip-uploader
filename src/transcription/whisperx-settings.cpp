@@ -66,7 +66,8 @@ QString normalizeWhisperXDevice(QString value)
 QString normalizeWhisperXComputeType(QString value)
 {
 	value = value.trimmed().toLower();
-	if (value == QStringLiteral("float16") || value == QStringLiteral("float32") || value == QStringLiteral("int8"))
+	if (value == QStringLiteral("float16") || value == QStringLiteral("float32") || value == QStringLiteral("int8") ||
+	    value == QStringLiteral("int8_float16"))
 		return value;
 	return QStringLiteral("float16");
 }

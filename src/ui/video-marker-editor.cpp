@@ -23,6 +23,7 @@ extern "C" {
 #include <QScreen>
 #include <QHBoxLayout>
 #include <QKeySequence>
+#include <QAbstractItemView>
 #include <QAbstractSpinBox>
 #include <QComboBox>
 #include <QLineEdit>
@@ -598,11 +599,11 @@ void VideoMarkerEditor::setReviewActionVisible(bool visible)
 
 void VideoMarkerEditor::setupShortcuts()
 {
-	auto addShortcut = [this](const QKeySequence &sequence, auto slot) {
+	auto addShortcut = [this](const QKeySequence &sequence, auto slot, Qt::ShortcutContext context = Qt::WindowShortcut) {
 		auto *shortcut = new QShortcut(sequence, this);
-		shortcut->setContext(Qt::WindowShortcut);
-		connect(shortcut, &QShortcut::activated, this, [this, slot]() {
-			if (!shouldHandleShortcut())
+		shortcut->setContext(context);
+		connect(shortcut, &QShortcut::activated, this, [this, sequence, slot]() {
+			if (!shouldHandleShortcut(sequence))
 				return;
 
 			(this->*slot)();
@@ -615,13 +616,13 @@ void VideoMarkerEditor::setupShortcuts()
 	addShortcut(QKeySequence(Qt::Key_Period), &VideoMarkerEditor::seekForwardFrame);
 	addShortcut(QKeySequence(Qt::Key_Comma), &VideoMarkerEditor::seekBackwardFrame);
 	addShortcut(QKeySequence(Qt::Key_M), &VideoMarkerEditor::addMarkerAtCurrentPosition);
-	addShortcut(QKeySequence(Qt::Key_Delete), &VideoMarkerEditor::deleteSelectedMarkerOrRange);
-	addShortcut(QKeySequence(Qt::Key_Backspace), &VideoMarkerEditor::deleteSelectedMarkerOrRange);
+	addShortcut(QKeySequence(Qt::Key_Delete), &VideoMarkerEditor::deleteSelectedMarkerOrRange, Qt::WidgetWithChildrenShortcut);
+	addShortcut(QKeySequence(Qt::Key_Backspace), &VideoMarkerEditor::deleteSelectedMarkerOrRange, Qt::WidgetWithChildrenShortcut);
 	addShortcut(QKeySequence(Qt::Key_F), &VideoMarkerEditor::toggleFullScreen);
 	addShortcut(QKeySequence(Qt::Key_Escape), &VideoMarkerEditor::exitFullScreen);
 }
 
-bool VideoMarkerEditor::shouldHandleShortcut() const
+bool VideoMarkerEditor::shouldHandleShortcut(const QKeySequence &sequence) const
 {
 	const QWidget *focus = QApplication::focusWidget();
 	if (!focus)
@@ -637,9 +638,25 @@ bool VideoMarkerEditor::shouldHandleShortcut() const
 		return false;
 	}
 
+	bool focusInsideItemView = false;
+	for (const QWidget *widget = focus; widget; widget = widget->parentWidget()) {
+		if (qobject_cast<const QAbstractItemView *>(widget)) {
+			focusInsideItemView = true;
+			break;
+		}
+	}
+
+	if (focusInsideItemView) {
+		/*
+		 * The review marker table owns Delete/Backspace and row editing. Still allow
+		 * fullscreen shortcuts from the table, because the user expects F/Escape to
+		 * work regardless of which review widget currently has focus.
+		 */
+		return sequence == QKeySequence(Qt::Key_F) || sequence == QKeySequence(Qt::Key_Escape);
+	}
+
 	return isVisible();
 }
-
 bool VideoMarkerEditor::eventFilter(QObject *watched, QEvent *event)
 {
 	if ((watched == videoContainer || watched == videoWidget || watched == editorSurface) &&

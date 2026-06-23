@@ -18,6 +18,7 @@ extern "C" {
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QElapsedTimer>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QSaveFile>
@@ -41,6 +42,72 @@ void reportProgress(const TranscriptionProgressCallback &progressCallback, int p
 {
 	if (progressCallback)
 		progressCallback(qBound(0, progress, 100), message);
+}
+
+
+constexpr double WhisperXPrimaryMaxAudioDurationSec = 3600.0;
+constexpr qint64 WhisperXPrimaryHardTimeoutMs = 20LL * 60LL * 1000LL;
+
+void appendLimitedTail(QByteArray &tail, const QByteArray &chunk, qsizetype limit = 32768)
+{
+	if (chunk.isEmpty())
+		return;
+	tail.append(chunk);
+	if (tail.size() > limit)
+		tail.remove(0, tail.size() - limit);
+}
+
+void handleWhisperXWorkerLine(const QByteArray &lineBytes, const TranscriptionProgressCallback &progressCallback)
+{
+	const QByteArray line = lineBytes.trimmed();
+	if (line.isEmpty())
+		return;
+
+	QJsonParseError error;
+	const QJsonDocument document = QJsonDocument::fromJson(line, &error);
+	if (error.error == QJsonParseError::NoError && document.isObject()) {
+		const QJsonObject object = document.object();
+		const QString type = object.value(QStringLiteral("type")).toString();
+		if (type == QStringLiteral("progress")) {
+			const int progress = object.value(QStringLiteral("progress")).toInt();
+			const QString message = object.value(QStringLiteral("message")).toString();
+			reportProgress(progressCallback, progress, message);
+			blog(LOG_INFO, "[clip-cropper] WhisperX worker progress. progress=%d message=%s", progress,
+			     message.toUtf8().constData());
+			return;
+		}
+		if (type == QStringLiteral("metric")) {
+			const QString name = object.value(QStringLiteral("name")).toString();
+			const double value = object.value(QStringLiteral("value")).toDouble();
+			blog(LOG_INFO, "[clip-cropper] WhisperX worker metric. %s=%.0f", name.toUtf8().constData(), value);
+			return;
+		}
+	}
+
+	const QString text = QString::fromUtf8(line);
+	if (text.startsWith(QStringLiteral("metric ")) || text.contains(QStringLiteral("WhisperX")) ||
+	    text.contains(QStringLiteral("Transcribing audio")) || text.contains(QStringLiteral("Loading")) ||
+	    text.contains(QStringLiteral("Aligning")) || text.contains(QStringLiteral("duration"))) {
+		blog(LOG_INFO, "[clip-cropper] WhisperX worker: %s", text.toUtf8().constData());
+	}
+}
+
+void drainWhisperXWorkerOutput(QProcess &process, QByteArray &tail, QByteArray &lineBuffer,
+	const TranscriptionProgressCallback &progressCallback)
+{
+	const QByteArray chunk = process.readAll();
+	appendLimitedTail(tail, chunk);
+	lineBuffer.append(chunk);
+	while (true) {
+		const qsizetype newline = lineBuffer.indexOf('\n');
+		if (newline < 0)
+			break;
+		const QByteArray line = lineBuffer.left(newline);
+		lineBuffer.remove(0, newline + 1);
+		handleWhisperXWorkerLine(line, progressCallback);
+	}
+	if (lineBuffer.size() > 8192)
+		lineBuffer.remove(0, lineBuffer.size() - 8192);
 }
 
 QString obsModuleFilePath(const QString &relativePath)
@@ -307,6 +374,7 @@ RecordingTranscript WhisperXAlignmentService::transcribeVideo(const QString &vid
 		QStringLiteral("--model"), settings.model,
 		QStringLiteral("--compute-type"), settings.computeType,
 		QStringLiteral("--batch-size"), QString::number(settings.batchSize),
+		QStringLiteral("--max-duration-sec"), QString::number(WhisperXPrimaryMaxAudioDurationSec, 'f', 0),
 	};
 	if (!ffmpegPath.trimmed().isEmpty())
 		args << QStringLiteral("--ffmpeg-path") << ffmpegPath;
@@ -321,11 +389,12 @@ RecordingTranscript WhisperXAlignmentService::transcribeVideo(const QString &vid
 	process.setProcessEnvironment(env);
 
 	blog(LOG_INFO,
-	     "[clip-cropper] Starting WhisperX primary transcription. python=%s worker=%s model=%s device=%s compute=%s language=%s ffmpeg=%s video=%s",
+	     "[clip-cropper] Starting WhisperX primary transcription. python=%s worker=%s model=%s device=%s compute=%s batch=%d maxDurationSec=%.0f hardTimeoutSec=%lld language=%s ffmpeg=%s video=%s",
 	     settings.pythonPath.toUtf8().constData(), settings.workerPath.toUtf8().constData(),
 	     settings.model.toUtf8().constData(), settings.device.toUtf8().constData(),
-	     settings.computeType.toUtf8().constData(), language.toUtf8().constData(), ffmpegPath.toUtf8().constData(),
-	     videoPath.toUtf8().constData());
+	     settings.computeType.toUtf8().constData(), settings.batchSize, WhisperXPrimaryMaxAudioDurationSec,
+	     static_cast<long long>(WhisperXPrimaryHardTimeoutMs / 1000), language.toUtf8().constData(),
+	     ffmpegPath.toUtf8().constData(), videoPath.toUtf8().constData());
 
 	process.start();
 	if (!process.waitForStarted(5000)) {
@@ -336,13 +405,23 @@ RecordingTranscript WhisperXAlignmentService::transcribeVideo(const QString &vid
 	}
 
 	QByteArray outputTail;
+	QByteArray lineBuffer;
+	QElapsedTimer elapsed;
+	elapsed.start();
 	int tick = 8;
 	while (!process.waitForFinished(500)) {
-		outputTail.append(process.readAll());
-		if (outputTail.size() > 32768)
-			outputTail.remove(0, outputTail.size() - 32768);
+		drainWhisperXWorkerOutput(process, outputTail, lineBuffer, progressCallback);
 		if (transcriptionCanceled(cancelCallback)) {
 			blog(LOG_INFO, "[clip-cropper] WhisperX primary transcription canceled. Killing worker process.");
+			process.kill();
+			process.waitForFinished(3000);
+			QFile::remove(outputPath);
+			return {};
+		}
+		if (elapsed.elapsed() > WhisperXPrimaryHardTimeoutMs) {
+			blog(LOG_WARNING,
+			     "[clip-cropper] WhisperX primary transcription exceeded hard timeout. Falling back after worker is killed. elapsedSec=%lld",
+			     static_cast<long long>(elapsed.elapsed() / 1000));
 			process.kill();
 			process.waitForFinished(3000);
 			QFile::remove(outputPath);
@@ -351,9 +430,9 @@ RecordingTranscript WhisperXAlignmentService::transcribeVideo(const QString &vid
 		tick = std::min(tick + 1, 97);
 		reportProgress(progressCallback, tick, QString::fromUtf8(obs_module_text("Status.WhisperXTranscribing")));
 	}
-	outputTail.append(process.readAll());
-	if (outputTail.size() > 32768)
-		outputTail.remove(0, outputTail.size() - 32768);
+	drainWhisperXWorkerOutput(process, outputTail, lineBuffer, progressCallback);
+	if (!lineBuffer.trimmed().isEmpty())
+		handleWhisperXWorkerLine(lineBuffer, progressCallback);
 
 	if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
 		blog(LOG_ERROR, "[clip-cropper] WhisperX primary transcription failed. exitCode=%d output=%s",

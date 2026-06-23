@@ -68,8 +68,6 @@ private:
 			      double noiseScore, double metaNoiseScore, const SemanticCoarseRetrievalContext &context) const;
 	ClipDuration paddedRegion(const ClipDuration &window, const TranscriptIndex &index,
 				       const SemanticCoarseRetrievalOptions &options) const;
-	bool overlapsOrTooClose(const ClipDuration &left, const ClipDuration &right,
-				     double minSpacingSec) const;
 };
 
 } // namespace Curation::Scoring

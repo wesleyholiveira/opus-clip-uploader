@@ -15,6 +15,7 @@ class QTimer;
 class QToolButton;
 class QVBoxLayout;
 class QVideoWidget;
+class QKeySequence;
 class TimelineWidget;
 class PlaybackIconButton;
 
@@ -92,7 +93,7 @@ private:
 	QVector<double> clipMarkersSec;
 
 	void setupShortcuts();
-	bool shouldHandleShortcut() const;
+	bool shouldHandleShortcut(const QKeySequence &sequence) const;
 	void addClipDuration(double startSec, double endSec);
 	void updateTimelinePosition(qint64 positionMs);
 	void updateTimelineDuration(qint64 newDurationMs);

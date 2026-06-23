@@ -10,6 +10,7 @@
 #include "curation/scoring/semantic-reranker.hpp"
 
 #include <QString>
+#include <QStringList>
 
 #include <functional>
 
@@ -40,6 +41,8 @@ struct ClipScoringPipelineOptions {
 	CandidateQualityGateOptions qualityGate;
 	ClipRankerOptions ranking;
 	ClipScoringPipelineBudget budget;
+	QString videoPath;
+	QStringList contentIds;
 	const SemanticEmbeddingProvider *embeddingProvider = nullptr;
 	const SemanticReranker *reranker = nullptr;
 	ClipScoringPipelineProgressCallback progressCallback = {};
@@ -57,46 +60,9 @@ private:
 	ClipRankerOptions preSemanticRankingOptionsFromOptions(const ClipScoringPipelineOptions &options) const;
 	CandidateQualityGateOptions qualityGateOptionsFromOptions(const ClipScoringPipelineOptions &options,
 										 bool rerankerWasAvailable) const;
-	QVector<ClipCandidate> candidatesFromSemanticCoarseRegions(const TranscriptIndex &index,
-							 const ClipScoringPipelineOptions &options,
-							 const QVector<SemanticCoarseRegion> &regions) const;
-	QVector<ClipCandidate> fallbackCandidatesFromLocalHeuristics(const TranscriptIndex &index,
-							 const ClipScoringPipelineOptions &options) const;
-	QVector<ClipCandidate> expandCandidateBeam(const TranscriptIndex &index,
-					       const ClipScoringPipelineOptions &options,
-					       QVector<ClipCandidate> candidates) const;
-	QVector<ClipCandidate> expandCandidateVariants(const TranscriptIndex &index,
-						   const ClipScoringPipelineOptions &options,
-						   const ClipCandidate &candidate) const;
-	QVector<ClipCandidate> refineCandidatesToSemanticTopicSpans(const TranscriptIndex &index,
-							 const ClipScoringPipelineOptions &options,
-							 QVector<ClipCandidate> candidates) const;
 	QVector<ClipCandidate> semanticScoreCandidates(const TranscriptIndex &index,
 						 const ClipScoringPipelineOptions &options,
 						 QVector<ClipCandidate> candidates) const;
-	ClipCandidate refineCandidateToSemanticTopicSpan(const TranscriptIndex &index,
-						       const ClipScoringPipelineOptions &options,
-						       const ClipCandidate &candidate) const;
-	ClipCandidate buildCandidateForRange(const TranscriptIndex &index, const ClipScoringPipelineOptions &options,
-					     const ClipDuration &range, const SemanticCoarseRegion &region) const;
-	ClipCandidate buildCandidateVariantFromSeed(const TranscriptIndex &index,
-						      const ClipScoringPipelineOptions &options,
-						      const ClipCandidate &seed,
-						      const ClipDuration &range,
-						      const QString &variantEvidence) const;
-	int semanticCandidateBudgetFromOptions(const ClipScoringPipelineOptions &options) const;
-	ClipCandidate scoreStructurally(const TranscriptIndex &index, const ClipCandidate &candidate) const;
-	ClipCandidate buildCandidateForSegmentWindow(const TranscriptIndex &index,
-						       const ClipScoringPipelineOptions &options, int firstIndex, int lastIndex,
-						       const SemanticCoarseRegion &region) const;
-	bool isStructurallyViable(const ClipCandidate &candidate, const ClipScoringPipelineOptions &options) const;
-	double durationScore(double durationSec) const;
-	double boundaryScore(const TranscriptIndex &index, const ClipCandidate &candidate) const;
-	QVector<ClipCandidate> enforceSemanticAvailability(QVector<ClipCandidate> candidates,
-						     const ClipScoringPipelineOptions &options) const;
-	QString buildSummary(const QVector<ClipCandidate> &candidates) const;
-	QString rejectionSummary(const QVector<ClipCandidate> &candidates) const;
-	QString noCandidateSummary(const QString &reason, const QVector<ClipCandidate> &candidates) const;
 };
 
 } // namespace Curation::Scoring

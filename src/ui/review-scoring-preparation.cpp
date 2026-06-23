@@ -5,6 +5,7 @@
 
 #include "curation/curation-preset.hpp"
 #include "curation/curation-preset-profile.hpp"
+#include "curation/feedback/curation-feedback-store.hpp"
 #include "curation/scoring/clip-scoring-pipeline.hpp"
 #include "curation/scoring/llama-server-embedding-provider.hpp"
 #include "curation/scoring/llama-server-reranker-provider.hpp"
@@ -22,6 +23,9 @@ extern "C" {
 
 #include <QByteArray>
 #include <QCoreApplication>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QJsonValue>
 #include <QPointer>
 #include <QThread>
 #include <QTimer>
@@ -37,22 +41,22 @@ using namespace Curation::Scoring;
 namespace {
 
 constexpr int kMaxPrototypeTexts = 16;
-constexpr int kMaxCandidatesBeforeEmbedding = 24;
+constexpr int kMaxCandidatesBeforeEmbedding = 64;
 constexpr int kMaxCandidateTextChars = 4000;
 constexpr int kMaxRerankerTextChars = 3200;
 constexpr double DEFAULT_MIN_DURATION_SEC = 8.0;
 constexpr double DEFAULT_MAX_DURATION_SEC = 180.0;
 
 struct ReviewSuggestionBudget {
-	int maxReviewMarkers = 3;
+	int maxReviewMarkers = 12;
 	int maxCandidatesBeforeEmbedding = kMaxCandidatesBeforeEmbedding;
-	int maxRawCandidates = 160;
-	int maxCoarseWindowsToEmbed = 48;
-	int maxCoarseRegions = 8;
-	double coarseWindowSec = 45.0;
-	double coarseStrideSec = 30.0;
-	double coarseRegionPaddingSec = 24.0;
-	double minSpacingSec = 90.0;
+	int maxRawCandidates = 240;
+	int maxCoarseWindowsToEmbed = 72;
+	int maxCoarseRegions = 16;
+	double coarseWindowSec = 60.0;
+	double coarseStrideSec = 36.0;
+	double coarseRegionPaddingSec = 36.0;
+	double minSpacingSec = 60.0;
 	double preSemanticMinSpacingSec = 0.0;
 };
 
@@ -161,74 +165,84 @@ ReviewSuggestionBudget reviewSuggestionBudgetForDuration(double durationSec)
 	const double minutes = durationSec / 60.0;
 	ReviewSuggestionBudget budget;
 
+	// Review suggestions are not the final upload decision. They should provide enough
+	// visible markers for the user to accept, adjust or reject, so feedback calibration
+	// has real examples. Keep the expensive semantic/reranker beam bounded, but avoid
+	// the old 6+ minute spacing that made long Q&A lives produce only a handful of
+	// reviewable markers.
 	if (minutes <= 3.0) {
-		budget.maxReviewMarkers = 1;
-		budget.maxCandidatesBeforeEmbedding = 8;
-		budget.maxRawCandidates = 48;
-		budget.maxCoarseWindowsToEmbed = 12;
-		budget.maxCoarseRegions = 3;
+		budget.maxReviewMarkers = 4;
+		budget.maxCandidatesBeforeEmbedding = 16;
+		budget.maxRawCandidates = 80;
+		budget.maxCoarseWindowsToEmbed = 16;
+		budget.maxCoarseRegions = 6;
 		budget.coarseWindowSec = 24.0;
 		budget.coarseStrideSec = 12.0;
 		budget.coarseRegionPaddingSec = 12.0;
+		budget.minSpacingSec = 25.0;
 	} else if (minutes <= 10.0) {
-		budget.maxReviewMarkers = 2;
-		budget.maxCandidatesBeforeEmbedding = 12;
-		budget.maxRawCandidates = 72;
-		budget.maxCoarseWindowsToEmbed = 24;
-		budget.maxCoarseRegions = 5;
+		budget.maxReviewMarkers = 8;
+		budget.maxCandidatesBeforeEmbedding = 32;
+		budget.maxRawCandidates = 140;
+		budget.maxCoarseWindowsToEmbed = 32;
+		budget.maxCoarseRegions = 10;
 		budget.coarseWindowSec = 30.0;
 		budget.coarseStrideSec = 18.0;
 		budget.coarseRegionPaddingSec = 18.0;
+		budget.minSpacingSec = 35.0;
 	} else if (minutes <= 30.0) {
-		budget.maxReviewMarkers = 3;
-		budget.maxCandidatesBeforeEmbedding = 18;
-		budget.maxRawCandidates = 120;
-		budget.maxCoarseWindowsToEmbed = 40;
-		budget.maxCoarseRegions = 8;
-		budget.coarseWindowSec = 40.0;
-		budget.coarseStrideSec = 24.0;
-		budget.coarseRegionPaddingSec = 22.0;
-	} else if (minutes <= 60.0) {
-		budget.maxReviewMarkers = 5;
-		budget.maxCandidatesBeforeEmbedding = kMaxCandidatesBeforeEmbedding;
-		budget.maxRawCandidates = 180;
-		budget.maxCoarseWindowsToEmbed = 64;
-		budget.maxCoarseRegions = 12;
-		budget.coarseWindowSec = 70.0;
-		budget.coarseStrideSec = 40.0;
-		budget.coarseRegionPaddingSec = 70.0;
-	} else if (minutes <= 120.0) {
-		budget.maxReviewMarkers = 8;
-		budget.maxCandidatesBeforeEmbedding = kMaxCandidatesBeforeEmbedding;
-		budget.maxRawCandidates = 240;
-		budget.maxCoarseWindowsToEmbed = 88;
+		budget.maxReviewMarkers = 16;
+		budget.maxCandidatesBeforeEmbedding = 48;
+		budget.maxRawCandidates = 220;
+		budget.maxCoarseWindowsToEmbed = 56;
 		budget.maxCoarseRegions = 18;
-		budget.coarseWindowSec = 90.0;
-		budget.coarseStrideSec = 55.0;
-		budget.coarseRegionPaddingSec = 90.0;
-	} else if (minutes <= 180.0) {
-		budget.maxReviewMarkers = 8;
-		budget.maxCandidatesBeforeEmbedding = kMaxCandidatesBeforeEmbedding;
-		budget.maxRawCandidates = 280;
-		budget.maxCoarseWindowsToEmbed = 112;
-		budget.maxCoarseRegions = 24;
-		budget.coarseWindowSec = 100.0;
-		budget.coarseStrideSec = 65.0;
-		budget.coarseRegionPaddingSec = 90.0;
-	} else {
-		budget.maxReviewMarkers = 12;
-		budget.maxCandidatesBeforeEmbedding = kMaxCandidatesBeforeEmbedding;
+		budget.coarseWindowSec = 42.0;
+		budget.coarseStrideSec = 26.0;
+		budget.coarseRegionPaddingSec = 24.0;
+		budget.minSpacingSec = 45.0;
+	} else if (minutes <= 60.0) {
+		budget.maxReviewMarkers = 24;
+		budget.maxCandidatesBeforeEmbedding = 64;
 		budget.maxRawCandidates = 320;
-		budget.maxCoarseWindowsToEmbed = 132;
-		budget.maxCoarseRegions = 30;
-		budget.coarseWindowSec = 110.0;
-		budget.coarseStrideSec = 75.0;
+		budget.maxCoarseWindowsToEmbed = 80;
+		budget.maxCoarseRegions = 28;
+		budget.coarseWindowSec = 64.0;
+		budget.coarseStrideSec = 38.0;
+		budget.coarseRegionPaddingSec = 52.0;
+		budget.minSpacingSec = 55.0;
+	} else if (minutes <= 120.0) {
+		budget.maxReviewMarkers = 48;
+		budget.maxCandidatesBeforeEmbedding = 112;
+		budget.maxRawCandidates = 640;
+		budget.maxCoarseWindowsToEmbed = 128;
+		budget.maxCoarseRegions = 56;
+		budget.coarseWindowSec = 72.0;
+		budget.coarseStrideSec = 42.0;
+		budget.coarseRegionPaddingSec = 72.0;
+		budget.minSpacingSec = 35.0;
+	} else if (minutes <= 180.0) {
+		budget.maxReviewMarkers = 60;
+		budget.maxCandidatesBeforeEmbedding = 128;
+		budget.maxRawCandidates = 780;
+		budget.maxCoarseWindowsToEmbed = 160;
+		budget.maxCoarseRegions = 72;
+		budget.coarseWindowSec = 78.0;
+		budget.coarseStrideSec = 42.0;
+		budget.coarseRegionPaddingSec = 84.0;
+		budget.minSpacingSec = 30.0;
+	} else {
+		budget.maxReviewMarkers = 72;
+		budget.maxCandidatesBeforeEmbedding = 144;
+		budget.maxRawCandidates = 920;
+		budget.maxCoarseWindowsToEmbed = 192;
+		budget.maxCoarseRegions = 88;
+		budget.coarseWindowSec = 84.0;
+		budget.coarseStrideSec = 48.0;
 		budget.coarseRegionPaddingSec = 90.0;
+		budget.minSpacingSec = 30.0;
 	}
 
-	const double markerCount = static_cast<double>(std::max(1, budget.maxReviewMarkers));
-	budget.minSpacingSec = std::clamp(durationSec / (markerCount * 2.4), 20.0, 420.0);
-	budget.preSemanticMinSpacingSec = std::clamp(budget.minSpacingSec * 0.35, 0.0, 120.0);
+	budget.preSemanticMinSpacingSec = 0.0;
 	return budget;
 }
 
@@ -354,7 +368,7 @@ void configureCoarseRetrievalOptions(ClipScoringPipelineOptions &options, const 
 	options.coarseRetrieval.maxRegions = budget.maxCoarseRegions;
 	options.coarseRetrieval.maxPrototypeTexts = kMaxPrototypeTexts;
 	options.coarseRetrieval.maxWindowTextChars = kMaxCandidateTextChars;
-	options.coarseRetrieval.minRegionSpacingSec = std::clamp(budget.minSpacingSec * 0.45, 15.0, 180.0);
+	options.coarseRetrieval.minRegionSpacingSec = std::clamp(budget.minSpacingSec * 0.35, 12.0, 90.0);
 }
 
 void configureSemanticOptions(ClipScoringPipelineOptions &options)
@@ -442,7 +456,6 @@ QString semanticTargetFromReviewSettings(const CurationSettings &settings)
 		if (!trimmed.isEmpty() && !focusTerms.contains(trimmed, Qt::CaseInsensitive))
 			focusTerms.append(trimmed);
 	}
-
 
 	const QString prompt = settings.aiPrompt.simplified();
 	if (!prompt.isEmpty() && focusTerms.isEmpty())
@@ -540,6 +553,86 @@ CurationSettings settingsFromScoring(const ClipScoringResult &scoring)
 	return settings;
 }
 
+static QJsonObject scoresToJson(const ClipCandidateScores &scores)
+{
+	QJsonObject object;
+	object.insert(QStringLiteral("duration"), scores.duration);
+	object.insert(QStringLiteral("boundary"), scores.boundary);
+	object.insert(QStringLiteral("hook"), scores.hook);
+	object.insert(QStringLiteral("emotional"), scores.emotional);
+	object.insert(QStringLiteral("advice"), scores.advice);
+	object.insert(QStringLiteral("viewerResponse"), scores.viewerResponse);
+	object.insert(QStringLiteral("semanticTarget"), scores.semanticTarget);
+	object.insert(QStringLiteral("semanticViewerMessage"), scores.semanticViewerMessage);
+	object.insert(QStringLiteral("semanticDirectAnswer"), scores.semanticDirectAnswer);
+	object.insert(QStringLiteral("semanticTopicShift"), scores.semanticTopicShift);
+	object.insert(QStringLiteral("semanticClipValue"), scores.semanticClipValue);
+	object.insert(QStringLiteral("semanticOpeningHook"), scores.semanticOpeningHook);
+	object.insert(QStringLiteral("semanticOpeningMetaNoise"), scores.semanticOpeningMetaNoise);
+	object.insert(QStringLiteral("semanticEndingResolution"), scores.semanticEndingResolution);
+	object.insert(QStringLiteral("semanticEndingMetaNoise"), scores.semanticEndingMetaNoise);
+	object.insert(QStringLiteral("semanticEndingTopicShift"), scores.semanticEndingTopicShift);
+	object.insert(QStringLiteral("topicContinuity"), scores.topicContinuity);
+	object.insert(QStringLiteral("arcOpening"), scores.arcOpening);
+	object.insert(QStringLiteral("arcDevelopment"), scores.arcDevelopment);
+	object.insert(QStringLiteral("arcConclusion"), scores.arcConclusion);
+	object.insert(QStringLiteral("arcBoundaryCleanliness"), scores.arcBoundaryCleanliness);
+	object.insert(QStringLiteral("arcTailRisk"), scores.arcTailRisk);
+	object.insert(QStringLiteral("arcCompleteness"), scores.arcCompleteness);
+	object.insert(QStringLiteral("final"), scores.final);
+	return object;
+}
+
+static QString evidenceValue(const QStringList &evidence, const QString &prefix)
+{
+	for (const QString &item : evidence) {
+		if (item.startsWith(prefix))
+			return item.mid(prefix.size()).trimmed();
+	}
+	return {};
+}
+
+static QJsonArray stringListToJson(const QStringList &items, int maxItems = 48)
+{
+	QJsonArray array;
+	const int limit = std::min(static_cast<int>(items.size()), maxItems);
+	for (int i = 0; i < limit; ++i)
+		array.append(items.at(i).left(300));
+	return array;
+}
+
+QJsonArray diagnosticsFromScoring(const ClipScoringResult &scoring)
+{
+	QJsonArray array;
+	for (int i = 0; i < scoring.candidates.size(); ++i) {
+		const ClipCandidate &candidate = scoring.candidates.at(i);
+		if (candidate.range.endSec <= candidate.range.startSec)
+			continue;
+		QJsonObject object;
+		object.insert(QStringLiteral("index"), i);
+		object.insert(QStringLiteral("start_sec"), candidate.range.startSec);
+		object.insert(QStringLiteral("end_sec"), candidate.range.endSec);
+		object.insert(QStringLiteral("duration_sec"), candidate.range.endSec - candidate.range.startSec);
+		object.insert(QStringLiteral("source"), candidate.source);
+		object.insert(QStringLiteral("final_score"), candidate.scores.final);
+		object.insert(QStringLiteral("selected_rank"), candidate.selectedRank);
+		object.insert(QStringLiteral("rejected"), candidate.rejectedByQualityGate || candidate.rejectedAsNoise);
+		object.insert(QStringLiteral("rejection_reason"), candidate.rejectionReason);
+		object.insert(QStringLiteral("scores"), scoresToJson(candidate.scores));
+		QJsonObject labels;
+		labels.insert(QStringLiteral("boundary_state"),
+			      evidenceValue(candidate.evidence, QStringLiteral("boundary_state:")));
+		labels.insert(QStringLiteral("boundary_reasons"),
+			      evidenceValue(candidate.evidence, QStringLiteral("boundary_reasons:")));
+		labels.insert(QStringLiteral("arc_dp"),
+			      evidenceValue(candidate.evidence, QStringLiteral("arc_dp_boundary_refined")));
+		object.insert(QStringLiteral("classifier_labels"), labels);
+		object.insert(QStringLiteral("evidence"), stringListToJson(candidate.evidence));
+		array.append(object);
+	}
+	return array;
+}
+
 } // namespace
 
 void prepare_review_scoring_async(QWidget *parent, const QString &videoPath, const CurationSettings &baseSettings,
@@ -598,6 +691,18 @@ void prepare_review_scoring_async(QWidget *parent, const QString &videoPath, con
 				finishOnUiThread(parent, std::move(finishedCallback), std::move(result));
 				return;
 			}
+
+			const QString transcriptContentId =
+				Curation::Feedback::CurationFeedbackStore::transcriptContentId(transcript);
+			const QString fileContentId =
+				Curation::Feedback::CurationFeedbackStore::fileContentId(videoPath);
+			result.contentId = transcriptContentId.isEmpty() ? fileContentId : transcriptContentId;
+			if (!fileContentId.isEmpty() && fileContentId != result.contentId)
+				result.contentIdAliases.append(fileContentId);
+			blog(LOG_INFO,
+			     "Prepared content identity for semantic review. video=%s contentId=%s aliases=%d",
+			     videoPath.toUtf8().constData(), result.contentId.toUtf8().constData(),
+			     static_cast<int>(result.contentIdAliases.size()));
 
 			reportProgress(parent, progressCallback, obsText("Status.SuggestClipsPreparingScoring"), 30);
 
@@ -684,6 +789,8 @@ void prepare_review_scoring_async(QWidget *parent, const QString &videoPath, con
 				ClipScoringPipelineOptions options =
 					optionsForTranscript(transcript, transcriptSettings, embeddingProvider.get(),
 							     semanticReranker.get());
+				options.videoPath = videoPath;
+				options.contentIds = QStringList{result.contentId} + result.contentIdAliases;
 				options.cancellationCallback = [cancelRequested]() {
 					return cancelRequested && cancelRequested->load();
 				};
@@ -699,7 +806,7 @@ void prepare_review_scoring_async(QWidget *parent, const QString &videoPath, con
 				     "maxCandidatesBeforeEmbedding=%d maxReviewMarkers=%d minSpacingSec=%.2f "
 				     "clipBounds=%.2f-%.2f boundaryMin=%.2f coarseWindows=%d coarseRegions=%d "
 				     "coarseWindowSec=%.2f coarseStrideSec=%.2f maxPrototypeTexts=%d mmr=%s "
-				     "mmrRelevanceWeight=%.2f semanticLanguage=%s presetProfile=%s reliableTarget=%s semanticTarget=%s",
+				     "mmrRelevanceWeight=%.2f semanticLanguage=%s presetProfile=%s reliableTarget=%s reviewBudgetProfile=v4_many_markers semanticTarget=%s",
 				     videoPath.toUtf8().constData(), transcriptDurationSec(transcript),
 				     options.generation.maxRawCandidates, options.budget.maxCandidatesBeforeEmbedding,
 				     options.ranking.maxCandidates, options.ranking.minSpacingSec,
@@ -710,9 +817,12 @@ void prepare_review_scoring_async(QWidget *parent, const QString &videoPath, con
 				     options.semantic.maxPrototypeTexts, options.ranking.useMmr ? "true" : "false",
 				     options.ranking.mmrRelevanceWeight,
 				     normalizedSemanticLanguageCode(options.scoring.transcriptionLanguage,
-					     options.scoring.sourceLanguage).toUtf8().constData(),
+								    options.scoring.sourceLanguage)
+					     .toUtf8()
+					     .constData(),
 				     options.scoring.presetId.toUtf8().constData(),
-				     options.scoring.reliableMainTarget ? "true" : "false", semanticTargetLog.constData());
+				     options.scoring.reliableMainTarget ? "true" : "false",
+				     semanticTargetLog.constData());
 
 				reportProgressToContext(safeContext, progressCallback,
 							QObject::tr("Running semantic marker analysis..."), 48);
@@ -732,6 +842,7 @@ void prepare_review_scoring_async(QWidget *parent, const QString &videoPath, con
 				result.settings = settingsFromScoring(scoring);
 				result.applied = !result.settings.clipDurations.isEmpty();
 				result.summary = scoring.summary;
+				result.candidateDiagnostics = diagnosticsFromScoring(scoring);
 				reportProgressToContext(safeContext, progressCallback,
 							result.applied ? QObject::tr("Applying suggested markers...")
 								       : QObject::tr("No viable clip markers found."),

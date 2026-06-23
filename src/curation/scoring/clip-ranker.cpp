@@ -1,5 +1,7 @@
 #include "curation/scoring/clip-ranker.hpp"
 
+#include "curation/scoring/interval-dp-selector.hpp"
+
 #include <QRegularExpression>
 #include <QSet>
 #include <QStringList>
@@ -27,12 +29,36 @@ static bool candidateComesBefore(const ClipCandidate &left, const ClipCandidate 
 	return left.range.startSec < right.range.startSec;
 }
 
+static bool hasEvidence(const ClipCandidate &candidate, const QString &needle)
+{
+	for (const QString &evidence : candidate.evidence) {
+		if (evidence == needle || evidence.contains(needle))
+			return true;
+	}
+	return false;
+}
+
+static bool isPositiveGroundTruthCandidate(const ClipCandidate &candidate)
+{
+	return candidate.source.contains(QStringLiteral("feedback_positive_exact_seed")) ||
+		hasEvidence(candidate, QStringLiteral("feedback_positive_exact_seed_preserved")) ||
+		hasEvidence(candidate, QStringLiteral("complete_viewer_arc_gate_passed_by_user_feedback"));
+}
+
+static bool isLearnedFeedbackAcceptedCandidate(const ClipCandidate &candidate)
+{
+	return hasEvidence(candidate, QStringLiteral("complete_viewer_arc_gate_passed_by_feedback_trained_ranker")) ||
+		hasEvidence(candidate, QStringLiteral("feedback_trained_ranker_strong_accept")) ||
+		hasEvidence(candidate, QStringLiteral("feedback_trained_ranker_accept"));
+}
+
 static void removeUnusableCandidates(QVector<ClipCandidate> &candidates, const ClipRankerOptions &options)
 {
 	candidates.erase(std::remove_if(candidates.begin(), candidates.end(), [&options](const ClipCandidate &candidate) {
 		return candidate.range.endSec <= candidate.range.startSec || candidate.text.trimmed().isEmpty() ||
 		       candidate.rejectedAsNoise || candidate.rejectedByQualityGate ||
-		       candidate.scores.final < options.minFinalScore;
+		       (!isPositiveGroundTruthCandidate(candidate) && !isLearnedFeedbackAcceptedCandidate(candidate) &&
+		        candidate.scores.final < options.minFinalScore);
 	}), candidates.end());
 }
 
@@ -67,22 +93,39 @@ QVector<ClipCandidate> ClipRanker::rank(QVector<ClipCandidate> candidates, const
 QVector<ClipCandidate> ClipRanker::rankGreedy(QVector<ClipCandidate> candidates,
 	const ClipRankerOptions &options) const
 {
-	QVector<ClipCandidate> selected;
-	selected.reserve(std::min(static_cast<long long>(options.maxCandidates), static_cast<long long>(candidates.size())));
-	for (const ClipCandidate &candidate : candidates) {
-		if (candidateConflictsWithSelected(candidate, selected, options))
-			continue;
+	QVector<WeightedIntervalCandidate> intervals;
+	intervals.reserve(candidates.size());
+	for (int i = 0; i < static_cast<int>(candidates.size()); ++i) {
+		WeightedIntervalCandidate interval;
+		interval.sourceIndex = i;
+		interval.range = candidates.at(i).range;
+		interval.score = relevanceScore(candidates.at(i));
+		intervals.append(interval);
+	}
 
-		ClipCandidate selectedCandidate = candidate;
+	IntervalDpSelector selector;
+	WeightedIntervalSelectionOptions selectionOptions;
+	selectionOptions.maxItems = options.maxCandidates;
+	selectionOptions.overlapToleranceSec = options.overlapToleranceSec;
+	selectionOptions.minSpacingSec = options.minSpacingSec;
+	const QVector<int> selectedIndexes = selector.select(intervals, selectionOptions);
+
+	QVector<ClipCandidate> selected;
+	selected.reserve(std::min(static_cast<long long>(options.maxCandidates), static_cast<long long>(selectedIndexes.size())));
+	for (const int index : selectedIndexes) {
+		if (index < 0 || index >= static_cast<int>(candidates.size()))
+			continue;
+		ClipCandidate selectedCandidate = candidates.at(index);
 		selectedCandidate.selectedRank = static_cast<int>(selected.size()) + 1;
+		selectedCandidate.evidence.append(QStringLiteral("optimal_interval_dp_selected"));
 		selectedCandidate.evidence.append(QStringLiteral("selected_rank:%1").arg(selectedCandidate.selectedRank));
 		selectedCandidate.evidence.removeDuplicates();
 		selected.append(selectedCandidate);
-		if (static_cast<int>(selected.size()) >= options.maxCandidates)
-			break;
 	}
 
-
+	std::sort(selected.begin(), selected.end(), [](const ClipCandidate &left, const ClipCandidate &right) {
+		return left.range.startSec < right.range.startSec;
+	});
 	return selected;
 }
 
@@ -171,6 +214,8 @@ bool ClipRanker::candidateConflictsWithSelected(const ClipCandidate &candidate,
 
 double ClipRanker::relevanceScore(const ClipCandidate &candidate) const
 {
+	if (isPositiveGroundTruthCandidate(candidate))
+		return std::max(0.92, boundedScore(candidate.scores.final));
 	return boundedScore(candidate.scores.final);
 }
 

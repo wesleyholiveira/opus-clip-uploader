@@ -24,6 +24,87 @@ static bool hasEvidence(const ClipCandidate &candidate, const QString &value)
 	return candidate.evidence.contains(value);
 }
 
+static bool hasEvidenceContaining(const ClipCandidate &candidate, const QString &fragment)
+{
+	for (const QString &evidence : candidate.evidence) {
+		if (evidence.contains(fragment))
+			return true;
+	}
+	return false;
+}
+
+static bool isFeedbackPositiveGroundTruth(const ClipCandidate &candidate)
+{
+	return candidate.source == QStringLiteral("feedback_positive_exact_seed") ||
+		candidate.source == QStringLiteral("feedback_positive_exact_seed_beam") ||
+		hasEvidence(candidate, QStringLiteral("feedback_positive_exact_seed_preserved")) ||
+		hasEvidence(candidate, QStringLiteral("complete_viewer_arc_gate_passed_by_user_feedback"));
+}
+
+static bool isFeedbackNegativeBlocked(const ClipCandidate &candidate)
+{
+	return candidate.rejectionReason == QStringLiteral("feedback_negative_range_contamination") ||
+		candidate.rejectionReason == QStringLiteral("feedback_rejected_range") ||
+		hasEvidence(candidate, QStringLiteral("feedback_negative_suppressed")) ||
+		hasEvidence(candidate, QStringLiteral("feedback_consistency_rejected")) ||
+		hasEvidenceContaining(candidate, QStringLiteral("feedback_negative_range_contamination"));
+}
+
+static QString foldedQualityText(QString value)
+{
+	QString normalized = value.toLower().normalized(QString::NormalizationForm_D);
+	QString folded;
+	folded.reserve(normalized.size());
+	for (const QChar ch : normalized) {
+		const QChar::Category category = ch.category();
+		if (category == QChar::Mark_NonSpacing || category == QChar::Mark_SpacingCombining ||
+		    category == QChar::Mark_Enclosing)
+			continue;
+		folded.append(ch);
+	}
+	return folded.simplified();
+}
+
+static bool qualityTextContainsAny(const QString &text, std::initializer_list<const char *> needles)
+{
+	for (const char *needle : needles) {
+		if (needle && text.contains(QString::fromUtf8(needle)))
+			return true;
+	}
+	return false;
+}
+
+static bool hasHardLearnedContextBlocker(const ClipCandidate &candidate)
+{
+	const bool exactUserSeed = isFeedbackPositiveGroundTruth(candidate);
+	if (exactUserSeed)
+		return false;
+	const QString text = foldedQualityText(candidate.text + QStringLiteral(" ") + candidate.anchorText);
+	const bool personalOrQuestion = text.contains(QLatin1Char('?')) || qualityTextContainsAny(text, {
+		"o que", "como", "devo", "deveria", "me ajuda", "conselho", "sou ", "eu tenho",
+		"nao consigo", "não consigo", "me sinto", "minha ", "meu "
+	});
+	const bool musicOrSetupText = (text.contains(QStringLiteral("musica")) || text.contains(QStringLiteral("música")) ||
+		qualityTextContainsAny(text, {"acertando o negocio", "acertando o negócio", "configurando", "setup", "abrindo live", "testando"})) &&
+		!personalOrQuestion;
+	const bool metaEvidence = hasEvidenceContaining(candidate, QStringLiteral("meta_prelude")) ||
+		hasEvidenceContaining(candidate, QStringLiteral("drift+block")) ||
+		hasEvidenceContaining(candidate, QStringLiteral("Música")) ||
+		hasEvidenceContaining(candidate, QStringLiteral("Musica"));
+	const bool explicitOrigin = candidate.startsNearViewerCue ||
+		hasEvidenceContaining(candidate, QStringLiteral("targeted_viewer_message_cue")) ||
+		hasEvidenceContaining(candidate, QStringLiteral("exchange_arc_viewer_message_cue_confirmed")) ||
+		hasEvidenceContaining(candidate, QStringLiteral("flags=origin")) ||
+		candidate.scores.semanticViewerMessage >= 0.66;
+	const bool noOriginOrAnswer = hasEvidence(candidate, QStringLiteral("exchange_arc_window_dfs_no_valid_origin_or_answer")) ||
+		hasEvidence(candidate, QStringLiteral("exchange_arc_no_valid_subspan")) ||
+		hasEvidenceContaining(candidate, QStringLiteral("missing_viewer_message_cue"));
+	const bool noArcShape = candidate.scores.arcCompleteness <= 0.02 && candidate.scores.arcOpening <= 0.04 &&
+		candidate.scores.arcDevelopment <= 0.04 && candidate.scores.arcConclusion <= 0.04;
+	return (candidate.range.startSec <= 75.0 && (musicOrSetupText || metaEvidence)) ||
+		((noOriginOrAnswer || noArcShape) && !explicitOrigin && (metaEvidence || musicOrSetupText));
+}
+
 static bool evidenceContainsFragment(const ClipCandidate &candidate, const QString &fragment)
 {
 	for (const QString &evidence : candidate.evidence) {
@@ -355,13 +436,13 @@ ClipCandidate CandidateQualityGate::apply(const ClipCandidate &candidate,
 			gated.evidence.append(QStringLiteral("quality_gate_exchange_arc_validated"));
 		if (hasValidContextualStateMachine(gated))
 			gated.evidence.append(QStringLiteral("quality_gate_contextual_state_machine_validated"));
-		if (hasReliableConclusionFallback(gated, options))
-			gated.evidence.append(QStringLiteral("quality_gate_conclusion_semantic_fallback"));
+		if (hasReliableConclusionSupport(gated, options))
+			gated.evidence.append(QStringLiteral("quality_gate_conclusion_semantic_support"));
 		if (hasWeakConclusionFailsafe(gated, options))
 			gated.evidence.append(QStringLiteral("quality_gate_weak_conclusion_failsafe"));
-		if (hasSemanticBackedArcFallback(gated, options))
-			gated.evidence.append(QStringLiteral("quality_gate_semantic_backed_arc_fallback"));
-		if (hasCuriosityArcFallback(gated, options))
+		if (hasSemanticBackedArcSupport(gated, options))
+			gated.evidence.append(QStringLiteral("quality_gate_semantic_backed_arc_support"));
+		if (hasCuriosityArcSupport(gated, options))
 			gated.evidence.append(QStringLiteral("quality_gate_curiosity_arc_validated"));
 		if (isEmpathyBacked(gated, options))
 			gated.evidence.append(QStringLiteral("quality_gate_empathy_backed"));
@@ -380,6 +461,12 @@ QString CandidateQualityGate::rejectionReason(const ClipCandidate &candidate,
 		return QStringLiteral("not_enough_text");
 	if (candidate.rejectedAsNoise || candidate.scores.noise >= options.maxNoiseScore)
 		return QStringLiteral("noise_or_stream_management");
+
+	if (hasHardLearnedContextBlocker(candidate))
+		return QStringLiteral("hard_context_blocker");
+
+	if (isFeedbackPositiveGroundTruth(candidate) && !isFeedbackNegativeBlocked(candidate))
+		return {};
 
 	if (options.requireRerankerWhenAvailable && options.rejectInvalidRerankerWhenRequired &&
 	    candidate.rerankerAttempted && !candidate.rerankerAvailable) {
@@ -500,8 +587,8 @@ QString CandidateQualityGate::rejectionReason(const ClipCandidate &candidate,
 			return QStringLiteral("overextended_tail_after_resolution");
 
 		if (candidate.scores.arcCompleteness > 0.0) {
-			const bool semanticBackedArc = hasSemanticBackedArcFallback(candidate, options);
-			const bool curiosityArc = hasCuriosityArcFallback(candidate, options);
+			const bool semanticBackedArc = hasSemanticBackedArcSupport(candidate, options);
+			const bool curiosityArc = hasCuriosityArcSupport(candidate, options);
 			if (candidate.scores.arcTailRisk > options.maxArcTailRiskForViewerPreset)
 				return QStringLiteral("exchange_arc_tail_risk");
 			if (candidate.scores.arcOpening < options.minArcOpeningForViewerPreset && !semanticBackedArc && !curiosityArc)
@@ -509,7 +596,7 @@ QString CandidateQualityGate::rejectionReason(const ClipCandidate &candidate,
 			if (candidate.scores.arcDevelopment < options.minArcDevelopmentForViewerPreset && !semanticBackedArc && !curiosityArc)
 				return QStringLiteral("exchange_arc_weak_development");
 			if (candidate.scores.arcConclusion < options.minArcConclusionForViewerPreset &&
-			    !hasReliableConclusionFallback(candidate, options) && !hasWeakConclusionFailsafe(candidate, options) &&
+			    !hasReliableConclusionSupport(candidate, options) && !hasWeakConclusionFailsafe(candidate, options) &&
 			    !semanticBackedArc && !curiosityArc)
 				return QStringLiteral("exchange_arc_weak_conclusion");
 			if (candidate.scores.arcBoundaryCleanliness < options.minArcBoundaryCleanlinessForViewerPreset && !semanticBackedArc && !curiosityArc)
@@ -521,8 +608,8 @@ QString CandidateQualityGate::rejectionReason(const ClipCandidate &candidate,
 			return QStringLiteral("exchange_arc_not_available");
 		}
 
-		const bool semanticBackedArc = hasSemanticBackedArcFallback(candidate, options);
-		const bool curiosityArc = hasCuriosityArcFallback(candidate, options);
+		const bool semanticBackedArc = hasSemanticBackedArcSupport(candidate, options);
+		const bool curiosityArc = hasCuriosityArcSupport(candidate, options);
 		if (isSocialMetaDominated(candidate, options) && !curiosityArc)
 			return QStringLiteral("social_meta_dominated");
 		if (!cleanOpening && !semanticBackedArc && !curiosityArc)
@@ -714,7 +801,7 @@ bool CandidateQualityGate::isFailsafeRecoverable(const ClipCandidate &candidate,
 	if (weakConclusionFailsafe)
 		return true;
 
-	return hasCleanOpening(candidate, options) && (hasCleanEnding(candidate, options) || hasReliableConclusionFallback(candidate, options));
+	return hasCleanOpening(candidate, options) && (hasCleanEnding(candidate, options) || hasReliableConclusionSupport(candidate, options));
 }
 
 bool CandidateQualityGate::isLastResortRecoverable(const ClipCandidate &candidate,
@@ -835,7 +922,7 @@ bool CandidateQualityGate::isCollapsedRoleRecoverable(const ClipCandidate &candi
 		candidate.scores.final >= 0.50;
 }
 
-bool CandidateQualityGate::hasReliableConclusionFallback(const ClipCandidate &candidate,
+bool CandidateQualityGate::hasReliableConclusionSupport(const ClipCandidate &candidate,
 	const CandidateQualityGateOptions &options) const
 {
 	if (!candidate.semanticScoringAvailable)
@@ -897,7 +984,7 @@ bool CandidateQualityGate::hasWeakConclusionFailsafe(const ClipCandidate &candid
 		noUnresolvedPause && notAllDefectsHigh;
 }
 
-bool CandidateQualityGate::hasSemanticBackedArcFallback(const ClipCandidate &candidate,
+bool CandidateQualityGate::hasSemanticBackedArcSupport(const ClipCandidate &candidate,
 	const CandidateQualityGateOptions &options) const
 {
 	if (options.presetId != QStringLiteral("viewer_message_response") || !candidate.semanticScoringAvailable)
@@ -954,7 +1041,7 @@ bool CandidateQualityGate::hasSemanticBackedArcFallback(const ClipCandidate &can
 }
 
 
-bool CandidateQualityGate::hasCuriosityArcFallback(const ClipCandidate &candidate,
+bool CandidateQualityGate::hasCuriosityArcSupport(const ClipCandidate &candidate,
 	const CandidateQualityGateOptions &options) const
 {
 	// Viewer-message mode is the default live/chat preset, but not every valuable
@@ -1011,12 +1098,12 @@ bool CandidateQualityGate::hasUsefulExchangeArc(const ClipCandidate &candidate,
 	if (hasInvalidContextualStateMachine(candidate) || hasImplicitContextualOpening(candidate) ||
 	    hasResolutionPlateauWithoutOpening(candidate))
 		return false;
-	if (hasSemanticBackedArcFallback(candidate, options) || hasCuriosityArcFallback(candidate, options))
+	if (hasSemanticBackedArcSupport(candidate, options) || hasCuriosityArcSupport(candidate, options))
 		return true;
 	return candidate.scores.arcOpening >= options.minArcOpeningForViewerPreset &&
 		candidate.scores.arcDevelopment >= options.minArcDevelopmentForViewerPreset &&
 		(candidate.scores.arcConclusion >= options.minArcConclusionForViewerPreset ||
-		 hasReliableConclusionFallback(candidate, options)) &&
+		 hasReliableConclusionSupport(candidate, options)) &&
 		candidate.scores.arcBoundaryCleanliness >= options.minArcBoundaryCleanlinessForViewerPreset &&
 		candidate.scores.arcCompleteness >= options.minArcCompletenessForViewerPreset &&
 		candidate.scores.arcTailRisk <= options.maxArcTailRiskForViewerPreset;
@@ -1054,7 +1141,7 @@ bool CandidateQualityGate::hasCleanEnding(const ClipCandidate &candidate,
 		hasEvidence(candidate, QStringLiteral("exchange_arc_first_resolution_tail_trimmed"));
 	if (candidate.scores.arcCompleteness > 0.0)
 		return (candidate.scores.arcConclusion >= options.minArcConclusionForViewerPreset ||
-			hasReliableConclusionFallback(candidate, options) || endingWasTrimmed) &&
+			hasReliableConclusionSupport(candidate, options) || endingWasTrimmed) &&
 			candidate.scores.arcBoundaryCleanliness >= options.minArcBoundaryCleanlinessForViewerPreset &&
 			candidate.scores.arcTailRisk <= options.maxArcTailRiskForViewerPreset;
 	if (!candidate.semanticScoringAvailable)
@@ -1124,7 +1211,7 @@ bool CandidateQualityGate::hasDegenerateArcShape(const ClipCandidate &candidate,
 	// WhisperX word-aligned segments are shorter/more fragmented. A flat
 	// "all resolution" sequence is not a complete viewer-message arc: it usually
 	// means the clip starts inside the answer and lost the viewer setup/context.
-	// Allow semantic/reranker fallback only for development-only cases.
+	// Allow semantic/reranker support only for development-only cases.
 	const bool semanticBackedCollapsedRoles = semanticSupportsCollapsedArcRoles(candidate);
 	const bool resolutionOnly = hasResolutionOnlyArcRoles(candidate);
 	const bool repairedResolutionOnly = resolutionOnly && hasStrongRepairedResolutionOnlyArc(candidate);

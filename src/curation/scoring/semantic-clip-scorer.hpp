@@ -30,6 +30,9 @@ public:
 	ClipCandidate score(const TranscriptIndex &index, const ClipCandidate &candidate,
 			    const SemanticScoringContext &context, const SemanticClipScoringOptions &options,
 			    const SemanticEmbeddingProvider *provider) const;
+	QVector<ClipCandidate> scoreBatch(const TranscriptIndex &index, const QVector<ClipCandidate> &candidates,
+					    const SemanticScoringContext &context, const SemanticClipScoringOptions &options,
+					    const SemanticEmbeddingProvider *provider) const;
 
 private:
 	double maxPrototypeSimilarity(const SemanticEmbeddingProvider &provider, const SemanticEmbedding &textEmbedding,

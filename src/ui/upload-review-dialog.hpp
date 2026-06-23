@@ -1,9 +1,15 @@
 #pragma once
 
 #include "models/curation-settings.hpp"
+#include "models/transcript.hpp"
+#include "curation/feedback/curation-feedback-store.hpp"
 
 #include <QDialog>
+#include <QMap>
 #include <QString>
+
+class QObject;
+class QEvent;
 
 class QCheckBox;
 class QComboBox;
@@ -13,6 +19,7 @@ class QProgressDialog;
 class QPlainTextEdit;
 class QPushButton;
 class QTableWidget;
+class QTableWidgetItem;
 class VideoMarkerEditor;
 class QWidget;
 struct ReviewScoringPreparationResult;
@@ -27,6 +34,9 @@ public:
 			   bool showAdvancedSettingsOnly, QWidget *parent = nullptr);
 
 	CurationSettings curationSettings() const;
+
+protected:
+	bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
 	QString videoPath;
@@ -46,11 +56,26 @@ private:
 	QComboBox *transcriptionLanguageInput = nullptr;
 	QCheckBox *skipCurateInput = nullptr;
 	QPushButton *suggestClipRangesButton = nullptr;
+	QPushButton *finishReviewButton = nullptr;
 	QProgressDialog *semanticSuggestionProgressDialog = nullptr;
 	bool semanticSuggestionInProgress = false;
 	int semanticSuggestionProgressGeneration = 0;
+	Curation::Feedback::FeedbackSuggestionSnapshot lastSemanticSuggestion;
+	QMap<int, QString> explicitReviewDecisions;
+	bool boundaryFeedbackSaved = false;
+	bool updatingClipTable = false;
+	bool feedbackTranscriptLoaded = false;
+	RecordingTranscript feedbackTranscript;
 
 	void refreshClipTable(const QVector<ClipDuration> &ranges);
+	void handleClipTableItemChanged(QTableWidgetItem *item);
+	void applyEditedRangeTime(int row, int column, const QString &rawValue);
+	void setClipRangeAtIndex(int row, double startSec, double endSec, bool seekToChangedBoundary);
+	void nudgeSelectedRangeOrBoundary(double deltaSec);
+	void removeSelectedRangeWithoutFeedbackDecision();
+	void exportReviewMarkers();
+	void importReviewMarkers();
+	void applyImportedReviewRanges(const QVector<ClipDuration> &ranges, const QString &sourcePath);
 	void applyCurationSettings(const CurationSettings &settings);
 	void updateCreditEstimate(const QVector<ClipDuration> &ranges);
 	void requestSemanticClipSuggestions();
@@ -58,6 +83,16 @@ private:
 	void updateSemanticSuggestionProgress(const ReviewScoringProgressUpdate &progress);
 	void closeSemanticSuggestionProgressDialog();
 	void applySemanticClipSuggestionResult(const ReviewScoringPreparationResult &result);
+	void captureInitialSemanticSuggestion();
+	void ensureReviewFeedbackSnapshot(const QString &source);
+	void saveBoundaryFeedback(const QString &eventName);
+	void finishReviewFeedback();
+	void setClipReviewDecision(int row, const QString &decision);
+	int suggestedIndexForRange(const ClipDuration &range) const;
+	int ensureFeedbackSuggestionForRange(const ClipDuration &range, const QString &source);
+	bool loadFeedbackTranscriptIfAvailable();
+	QJsonObject reevaluateFeedbackRange(const ClipDuration &range, int suggestedIndex, const QString &source);
+	void upsertFeedbackDiagnostic(int suggestedIndex, const QJsonObject &diagnostic);
 	void loadSavedCurationOptions();
 	void saveCurationOptions() const;
 	QString currentReviewSettingsKey() const;

@@ -1,7 +1,10 @@
 #include "curation/scoring/transcript-index.hpp"
 
+#include "curation/scoring/word-boundary-snapper.hpp"
+
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 
 namespace Curation::Scoring {
 
@@ -13,9 +16,15 @@ TranscriptIndex::TranscriptIndex(const RecordingTranscript &transcript_) : trans
 	}
 
 	nonEmptySegmentIndices.reserve(transcript.segments.size());
+	nonEmptyStartSecs.reserve(transcript.segments.size());
+	nonEmptyEndSecs.reserve(transcript.segments.size());
 	for (int i = 0; i < static_cast<int>(transcript.segments.size()); ++i) {
-		if (!transcript.segments.at(i).text.trimmed().isEmpty())
-			nonEmptySegmentIndices.append(i);
+		const TranscriptSegment &segment = transcript.segments.at(i);
+		if (segment.text.trimmed().isEmpty())
+			continue;
+		nonEmptySegmentIndices.append(i);
+		nonEmptyStartSecs.append(segment.startSec);
+		nonEmptyEndSecs.append(segment.endSec);
 	}
 }
 
@@ -53,8 +62,16 @@ bool TranscriptIndex::segmentOverlapsRange(const TranscriptSegment &segment, con
 
 int TranscriptIndex::firstSegmentIndexOverlapping(const ClipDuration &range) const
 {
-	for (const int index : nonEmptySegmentIndices) {
+	if (nonEmptySegmentIndices.isEmpty() || range.endSec <= range.startSec)
+		return -1;
+
+	const auto it = std::upper_bound(nonEmptyEndSecs.cbegin(), nonEmptyEndSecs.cend(), range.startSec);
+	for (int pos = static_cast<int>(std::distance(nonEmptyEndSecs.cbegin(), it));
+	     pos < static_cast<int>(nonEmptySegmentIndices.size()); ++pos) {
+		const int index = nonEmptySegmentIndices.at(pos);
 		const TranscriptSegment &segment = transcript.segments.at(index);
+		if (segment.startSec >= range.endSec)
+			break;
 		if (segmentOverlapsRange(segment, range))
 			return index;
 	}
@@ -63,9 +80,15 @@ int TranscriptIndex::firstSegmentIndexOverlapping(const ClipDuration &range) con
 
 int TranscriptIndex::lastSegmentIndexOverlapping(const ClipDuration &range) const
 {
-	for (int i = static_cast<int>(nonEmptySegmentIndices.size()) - 1; i >= 0; --i) {
-		const int index = nonEmptySegmentIndices.at(i);
+	if (nonEmptySegmentIndices.isEmpty() || range.endSec <= range.startSec)
+		return -1;
+
+	const auto it = std::lower_bound(nonEmptyStartSecs.cbegin(), nonEmptyStartSecs.cend(), range.endSec);
+	for (int pos = static_cast<int>(std::distance(nonEmptyStartSecs.cbegin(), it)) - 1; pos >= 0; --pos) {
+		const int index = nonEmptySegmentIndices.at(pos);
 		const TranscriptSegment &segment = transcript.segments.at(index);
+		if (segment.endSec <= range.startSec)
+			break;
 		if (segmentOverlapsRange(segment, range))
 			return index;
 	}
@@ -75,8 +98,16 @@ int TranscriptIndex::lastSegmentIndexOverlapping(const ClipDuration &range) cons
 QVector<int> TranscriptIndex::segmentIndicesForRange(const ClipDuration &range) const
 {
 	QVector<int> result;
-	for (const int index : nonEmptySegmentIndices) {
+	if (nonEmptySegmentIndices.isEmpty() || range.endSec <= range.startSec)
+		return result;
+
+	const auto it = std::upper_bound(nonEmptyEndSecs.cbegin(), nonEmptyEndSecs.cend(), range.startSec);
+	const int firstPos = static_cast<int>(std::distance(nonEmptyEndSecs.cbegin(), it));
+	for (int pos = firstPos; pos < static_cast<int>(nonEmptySegmentIndices.size()); ++pos) {
+		const int index = nonEmptySegmentIndices.at(pos);
 		const TranscriptSegment &segment = transcript.segments.at(index);
+		if (segment.startSec >= range.endSec)
+			break;
 		if (segmentOverlapsRange(segment, range))
 			result.append(index);
 	}
@@ -155,10 +186,10 @@ bool TranscriptIndex::hasWordTimings() const
 QVector<WordTiming> TranscriptIndex::wordsForRange(const ClipDuration &range) const
 {
 	QVector<WordTiming> words;
-	for (const TranscriptSegment &segment : transcript.segments) {
+	const QVector<int> indices = segmentIndicesForRange(range);
+	for (const int index : indices) {
+		const TranscriptSegment &segment = transcript.segments.at(index);
 		if (segment.words.isEmpty())
-			continue;
-		if (!segmentOverlapsRange(segment, range))
 			continue;
 		for (const WordTiming &word : segment.words) {
 			if (std::min(word.endSec, range.endSec) > std::max(word.startSec, range.startSec))
@@ -179,41 +210,8 @@ ClipDuration TranscriptIndex::snapRangeToWordBoundaries(const ClipDuration &rang
 	const ClipDuration search{std::max(bounds.startSec, range.startSec - 0.55),
 		std::min(bounds.endSec, range.endSec + 0.80)};
 	const QVector<WordTiming> words = wordsForRange(search);
-	if (words.isEmpty())
-		return clampRange(range, bounds);
-
-	auto isBoundarySafe = [](const WordTiming &word) {
-		const double durationSec = word.endSec - word.startSec;
-		return !word.word.trimmed().isEmpty() && durationSec >= 0.015 && durationSec <= 1.85;
-	};
-
-	double start = range.startSec;
-	for (const WordTiming &word : words) {
-		if (word.endSec < range.startSec - 0.55)
-			continue;
-		if (word.startSec > range.startSec + 1.25)
-			break;
-		if (isBoundarySafe(word)) {
-			start = word.startSec;
-			break;
-		}
-	}
-
-	double end = range.endSec;
-	for (int i = static_cast<int>(words.size()) - 1; i >= 0; --i) {
-		const WordTiming &word = words.at(i);
-		if (word.startSec > range.endSec + 0.80)
-			continue;
-		if (word.endSec < range.endSec - 1.75)
-			break;
-		if (isBoundarySafe(word)) {
-			end = word.endSec;
-			break;
-		}
-	}
-
-	ClipDuration snapped{start, end};
-	return clampRange(snapped, bounds);
+	WordBoundarySnapper snapper;
+	return snapper.snap(range, bounds, words);
 }
 
 

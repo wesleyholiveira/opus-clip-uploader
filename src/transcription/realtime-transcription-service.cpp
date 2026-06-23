@@ -1015,10 +1015,16 @@ RecordingTranscript RealtimeTranscriptionService::transcribeVideoFile(const QStr
 			return transcript;
 		}
 
-		blog(LOG_ERROR,
-		     "[clip-cropper] WhisperX primary transcription produced no transcript. video=%s",
+		if (transcriptionCanceled(cancelCallback)) {
+			blog(LOG_INFO,
+			     "[clip-cropper] WhisperX primary transcription was canceled. Not falling back to whisper.cpp. video=%s",
+			     videoPath.toUtf8().constData());
+			return {};
+		}
+
+		blog(LOG_WARNING,
+		     "[clip-cropper] WhisperX primary transcription produced no transcript. Falling back to whisper.cpp transcription. video=%s",
 		     videoPath.toUtf8().constData());
-		return {};
 	}
 
 	RecordingTranscript cached = TranscriptStore::loadForVideoPath(videoPath, normalizedLanguage);

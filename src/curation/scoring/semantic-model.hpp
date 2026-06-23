@@ -18,6 +18,7 @@ public:
 	virtual bool isAvailable() const = 0;
 	virtual QString modelId() const = 0;
 	virtual SemanticEmbedding embed(const QString &text) const = 0;
+	virtual QVector<SemanticEmbedding> embedBatch(const QVector<QString> &texts) const;
 };
 
 class DisabledSemanticEmbeddingProvider final : public SemanticEmbeddingProvider {

@@ -198,30 +198,61 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 	src/models/curation-settings.hpp
 	src/models/transcript.hpp
 
-	src/curation/domain/curation-plan.hpp
-	src/curation/range/curation-range-strategy.cpp
-	src/curation/range/curation-range-strategy.hpp
-	src/curation/range/viewer-message-focus-range.cpp
-	src/curation/range/viewer-message-focus-range.hpp
-	src/curation/range/viewer-message-range-strategy.cpp
-	src/curation/range/viewer-message-range-strategy.hpp
+	src/curation/feedback/curation-feedback-store.cpp
+	src/curation/feedback/curation-feedback-store.hpp
+	src/curation/feedback/boundary-calibration.cpp
+	src/curation/feedback/boundary-calibration.hpp
 	src/curation/scoring/text-analysis.cpp
 	src/curation/scoring/text-analysis.hpp
 	src/curation/scoring/transcript-index.cpp
 	src/curation/scoring/transcript-index.hpp
+	src/curation/scoring/word-boundary-snapper.cpp
+	src/curation/scoring/word-boundary-snapper.hpp
 	src/curation/scoring/clip-candidate.hpp
+	src/curation/scoring/interval-dp-selector.cpp
+	src/curation/scoring/interval-dp-selector.hpp
+	src/curation/scoring/candidate-arc-planner.cpp
+	src/curation/scoring/candidate-arc-planner.hpp
 	src/curation/scoring/candidate-generator.cpp
 	src/curation/scoring/candidate-generator.hpp
 	src/curation/scoring/cheap-clip-scorer.cpp
 	src/curation/scoring/cheap-clip-scorer.hpp
 	src/curation/scoring/clip-ranker.cpp
 	src/curation/scoring/clip-ranker.hpp
+	src/curation/scoring/candidate-builder.cpp
+	src/curation/scoring/candidate-builder.hpp
+	src/curation/scoring/candidate-range-utils.cpp
+	src/curation/scoring/candidate-range-utils.hpp
+	src/curation/scoring/candidate-source-builder.cpp
+	src/curation/scoring/candidate-source-builder.hpp
+	src/curation/scoring/candidate-beam-expander.cpp
+	src/curation/scoring/candidate-beam-expander.hpp
+	src/curation/scoring/boundary-refinement-stage.cpp
+	src/curation/scoring/boundary-refinement-stage.hpp
+	src/curation/scoring/pipeline-progress.cpp
+	src/curation/scoring/pipeline-progress.hpp
+	src/curation/scoring/clip-scoring-pipeline-summary.cpp
+	src/curation/scoring/clip-scoring-pipeline-summary.hpp
+	src/curation/scoring/feedback-similarity-scorer.cpp
+	src/curation/scoring/feedback-similarity-scorer.hpp
+	src/curation/scoring/feedback-trained-ranker.cpp
+	src/curation/scoring/feedback-trained-ranker.hpp
+	src/curation/scoring/feedback-consistency-gate.cpp
+	src/curation/scoring/feedback-consistency-gate.hpp
+	src/curation/scoring/feedback-guided-candidate-generator.cpp
+	src/curation/scoring/feedback-guided-candidate-generator.hpp
+	src/curation/scoring/feedback-guided-candidate-stage.cpp
+	src/curation/scoring/feedback-guided-candidate-stage.hpp
+	src/curation/scoring/feedback-aware-interval-selector.cpp
+	src/curation/scoring/feedback-aware-interval-selector.hpp
+	src/curation/scoring/viewer-arc-gate.cpp
+	src/curation/scoring/viewer-arc-gate.hpp
+	src/curation/scoring/candidate-stage-limiter.cpp
+	src/curation/scoring/candidate-stage-limiter.hpp
 	src/curation/scoring/semantic-model.cpp
 	src/curation/scoring/semantic-model.hpp
 	src/curation/scoring/embedding-cache.cpp
 	src/curation/scoring/embedding-cache.hpp
-	src/curation/scoring/embedding-semantic-reranker.cpp
-	src/curation/scoring/embedding-semantic-reranker.hpp
 	src/curation/scoring/llama-server-embedding-provider.cpp
 	src/curation/scoring/llama-server-embedding-provider.hpp
 	src/curation/scoring/llama-server-reranker-provider.cpp
@@ -238,6 +269,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 	src/curation/scoring/semantic-reranker.hpp
 	src/curation/scoring/candidate-quality-gate.cpp
 	src/curation/scoring/candidate-quality-gate.hpp
+	src/curation/scoring/arc-dp-boundary-refiner.cpp
+	src/curation/scoring/arc-dp-boundary-refiner.hpp
 	src/curation/scoring/exchange-arc-boundary-refiner.cpp
 	src/curation/scoring/exchange-arc-boundary-refiner.hpp
 	src/curation/scoring/clip-scoring-pipeline.cpp

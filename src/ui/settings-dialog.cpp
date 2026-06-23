@@ -226,6 +226,7 @@ void open_settings_impl(void *private_data)
 
 	QComboBox *whisperXComputeTypeInput = new QComboBox(treeWidget);
 	whisperXComputeTypeInput->addItem(QStringLiteral("float16"), QStringLiteral("float16"));
+	whisperXComputeTypeInput->addItem(QStringLiteral("int8_float16"), QStringLiteral("int8_float16"));
 	whisperXComputeTypeInput->addItem(QStringLiteral("int8"), QStringLiteral("int8"));
 	whisperXComputeTypeInput->addItem(QStringLiteral("float32"), QStringLiteral("float32"));
 	set_combo_current_data(whisperXComputeTypeInput, PluginConfig::getValue(

@@ -1,5 +1,8 @@
 #include "curation/scoring/exchange-arc-boundary-refiner.hpp"
 
+#include "curation/scoring/arc-dp-boundary-refiner.hpp"
+#include "curation/feedback/boundary-calibration.hpp"
+
 #include "curation/scoring/semantic-prototypes.hpp"
 
 #include <QStringList>
@@ -1432,7 +1435,7 @@ static bool canUseSemanticHookAsOpening(const ArcChunk &chunk)
 		chunk.explicitShiftCue});
 	const double conclusion = std::max(chunk.conclusionScore, chunk.resolution);
 
-	// This is not the old implicit opening. It is a controlled fallback for real
+	// This is not the old implicit opening. It is a controlled support path for real
 	// spoken hooks that do not contain lexical question words after Whisper
 	// segmentation. It must be clearly hook/value backed and not look like a
 	// conclusion, meta-chat, or topic transition.
@@ -2739,11 +2742,11 @@ ClipCandidate ExchangeArcBoundaryRefiner::refine(const TranscriptIndex &index, c
 	const double originalDurationSec = candidate.range.endSec - candidate.range.startSec;
 	const bool viewerPreset = options.scoring.presetId == QStringLiteral("viewer_message_response");
 	auto skipped = [&candidate](const QString &reason) {
-		ClipCandidate diagnostic = candidate;
-		diagnostic.evidence.append(QStringLiteral("exchange_arc_role_classifier:skipped"));
-		diagnostic.evidence.append(QStringLiteral("exchange_arc_refiner_skipped:%1").arg(reason));
-		diagnostic.evidence.removeDuplicates();
-		return diagnostic;
+		ClipCandidate candidateWithArcEvidence = candidate;
+		candidateWithArcEvidence.evidence.append(QStringLiteral("exchange_arc_role_classifier:skipped"));
+		candidateWithArcEvidence.evidence.append(QStringLiteral("exchange_arc_refiner_skipped:%1").arg(reason));
+		candidateWithArcEvidence.evidence.removeDuplicates();
+		return candidateWithArcEvidence;
 	};
 	if (!viewerPreset && originalDurationSec <= std::max(options.generation.minDurationSec + 4.0, 20.0))
 		return skipped(QStringLiteral("short_non_viewer_candidate"));
@@ -2831,40 +2834,40 @@ ClipCandidate ExchangeArcBoundaryRefiner::refine(const TranscriptIndex &index, c
 		if (recoveredSubspan.valid) {
 			best = recoveredSubspan.span;
 		} else {
-			ArcSpanScore diagnosticBest;
+			ArcSpanScore bestRejectedArcSpan;
 			for (int first = 0; first < static_cast<int>(chunks.size()); ++first) {
 				for (int last = first; last < static_cast<int>(chunks.size()); ++last) {
 					if (!canUseSpan(chunks, first, last, options))
 						continue;
 					const ArcSpanScore probe = scoreSpan(chunks, first, last, options);
-					if (diagnosticBest.first < 0 || probe.score > diagnosticBest.score)
-						diagnosticBest = probe;
+					if (bestRejectedArcSpan.first < 0 || probe.score > bestRejectedArcSpan.score)
+						bestRejectedArcSpan = probe;
 				}
 			}
-			ClipCandidate diagnostic = candidate;
-			if (diagnosticBest.first >= 0 && diagnosticBest.last >= diagnosticBest.first) {
-				diagnostic.evidence.append(QStringLiteral("exchange_arc_role_classifier:v32_window_dfs"));
-				diagnostic.evidence.append(QStringLiteral("exchange_arc_window_dfs_limits:back12_45s_forward22_82s_split_origin_graph_intra"));
-				diagnostic.evidence.append(QStringLiteral("exchange_arc_role_classifier:v23_context_window_dp"));
-				diagnostic.evidence.append(roleEvidence(chunks, diagnosticBest.first, diagnosticBest.last));
-				diagnostic.evidence.append(roleReasonEvidence(chunks, diagnosticBest.first, diagnosticBest.last));
-				diagnostic.evidence.append(contextualRoleScoreEvidence(chunks, diagnosticBest.first, diagnosticBest.last));
-				diagnostic.evidence.append(windowDfsGraphEvidence(chunks, diagnosticBest.first, diagnosticBest.last));
-				diagnostic.evidence.append(stateMachineEvidence(chunks, diagnosticBest.first, diagnosticBest.last, options));
-				diagnostic.evidence.append(QStringLiteral("exchange_arc_window_dfs_no_valid_origin_or_answer"));
-				diagnostic.evidence.append(QStringLiteral("exchange_arc_no_valid_subspan"));
-				diagnostic.evidence.append(arcEvidence(diagnosticBest));
-				diagnostic.evidence.append(boundaryEvidence(chunks, diagnosticBest.first, diagnosticBest.last));
-				diagnostic.evidence.removeDuplicates();
+			ClipCandidate candidateWithArcEvidence = candidate;
+			if (bestRejectedArcSpan.first >= 0 && bestRejectedArcSpan.last >= bestRejectedArcSpan.first) {
+				candidateWithArcEvidence.evidence.append(QStringLiteral("exchange_arc_role_classifier:v32_window_dfs"));
+				candidateWithArcEvidence.evidence.append(QStringLiteral("exchange_arc_window_dfs_limits:back12_45s_forward22_82s_split_origin_graph_intra"));
+				candidateWithArcEvidence.evidence.append(QStringLiteral("exchange_arc_role_classifier:v23_context_window_dp"));
+				candidateWithArcEvidence.evidence.append(roleEvidence(chunks, bestRejectedArcSpan.first, bestRejectedArcSpan.last));
+				candidateWithArcEvidence.evidence.append(roleReasonEvidence(chunks, bestRejectedArcSpan.first, bestRejectedArcSpan.last));
+				candidateWithArcEvidence.evidence.append(contextualRoleScoreEvidence(chunks, bestRejectedArcSpan.first, bestRejectedArcSpan.last));
+				candidateWithArcEvidence.evidence.append(windowDfsGraphEvidence(chunks, bestRejectedArcSpan.first, bestRejectedArcSpan.last));
+				candidateWithArcEvidence.evidence.append(stateMachineEvidence(chunks, bestRejectedArcSpan.first, bestRejectedArcSpan.last, options));
+				candidateWithArcEvidence.evidence.append(QStringLiteral("exchange_arc_window_dfs_no_valid_origin_or_answer"));
+				candidateWithArcEvidence.evidence.append(QStringLiteral("exchange_arc_no_valid_subspan"));
+				candidateWithArcEvidence.evidence.append(arcEvidence(bestRejectedArcSpan));
+				candidateWithArcEvidence.evidence.append(boundaryEvidence(chunks, bestRejectedArcSpan.first, bestRejectedArcSpan.last));
+				candidateWithArcEvidence.evidence.removeDuplicates();
 			} else {
-				diagnostic.evidence.append(QStringLiteral("exchange_arc_role_classifier:v32_window_dfs"));
-				diagnostic.evidence.append(QStringLiteral("exchange_arc_window_dfs_limits:back12_45s_forward22_82s_split_origin_graph_intra"));
-				diagnostic.evidence.append(QStringLiteral("exchange_arc_role_classifier:v23_context_window_dp"));
-				diagnostic.evidence.append(QStringLiteral("exchange_arc_no_scoreable_span"));
-				diagnostic.evidence.append(QStringLiteral("exchange_arc_state_machine:invalid penalty:0.99 reason:no_scoreable_span"));
-				diagnostic.evidence.removeDuplicates();
+				candidateWithArcEvidence.evidence.append(QStringLiteral("exchange_arc_role_classifier:v32_window_dfs"));
+				candidateWithArcEvidence.evidence.append(QStringLiteral("exchange_arc_window_dfs_limits:back12_45s_forward22_82s_split_origin_graph_intra"));
+				candidateWithArcEvidence.evidence.append(QStringLiteral("exchange_arc_role_classifier:v23_context_window_dp"));
+				candidateWithArcEvidence.evidence.append(QStringLiteral("exchange_arc_no_scoreable_span"));
+				candidateWithArcEvidence.evidence.append(QStringLiteral("exchange_arc_state_machine:invalid penalty:0.99 reason:no_scoreable_span"));
+				candidateWithArcEvidence.evidence.removeDuplicates();
 			}
-			return diagnostic;
+			return candidateWithArcEvidence;
 		}
 	}
 
@@ -3041,17 +3044,17 @@ ClipCandidate ExchangeArcBoundaryRefiner::refine(const TranscriptIndex &index, c
 	}
 	const double refinedDurationSec = refinedRange.endSec - refinedRange.startSec;
 	if (refinedDurationSec < minDurationSec || refinedDurationSec > maxDurationSec + 0.1) {
-		ClipCandidate diagnostic = candidate;
-		diagnostic.evidence.append(QStringLiteral("exchange_arc_role_classifier:v23_context_window_dp"));
-		diagnostic.evidence.append(QStringLiteral("exchange_arc_refiner_skipped:refined_duration_out_of_bounds"));
-		diagnostic.evidence.append(arcEvidence(adjustedScore));
-		diagnostic.evidence.append(roleEvidence(chunks, adjustedFirst, adjustedLast));
-		diagnostic.evidence.append(roleReasonEvidence(chunks, adjustedFirst, adjustedLast));
-		diagnostic.evidence.append(contextualRoleScoreEvidence(chunks, adjustedFirst, adjustedLast));
-		diagnostic.evidence.append(windowDfsGraphEvidence(chunks, adjustedFirst, adjustedLast));
-		diagnostic.evidence.append(stateMachineEvidence(chunks, adjustedFirst, adjustedLast, options));
-		diagnostic.evidence.removeDuplicates();
-		return diagnostic;
+		ClipCandidate candidateWithArcEvidence = candidate;
+		candidateWithArcEvidence.evidence.append(QStringLiteral("exchange_arc_role_classifier:v23_context_window_dp"));
+		candidateWithArcEvidence.evidence.append(QStringLiteral("exchange_arc_refiner_skipped:refined_duration_out_of_bounds"));
+		candidateWithArcEvidence.evidence.append(arcEvidence(adjustedScore));
+		candidateWithArcEvidence.evidence.append(roleEvidence(chunks, adjustedFirst, adjustedLast));
+		candidateWithArcEvidence.evidence.append(roleReasonEvidence(chunks, adjustedFirst, adjustedLast));
+		candidateWithArcEvidence.evidence.append(contextualRoleScoreEvidence(chunks, adjustedFirst, adjustedLast));
+		candidateWithArcEvidence.evidence.append(windowDfsGraphEvidence(chunks, adjustedFirst, adjustedLast));
+		candidateWithArcEvidence.evidence.append(stateMachineEvidence(chunks, adjustedFirst, adjustedLast, options));
+		candidateWithArcEvidence.evidence.removeDuplicates();
+		return candidateWithArcEvidence;
 	}
 
 	ClipCandidate refined = candidate;
@@ -3148,6 +3151,37 @@ ClipCandidate ExchangeArcBoundaryRefiner::refine(const TranscriptIndex &index, c
 	refined.evidence.append(boundaryEvidence(chunks, adjustedFirst, adjustedLast));
 	if (viewerPreset && hasReliableViewerCueNearStart(chunks, adjustedFirst, adjustedLast))
 		refined.evidence.append(QStringLiteral("exchange_arc_viewer_message_cue_confirmed"));
+
+	ArcDpBoundaryRefiner dpRefiner;
+	ArcDpBoundaryRefinerOptions dpOptions;
+	dpOptions.searchRange = options.generation.searchRange;
+	dpOptions.presetId = options.generation.presetId;
+	dpOptions.mainTarget = options.generation.mainTarget;
+	dpOptions.reliableMainTarget = options.generation.reliableMainTarget;
+	dpOptions.minDurationSec = std::max(8.0, options.generation.boundaryMinDurationSec);
+	dpOptions.maxDurationSec = std::max(options.generation.boundaryMinDurationSec, options.generation.maxDurationSec);
+	dpOptions.lookbackSec = viewerPreset ? VIEWER_PRESET_ANALYSIS_LOOKBACK_SEC : 32.0;
+	dpOptions.lookaheadSec = viewerPreset ? VIEWER_PRESET_ANALYSIS_LOOKAHEAD_SEC : 24.0;
+	const Curation::Feedback::BoundaryCalibrationProfile calibration =
+		Curation::Feedback::BoundaryCalibration::profileForPreset(dpOptions.presetId);
+	if (calibration.loaded) {
+		if (calibration.maxQuestionLookbackSec > 0.0)
+			dpOptions.lookbackSec = std::max(dpOptions.lookbackSec, calibration.maxQuestionLookbackSec);
+		if (calibration.lookaheadSec > 0.0)
+			dpOptions.lookaheadSec = std::max(dpOptions.lookaheadSec, calibration.lookaheadSec);
+		dpOptions.contextWeight = calibration.contextWeight;
+		dpOptions.hookWeight = calibration.hookWeight;
+		dpOptions.developmentWeight = calibration.developmentWeight;
+		dpOptions.resolutionWeight = calibration.resolutionWeight;
+		dpOptions.targetWeight = calibration.targetWeight;
+		dpOptions.defectPenalty = calibration.defectPenalty;
+		if (calibration.minArcConfidence >= 0.0)
+			dpOptions.minArcConfidence = calibration.minArcConfidence;
+		refined.evidence.append(QStringLiteral("boundary_calibration_applied preset:%1 lookback:%2 lookahead:%3")
+			.arg(dpOptions.presetId, QString::number(dpOptions.lookbackSec, 'f', 0),
+			     QString::number(dpOptions.lookaheadSec, 'f', 0)));
+	}
+	refined = dpRefiner.refine(index, refined, dpOptions);
 	refined.evidence.removeDuplicates();
 	return refined;
 }

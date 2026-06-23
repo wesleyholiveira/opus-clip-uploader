@@ -14,6 +14,15 @@ static double boundedScore(double value)
 	return std::clamp(value, 0.0, 1.0);
 }
 
+
+static void appendUniquePreparedText(QStringList &texts, const QString &text)
+{
+	const QString value = text.simplified();
+	if (value.isEmpty() || texts.contains(value))
+		return;
+	texts.append(value);
+}
+
 static QString modelEvidence(const SemanticEmbeddingProvider &provider)
 {
 	const QString modelId = provider.modelId().trimmed();
@@ -201,6 +210,51 @@ ClipCandidate SemanticClipScorer::score(const TranscriptIndex &index, const Clip
 	scored.scores.final = combineFinalScore(scored, context);
 	scored.evidence.removeDuplicates();
 	return scored;
+}
+
+QVector<ClipCandidate> SemanticClipScorer::scoreBatch(const TranscriptIndex &index, const QVector<ClipCandidate> &candidates,
+	const SemanticScoringContext &context, const SemanticClipScoringOptions &options,
+	const SemanticEmbeddingProvider *provider) const
+{
+	if (!provider || !provider->isAvailable() || candidates.isEmpty()) {
+		QVector<ClipCandidate> result;
+		result.reserve(static_cast<long long>(candidates.size()));
+		for (const ClipCandidate &candidate : candidates)
+			result.append(score(index, candidate, context, options, provider));
+		return result;
+	}
+
+	QStringList textsToWarm;
+	const QString languageCode = normalizedSemanticLanguageCode(context.transcriptionLanguage, context.sourceLanguage);
+	const SemanticPrototypeSet &prototypes = semanticPrototypesForLanguage(languageCode);
+	const QStringList targetPrototypes = targetPrototypesForPreset(context.presetId, context.mainTarget, languageCode);
+	const SemanticPrototypeBudget prototypeBudget = prototypeBudgetFor(targetPrototypes, prototypes, options.maxPrototypeTexts);
+	for (const QStringList &group : {prototypeBudget.target, prototypeBudget.viewerMessage, prototypeBudget.directAnswer,
+		     prototypeBudget.noise, prototypeBudget.topicShift, prototypeBudget.clipValue, prototypeBudget.empathy,
+		     prototypeBudget.hook, prototypeBudget.resolution, prototypeBudget.metaNoise}) {
+		for (const QString &prototype : group)
+			appendUniquePreparedText(textsToWarm, prototype);
+	}
+
+	for (const ClipCandidate &candidate : candidates) {
+		if (candidate.text.trimmed().size() >= options.minTextChars)
+			appendUniquePreparedText(textsToWarm, candidate.text);
+		appendUniquePreparedText(textsToWarm, openingText(index, candidate));
+		appendUniquePreparedText(textsToWarm, endingText(index, candidate));
+		if (options.enablePairwiseTopicContinuity) {
+			appendUniquePreparedText(textsToWarm, firstHalfText(index, candidate));
+			appendUniquePreparedText(textsToWarm, secondHalfText(index, candidate));
+		}
+	}
+
+	if (!textsToWarm.isEmpty())
+		provider->embedBatch(textsToWarm);
+
+	QVector<ClipCandidate> result;
+	result.reserve(static_cast<long long>(candidates.size()));
+	for (const ClipCandidate &candidate : candidates)
+		result.append(score(index, candidate, context, options, provider));
+	return result;
 }
 
 double SemanticClipScorer::maxPrototypeSimilarity(const SemanticEmbeddingProvider &provider,

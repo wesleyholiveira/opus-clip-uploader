@@ -16,6 +16,7 @@ import json
 import os
 import shutil
 import sys
+from time import perf_counter
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -82,6 +83,39 @@ def emit_progress(progress: int, message: str) -> None:
         ),
         flush=True,
     )
+
+
+
+def emit_metric(name: str, value: float) -> None:
+    print(
+        json.dumps(
+            {"type": "metric", "name": name, "value": value},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+        flush=True,
+    )
+
+
+class Timer:
+    def __init__(self) -> None:
+        self.started = perf_counter()
+        self.last = self.started
+
+    def mark(self, name: str) -> None:
+        now = perf_counter()
+        emit_metric(f"{name}_ms", int((now - self.last) * 1000))
+        self.last = now
+
+    def total(self) -> None:
+        emit_metric("total_ms", int((perf_counter() - self.started) * 1000))
+
+
+def audio_duration_seconds(audio: Any) -> float:
+    try:
+        return float(len(audio)) / 16000.0
+    except Exception:
+        return 0.0
 
 
 def configure_ffmpeg(ffmpeg_path: Optional[str]) -> None:
@@ -259,8 +293,10 @@ def main() -> int:
     parser.add_argument("--compute-type", default="float16")
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--ffmpeg-path")
+    parser.add_argument("--max-duration-sec", type=float, default=0.0)
     args = parser.parse_args()
 
+    timer = Timer()
     configure_ffmpeg(args.ffmpeg_path)
     language = normalize_language(args.language)
     batch_size = max(1, min(int(args.batch_size), 128))
@@ -275,7 +311,19 @@ def main() -> int:
             flush=True,
         )
         print(str(exc), file=sys.stderr, flush=True)
+        timer.total()
         return 4
+
+    timer.mark("load_audio")
+    duration_sec = audio_duration_seconds(audio)
+    emit_metric("audio_duration_sec", duration_sec)
+    if args.mode == "transcribe" and args.max_duration_sec and duration_sec > args.max_duration_sec:
+        print(
+            f"WhisperX primary transcription skipped because audio duration {duration_sec:.1f}s exceeds max_duration_sec={args.max_duration_sec:.1f}s.",
+            flush=True,
+        )
+        timer.total()
+        return 8
 
     if args.mode == "align":
         if not args.segments_jsonl:
@@ -283,10 +331,13 @@ def main() -> int:
             return 2
         emit_progress(91, "Loading transcript segments for WhisperX alignment...")
         segments = load_segments(Path(args.segments_jsonl))
+        timer.mark("load_segments")
+        emit_metric("segments_count", len(segments))
         if not segments:
             print("No valid segments to align", file=sys.stderr)
             return 2
         aligned = align_segments(audio, segments, language, args.device, 92, 94)
+        timer.mark("align")
         schema = "clip-cropper-whisperx-align-v1-jsonl"
         write_progress = 97
     else:
@@ -298,19 +349,27 @@ def main() -> int:
             args.compute_type,
             batch_size,
         )
+        timer.mark("transcribe")
+        emit_metric("segments_count", len(segments))
         if not segments:
             print("WhisperX primary transcription produced no segments", file=sys.stderr)
             return 3
         language = detected_language if detected_language != "auto" else language
         aligned = align_segments(audio, segments, language, args.device, 68, 80)
+        timer.mark("align")
         schema = "clip-cropper-whisperx-primary-v1-jsonl"
         write_progress = 94
 
     aligned_segments = aligned.get("segments") or []
     original_indices = [int(seg.get("segment_index", i)) for i, seg in enumerate(segments)]
+    emit_metric("aligned_segments_count", len(aligned_segments))
+    word_count = sum(len(segment.get("words") or []) for segment in aligned_segments)
+    emit_metric("words_count", word_count)
     write_aligned_jsonl(Path(args.output_jsonl), aligned_segments, original_indices, language, schema, write_progress)
+    timer.mark("write_jsonl")
     emit_progress(98, "WhisperX transcript is ready.")
     print(f"Wrote WhisperX JSONL: {args.output_jsonl}", flush=True)
+    timer.total()
     return 0
 
 

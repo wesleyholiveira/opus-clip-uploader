@@ -31,6 +31,8 @@ public:
 private:
 	QVector<ClipCandidate> cueAnchoredCandidates(const TranscriptIndex &index,
 					       const CandidateGenerationOptions &options) const;
+	QVector<ClipCandidate> arcDpCandidates(const TranscriptIndex &index,
+					       const CandidateGenerationOptions &options) const;
 	QVector<ClipCandidate> slidingWindowCandidates(const TranscriptIndex &index,
 					       const CandidateGenerationOptions &options) const;
 	ClipCandidate buildCandidate(const TranscriptIndex &index, const CandidateGenerationOptions &options,

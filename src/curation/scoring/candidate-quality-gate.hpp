@@ -102,10 +102,10 @@ private:
 	bool isFailsafeRecoverable(const ClipCandidate &candidate, const CandidateQualityGateOptions &options) const;
 	bool isLastResortRecoverable(const ClipCandidate &candidate, const CandidateQualityGateOptions &options) const;
 	bool isCollapsedRoleRecoverable(const ClipCandidate &candidate, const CandidateQualityGateOptions &options) const;
-	bool hasReliableConclusionFallback(const ClipCandidate &candidate, const CandidateQualityGateOptions &options) const;
+	bool hasReliableConclusionSupport(const ClipCandidate &candidate, const CandidateQualityGateOptions &options) const;
 	bool hasWeakConclusionFailsafe(const ClipCandidate &candidate, const CandidateQualityGateOptions &options) const;
-	bool hasSemanticBackedArcFallback(const ClipCandidate &candidate, const CandidateQualityGateOptions &options) const;
-	bool hasCuriosityArcFallback(const ClipCandidate &candidate, const CandidateQualityGateOptions &options) const;
+	bool hasSemanticBackedArcSupport(const ClipCandidate &candidate, const CandidateQualityGateOptions &options) const;
+	bool hasCuriosityArcSupport(const ClipCandidate &candidate, const CandidateQualityGateOptions &options) const;
 	bool hasUsefulExchangeArc(const ClipCandidate &candidate, const CandidateQualityGateOptions &options) const;
 	bool hasCleanOpening(const ClipCandidate &candidate, const CandidateQualityGateOptions &options) const;
 	bool hasCleanEnding(const ClipCandidate &candidate, const CandidateQualityGateOptions &options) const;

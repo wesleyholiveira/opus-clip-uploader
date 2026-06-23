@@ -3,6 +3,8 @@
 #include "models/curation-settings.hpp"
 
 #include <QString>
+#include <QJsonArray>
+#include <QStringList>
 
 #include <functional>
 
@@ -14,6 +16,9 @@ struct ReviewScoringPreparationResult {
 	bool applied = false;
 	bool canceled = false;
 	QString summary;
+	QString contentId;
+	QStringList contentIdAliases;
+	QJsonArray candidateDiagnostics;
 };
 
 struct ReviewScoringProgressUpdate {

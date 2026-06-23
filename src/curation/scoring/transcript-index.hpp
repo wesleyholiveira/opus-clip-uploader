@@ -41,6 +41,8 @@ public:
 private:
 	const RecordingTranscript &transcript;
 	QVector<int> nonEmptySegmentIndices;
+	QVector<double> nonEmptyStartSecs;
+	QVector<double> nonEmptyEndSecs;
 	double transcriptStartSec = 0.0;
 	double transcriptEndSec = 0.0;
 };
