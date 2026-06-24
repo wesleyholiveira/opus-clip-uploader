@@ -40,10 +40,23 @@ EVIDENCE_FEATURES = [
     "evidenceMetaPrelude", "evidenceMusicOrIntro", "evidenceHardContextBlocker", "featureCoverage",
 ]
 
-FEATURE_ORDER = SCORE_FEATURES + FEEDBACK_FEATURES + EVIDENCE_FEATURES
+STRUCTURED_FEEDBACK_FEATURES = [
+    "userSaysHasBeginning", "userSaysHasDevelopment", "userSaysHasConclusion", "userSaysSingleTopic",
+    "userSaysSmoothEnding", "userSaysGoodHook", "userSaysViewerCue", "userSaysTopicShift",
+    "userSaysStartsTooLate", "userSaysStartsTooEarly", "userSaysEndsTooEarly",
+    "userSaysOverextended", "userSaysMetaNoise",
+]
 
-POSITIVE_DECISIONS = {"accepted", "adjusted", "added_by_user"}
-NEGATIVE_DECISIONS = {"rejected"}
+FEATURE_ORDER = SCORE_FEATURES + FEEDBACK_FEATURES + EVIDENCE_FEATURES + STRUCTURED_FEEDBACK_FEATURES
+
+# The supervised ranker learns from generated candidate features.  An adjusted
+# generated range is the range the user had to fix, so it must be a negative
+# example for ranking.  The corrected user range is still used as a positive
+# feedback signal for range-memory features, but it is not emitted as a positive
+# supervised row here because it does not carry candidate/reranker features.
+POSITIVE_DECISIONS = {"accepted", "approved_adjusted"}
+NEGATIVE_DECISIONS = {"rejected", "adjusted"}
+RANGE_MEMORY_POSITIVE_DECISIONS = {"accepted", "approved_adjusted", "added_by_user"}
 SKIP_DECISIONS = {"removed_unrated"}
 
 
@@ -85,8 +98,52 @@ def normalise_feature(name: str, value: float) -> float:
     return clamp(value)
 
 
+def range_from_keys(row: dict[str, Any], start_key: str, end_key: str) -> tuple[float, float] | None:
+    start = finite_float(row.get(start_key), math.nan)
+    end = finite_float(row.get(end_key), math.nan)
+    if not math.isfinite(start) or not math.isfinite(end) or end <= start:
+        return None
+    return start, end
+
+
+
+
+def structured_feedback(row: dict[str, Any]) -> dict[str, Any]:
+    feedback = row.get("explicit_structured_feedback")
+    return feedback if isinstance(feedback, dict) else {}
+
+
+def diagnostic_original_range_for_row(row: dict[str, Any]) -> tuple[float, float] | None:
+    feedback = structured_feedback(row)
+    # New runtime stores these at the top level and inside explicit_structured_feedback;
+    # older diagnostic-feedback rows may only contain the nested copy.
+    return (
+        range_from_keys(row, "diagnostic_original_start_sec", "diagnostic_original_end_sec")
+        or range_from_keys(feedback, "diagnostic_original_start_sec", "diagnostic_original_end_sec")
+    )
+
+
+def structured_reviewed_range_for_row(row: dict[str, Any]) -> tuple[float, float] | None:
+    feedback = structured_feedback(row)
+    return range_from_keys(feedback, "range_start_sec", "range_end_sec")
+
+def is_default_no_marker_placeholder(row: dict[str, Any]) -> bool:
+    decision = str(row.get("decision", "")).strip()
+    if decision != "added_by_user":
+        return False
+    review_key = str(row.get("review_settings_key", ""))
+    if not review_key.endswith(".no_markers") and ".no_markers" not in review_key:
+        return False
+    user_range = range_from_keys(row, "user_start_sec", "user_end_sec")
+    if user_range is None:
+        return False
+    return abs(user_range[0]) <= 0.05 and abs(user_range[1] - 90.0) <= 0.25
+
+
 def is_calibratable(row: dict[str, Any]) -> bool:
     if row.get("decision") in SKIP_DECISIONS:
+        return False
+    if is_default_no_marker_placeholder(row):
         return False
     if row.get("event") == "review_rejected" and not row.get("explicit_review_decision"):
         return False
@@ -103,11 +160,25 @@ def label_for_row(row: dict[str, Any]) -> int | None:
 
 
 def range_for_row(row: dict[str, Any]) -> tuple[float, float] | None:
-    start = finite_float(row.get("generated_start_sec"), math.nan)
-    end = finite_float(row.get("generated_end_sec"), math.nan)
-    if not math.isfinite(start) or not math.isfinite(end) or end <= start:
-        return None
-    return start, end
+    # Supervised rows represent generated candidates.  For diagnostic-feedback
+    # rows where the user edited the review range, keep the generated/original
+    # range as the supervised candidate and treat the edited range as user_range.
+    decision = str(row.get("decision", "")).strip()
+    if decision in {"adjusted", "approved_adjusted"}:
+        original = diagnostic_original_range_for_row(row)
+        if original is not None:
+            return original
+    return range_from_keys(row, "generated_start_sec", "generated_end_sec")
+
+
+def user_range_for_row(row: dict[str, Any]) -> tuple[float, float] | None:
+    explicit_user = range_from_keys(row, "user_start_sec", "user_end_sec")
+    if explicit_user is not None:
+        return explicit_user
+    decision = str(row.get("decision", "")).strip()
+    if decision in {"adjusted", "approved_adjusted"}:
+        return structured_reviewed_range_for_row(row)
+    return None
 
 
 def overlap(a: tuple[float, float], b: tuple[float, float]) -> float:
@@ -130,6 +201,30 @@ def range_similarity(a: tuple[float, float], b: tuple[float, float]) -> float:
     start_score = max(0.0, 1.0 - abs(a[0] - b[0]) / 18.0)
     end_score = max(0.0, 1.0 - abs(a[1] - b[1]) / 24.0)
     return clamp(iou * 0.48 + coverage * 0.26 + start_score * 0.16 + end_score * 0.10)
+
+
+def range_meaningfully_edited(generated: tuple[float, float] | None, user: tuple[float, float] | None) -> bool:
+    if generated is None or user is None:
+        return False
+    return (
+        abs(generated[0] - user[0]) > 0.25
+        or abs(generated[1] - user[1]) > 0.25
+        or abs(duration(generated) - duration(user)) > 0.25
+    )
+
+
+def rounded_range_key(r: tuple[float, float], bucket_sec: float = 2.0) -> tuple[int, int]:
+    return round(r[0] / bucket_sec), round(r[1] / bucket_sec)
+
+
+def positive_semantic_dedupe_key(row: dict[str, Any]) -> tuple[str, str, str, tuple[int, int]] | None:
+    decision = str(row.get("decision", "")).strip()
+    if decision != "approved_adjusted":
+        return None
+    corrected = user_range_for_row(row)
+    if corrected is None:
+        return None
+    return (*group_key(row), rounded_range_key(corrected))
 
 
 def negative_contaminates(candidate: tuple[float, float], negative: tuple[float, float]) -> bool:
@@ -205,12 +300,34 @@ def feature_coverage(features: dict[str, float]) -> float:
 def build_signals(rows: Iterable[dict[str, Any]]) -> dict[tuple[str, str, str], dict[str, list[tuple[int, tuple[float, float]]]]]:
     grouped: dict[tuple[str, str, str], dict[str, list[tuple[int, tuple[float, float]]]]] = defaultdict(lambda: {"positive": [], "negative": []})
     for row in rows:
-        label = label_for_row(row)
-        row_range = range_for_row(row)
-        if label is None or row_range is None or not is_calibratable(row):
+        if not is_calibratable(row):
             continue
-        bucket = "positive" if label == 1 else "negative"
-        grouped[group_key(row)][bucket].append((int(row.get("__line_no", 0)), row_range))
+        line_no = int(row.get("__line_no", 0))
+        decision = str(row.get("decision", "")).strip()
+        generated = range_for_row(row)
+        user = user_range_for_row(row)
+        group = grouped[group_key(row)]
+
+        if decision == "adjusted":
+            # Runtime memory treats the generated range as the bad boundary and
+            # the corrected user range as the positive target. If the user marked
+            # "adjusted" but did not actually edit the range, keep only the
+            # negative generated-boundary signal; there is no corrected positive
+            # target to learn from.
+            if generated is not None:
+                group["negative"].append((line_no, generated))
+            if range_meaningfully_edited(generated, user):
+                group["positive"].append((line_no, user))
+            continue
+
+        if decision in NEGATIVE_DECISIONS and generated is not None:
+            group["negative"].append((line_no, generated))
+            continue
+
+        if decision in RANGE_MEMORY_POSITIVE_DECISIONS:
+            positive_range = user if user is not None else generated
+            if positive_range is not None:
+                group["positive"].append((line_no, positive_range))
     return grouped
 
 
@@ -246,6 +363,31 @@ def feedback_features_for_row(row: dict[str, Any], signals: dict[str, list[tuple
     return result
 
 
+def bool_feature(value: Any) -> float:
+    return 1.0 if value is True else 0.0
+
+
+def structured_feedback_features_for_row(row: dict[str, Any]) -> dict[str, float]:
+    feedback = row.get("explicit_structured_feedback")
+    if not isinstance(feedback, dict):
+        feedback = {}
+    return {
+        "userSaysHasBeginning": bool_feature(row.get("feedback_has_beginning", feedback.get("has_beginning"))),
+        "userSaysHasDevelopment": bool_feature(row.get("feedback_has_development", feedback.get("has_development"))),
+        "userSaysHasConclusion": bool_feature(row.get("feedback_has_conclusion", feedback.get("has_conclusion"))),
+        "userSaysSingleTopic": bool_feature(row.get("feedback_has_single_topic", feedback.get("has_single_topic"))),
+        "userSaysSmoothEnding": bool_feature(row.get("feedback_has_smooth_ending", feedback.get("has_smooth_ending"))),
+        "userSaysGoodHook": bool_feature(row.get("feedback_has_good_hook", feedback.get("has_good_hook"))),
+        "userSaysViewerCue": bool_feature(row.get("feedback_has_viewer_cue", feedback.get("has_viewer_cue"))),
+        "userSaysTopicShift": bool_feature(row.get("feedback_has_topic_shift", feedback.get("has_topic_shift"))),
+        "userSaysStartsTooLate": bool_feature(row.get("feedback_starts_too_late", feedback.get("starts_too_late"))),
+        "userSaysStartsTooEarly": bool_feature(row.get("feedback_starts_too_early", feedback.get("starts_too_early"))),
+        "userSaysEndsTooEarly": bool_feature(row.get("feedback_ends_too_early", feedback.get("ends_too_early"))),
+        "userSaysOverextended": bool_feature(row.get("feedback_overextended_after_resolution", feedback.get("overextended_after_resolution"))),
+        "userSaysMetaNoise": bool_feature(row.get("feedback_has_meta_noise", feedback.get("has_meta_noise"))),
+    }
+
+
 def features_for_row(row: dict[str, Any], group_signals: dict[str, list[tuple[int, tuple[float, float]]]]) -> dict[str, float]:
     scores = row.get("scores") if isinstance(row.get("scores"), dict) else {}
     features: dict[str, float] = {}
@@ -254,6 +396,7 @@ def features_for_row(row: dict[str, Any], group_signals: dict[str, list[tuple[in
         features[name] = normalise_feature(name, finite_float(value))
     evidence = evidence_text(row)
     features.update(feedback_features_for_row(row, group_signals))
+    features.update(structured_feedback_features_for_row(row))
     text = candidate_text(row)
     meta_prelude = evidence_bool(evidence, "meta_prelude", "drift+block")
     music_or_intro = 1.0 if (evidence_bool(evidence, "Música", "Musica") or text_bool(text, "música", "musica", "acertando o negócio", "acertando o negocio", "configurando", "abrindo live", "testando")) else 0.0
@@ -286,22 +429,29 @@ def build_dataset(rows: list[dict[str, Any]], preset: str | None = None) -> list
         selected = [row for row in selected if str(row.get("preset") or "auto") == preset]
     signals_by_group = build_signals(selected)
     dataset: list[dict[str, Any]] = []
+    emitted_positive_semantic_keys: set[tuple[str, str, str, tuple[int, int]]] = set()
     for row in selected:
         label = label_for_row(row)
         if label is None:
             continue
+        dedupe_key = positive_semantic_dedupe_key(row)
+        if label == 1 and dedupe_key is not None:
+            if dedupe_key in emitted_positive_semantic_keys:
+                continue
+            emitted_positive_semantic_keys.add(dedupe_key)
         r = range_for_row(row)
         if r is None:
             continue
         features = features_for_row(row, signals_by_group[group_key(row)])
         dataset.append({
             "label": label,
-            "weight": 1.35 if label == 1 else 1.0,
+            "weight": 1.35 if label == 1 else 1.10 if str(row.get("decision", "")).strip() == "adjusted" else 1.0,
             "features": features,
             "metadata": {
                 "line_no": row.get("__line_no"),
                 "preset": row.get("preset"),
                 "decision": row.get("decision"),
+                "label_reason": "adjusted_generated_range_is_negative" if row.get("decision") == "adjusted" else None,
                 "explicit_review_decision": row.get("explicit_review_decision"),
                 "video_file_name": row.get("video_file_name"),
                 "start_sec": r[0],

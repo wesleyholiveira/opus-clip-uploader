@@ -2,6 +2,8 @@
 
 #include "curation/scoring/llama-server-embedding-provider.hpp"
 #include "curation/scoring/llama-server-reranker-provider.hpp"
+#include "curation/scoring/llama-cpp-embedding-provider.hpp"
+#include "curation/scoring/llama-cpp-reranker-provider.hpp"
 
 #include <QString>
 
@@ -20,12 +22,16 @@ inline constexpr const char *CONFIG_LOCAL_RERANKER_MAX_TEXT_CHARS = "local_reran
 
 inline constexpr const char *LOCAL_EMBEDDING_BACKEND_DISABLED = "disabled";
 inline constexpr const char *LOCAL_EMBEDDING_BACKEND_LLAMA_SERVER = "llama_server";
+inline constexpr const char *LOCAL_EMBEDDING_BACKEND_LLAMA_CPP = "llama_cpp";
 inline constexpr const char *LOCAL_RERANKER_BACKEND_DISABLED = "disabled";
 inline constexpr const char *LOCAL_RERANKER_BACKEND_LLAMA_SERVER = "llama_server";
+inline constexpr const char *LOCAL_RERANKER_BACKEND_LLAMA_CPP = "llama_cpp";
 
 QString localEmbeddingBackendFromConfig();
 QString localRerankerBackendFromConfig();
 LlamaServerEmbeddingProviderOptions llamaServerEmbeddingOptionsFromConfig();
 LlamaServerRerankerProviderOptions llamaServerRerankerOptionsFromConfig();
+LlamaCppEmbeddingProviderOptions llamaCppEmbeddingOptionsFromConfig();
+LlamaCppRerankerProviderOptions llamaCppRerankerOptionsFromConfig();
 
 } // namespace Curation::Scoring

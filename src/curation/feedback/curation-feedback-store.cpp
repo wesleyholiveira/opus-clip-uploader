@@ -347,7 +347,12 @@ static QJsonObject diagnosticsForSuggestedRange(const FeedbackSuggestionSnapshot
 		if (!value.isObject())
 			continue;
 		const QJsonObject candidate = value.toObject();
-		if (candidate.value(QStringLiteral("index")).toInt(-1) == suggestedIndex)
+		if (candidate.value(QStringLiteral("index")).toInt(-1) != suggestedIndex)
+			continue;
+		const ClipDuration candidateRange{candidate.value(QStringLiteral("start_sec")).toDouble(),
+						  candidate.value(QStringLiteral("end_sec")).toDouble()};
+		if (std::isfinite(candidateRange.startSec) && std::isfinite(candidateRange.endSec) &&
+		    candidateRange.endSec > candidateRange.startSec && rangeSimilarity(range, candidateRange) >= 0.50)
 			return candidate;
 	}
 
@@ -375,21 +380,63 @@ static QJsonObject suggestionRecord(const QString &videoPath, const CurationSett
 				    const FeedbackSuggestionSnapshot &suggestion, int suggestedIndex,
 				    const ClipDuration &suggestedRange, const QVector<ClipDuration> &userRanges,
 				    QSet<int> &usedUserRanges, const QString &eventName, const QString &humanReason,
-				    const QMap<int, QString> &explicitDecisionsBySuggestedIndex)
+				    const QMap<int, QString> &explicitDecisionsBySuggestedIndex,
+				    const QMap<int, QJsonObject> &explicitFeedbackBySuggestedIndex)
 {
+	const QString explicitDecision = explicitDecisionsBySuggestedIndex.value(suggestedIndex).trimmed().toLower();
+	const QJsonObject structuredFeedback = explicitFeedbackBySuggestedIndex.value(suggestedIndex);
+
+	const auto structuredRange = [](const QJsonObject &object, const QString &startKey, const QString &endKey,
+					  ClipDuration *outRange) {
+		if (!outRange)
+			return false;
+		const double startSec = object.value(startKey).toDouble(std::numeric_limits<double>::quiet_NaN());
+		const double endSec = object.value(endKey).toDouble(std::numeric_limits<double>::quiet_NaN());
+		if (!std::isfinite(startSec) || !std::isfinite(endSec) || endSec <= startSec)
+			return false;
+		outRange->startSec = startSec;
+		outRange->endSec = endSec;
+		return true;
+	};
+
+	ClipDuration generatedRange = suggestedRange;
+	ClipDuration diagnosticOriginalRange{};
+	const bool hasDiagnosticOriginalRange = structuredRange(structuredFeedback,
+								   QStringLiteral("diagnostic_original_start_sec"),
+								   QStringLiteral("diagnostic_original_end_sec"),
+								   &diagnosticOriginalRange);
+	if (hasDiagnosticOriginalRange)
+		generatedRange = diagnosticOriginalRange;
+
+	ClipDuration explicitReviewedRange{};
+	const bool hasExplicitReviewedRange = structuredRange(structuredFeedback,
+								 QStringLiteral("range_start_sec"),
+								 QStringLiteral("range_end_sec"),
+								 &explicitReviewedRange);
+	const bool explicitDecisionUsesReviewedRange =
+		hasExplicitReviewedRange &&
+		(explicitDecision == QStringLiteral("adjusted") || explicitDecision == QStringLiteral("liked") ||
+		 explicitDecision == QStringLiteral("approved_adjusted"));
+
 	double similarity = 0.0;
 	const int matchedUserIndex =
-		bestUserRangeIndexForSuggestion(suggestedRange, userRanges, usedUserRanges, &similarity);
+		bestUserRangeIndexForSuggestion(generatedRange, userRanges, usedUserRanges, &similarity);
 	const bool matched = matchedUserIndex >= 0;
 	if (matched)
 		usedUserRanges.insert(matchedUserIndex);
-	const ClipDuration userRange = matched ? userRanges.at(matchedUserIndex) : ClipDuration{};
-	const QString explicitDecision = explicitDecisionsBySuggestedIndex.value(suggestedIndex).trimmed().toLower();
-	QString decision = matched ? matchedDecision(suggestedRange, userRange) : QStringLiteral("removed_unrated");
+	const ClipDuration matchedUserRange = matched ? userRanges.at(matchedUserIndex) : ClipDuration{};
+	const ClipDuration feedbackUserRange = explicitDecisionUsesReviewedRange ? explicitReviewedRange : matchedUserRange;
+	const bool hasFeedbackUserRange = matched || explicitDecisionUsesReviewedRange;
+
+	QString decision = matched ? matchedDecision(generatedRange, matchedUserRange) : QStringLiteral("removed_unrated");
 	if (explicitDecision == QStringLiteral("disliked"))
 		decision = QStringLiteral("rejected");
-	else if (explicitDecision == QStringLiteral("liked") && matched)
-		decision = matchedDecision(suggestedRange, userRange);
+	else if (explicitDecision == QStringLiteral("adjusted"))
+		decision = QStringLiteral("adjusted");
+	else if (explicitDecision == QStringLiteral("approved_adjusted"))
+		decision = hasFeedbackUserRange ? QStringLiteral("approved_adjusted") : QStringLiteral("accepted");
+	else if (explicitDecision == QStringLiteral("liked"))
+		decision = hasFeedbackUserRange ? matchedDecision(generatedRange, feedbackUserRange) : QStringLiteral("accepted");
 
 	QJsonObject record;
 	record.insert(QStringLiteral("schema_version"), 1);
@@ -398,7 +445,8 @@ static QJsonObject suggestionRecord(const QString &videoPath, const CurationSett
 		      eventName.trimmed().isEmpty() ? QStringLiteral("review_closed") : eventName.trimmed());
 	record.insert(QStringLiteral("decision"), decision);
 	if (!explicitDecision.isEmpty() &&
-	    (explicitDecision == QStringLiteral("disliked") || decision != QStringLiteral("removed_unrated")))
+	    (explicitDecision == QStringLiteral("disliked") || explicitDecision == QStringLiteral("adjusted") ||
+	     explicitDecision == QStringLiteral("approved_adjusted") || decision != QStringLiteral("removed_unrated")))
 		record.insert(QStringLiteral("explicit_review_decision"), explicitDecision);
 	record.insert(QStringLiteral("video_id"), stableVideoId(videoPath));
 	record.insert(QStringLiteral("video_file_name"), QFileInfo(videoPath).fileName());
@@ -419,26 +467,48 @@ static QJsonObject suggestionRecord(const QString &videoPath, const CurationSett
 								   : suggestion.source.trimmed());
 	record.insert(QStringLiteral("suggestion_summary"), suggestion.summary.left(1000));
 	record.insert(QStringLiteral("suggested_index"), suggestedIndex);
-	record.insert(QStringLiteral("generated_start_sec"), suggestedRange.startSec);
-	record.insert(QStringLiteral("generated_end_sec"), suggestedRange.endSec);
-	record.insert(QStringLiteral("generated_duration_sec"), suggestedRange.endSec - suggestedRange.startSec);
+	record.insert(QStringLiteral("generated_start_sec"), generatedRange.startSec);
+	record.insert(QStringLiteral("generated_end_sec"), generatedRange.endSec);
+	record.insert(QStringLiteral("generated_duration_sec"), generatedRange.endSec - generatedRange.startSec);
+	if (hasDiagnosticOriginalRange) {
+		record.insert(QStringLiteral("diagnostic_original_start_sec"), diagnosticOriginalRange.startSec);
+		record.insert(QStringLiteral("diagnostic_original_end_sec"), diagnosticOriginalRange.endSec);
+		const bool edited = hasExplicitReviewedRange &&
+			(std::fabs(explicitReviewedRange.startSec - diagnosticOriginalRange.startSec) > 0.05 ||
+			 std::fabs(explicitReviewedRange.endSec - diagnosticOriginalRange.endSec) > 0.05);
+		record.insert(QStringLiteral("diagnostic_range_edited"), edited);
+	}
 	record.insert(QStringLiteral("matched_user_index"), matchedUserIndex);
 	record.insert(QStringLiteral("match_similarity"), similarity);
 
-	if (matched) {
-		record.insert(QStringLiteral("user_start_sec"), userRange.startSec);
-		record.insert(QStringLiteral("user_end_sec"), userRange.endSec);
-		record.insert(QStringLiteral("user_duration_sec"), userRange.endSec - userRange.startSec);
-		record.insert(QStringLiteral("start_error_sec"), suggestedRange.startSec - userRange.startSec);
-		record.insert(QStringLiteral("end_error_sec"), suggestedRange.endSec - userRange.endSec);
+	if (hasFeedbackUserRange) {
+		record.insert(QStringLiteral("user_start_sec"), feedbackUserRange.startSec);
+		record.insert(QStringLiteral("user_end_sec"), feedbackUserRange.endSec);
+		record.insert(QStringLiteral("user_duration_sec"), feedbackUserRange.endSec - feedbackUserRange.startSec);
+		record.insert(QStringLiteral("start_error_sec"), generatedRange.startSec - feedbackUserRange.startSec);
+		record.insert(QStringLiteral("end_error_sec"), generatedRange.endSec - feedbackUserRange.endSec);
 		record.insert(QStringLiteral("start_error_type"),
-			      startErrorType(suggestedRange.startSec, userRange.startSec));
-		record.insert(QStringLiteral("end_error_type"), endErrorType(suggestedRange.endSec, userRange.endSec));
+			      startErrorType(generatedRange.startSec, feedbackUserRange.startSec));
+		record.insert(QStringLiteral("end_error_type"),
+			      endErrorType(generatedRange.endSec, feedbackUserRange.endSec));
 	} else {
 		if (explicitDecision == QStringLiteral("disliked")) {
 			record.insert(QStringLiteral("reject_reason"), QStringLiteral("user_disliked_marker"));
 			record.insert(QStringLiteral("start_error_type"), QStringLiteral("rejected"));
 			record.insert(QStringLiteral("end_error_type"), QStringLiteral("rejected"));
+		} else if (explicitDecision == QStringLiteral("adjusted") ||
+			   explicitDecision == QStringLiteral("approved_adjusted")) {
+			record.insert(QStringLiteral("adjustment_without_corrected_range"), true);
+			record.insert(QStringLiteral("start_error_type"), QStringLiteral("needs_adjustment"));
+			record.insert(QStringLiteral("end_error_type"), QStringLiteral("needs_adjustment"));
+		} else if (explicitDecision == QStringLiteral("liked")) {
+			record.insert(QStringLiteral("user_start_sec"), generatedRange.startSec);
+			record.insert(QStringLiteral("user_end_sec"), generatedRange.endSec);
+			record.insert(QStringLiteral("user_duration_sec"), generatedRange.endSec - generatedRange.startSec);
+			record.insert(QStringLiteral("start_error_sec"), 0.0);
+			record.insert(QStringLiteral("end_error_sec"), 0.0);
+			record.insert(QStringLiteral("start_error_type"), QStringLiteral("good"));
+			record.insert(QStringLiteral("end_error_type"), QStringLiteral("good"));
 		} else {
 			record.insert(QStringLiteral("remove_reason"), QStringLiteral("user_removed_marker_not_rated"));
 			record.insert(QStringLiteral("start_error_type"), QStringLiteral("removed_unrated"));
@@ -457,6 +527,29 @@ static QJsonObject suggestionRecord(const QString &videoPath, const CurationSett
 		record.insert(QStringLiteral("candidate_source"), diagnostics.value(QStringLiteral("source")));
 		record.insert(QStringLiteral("candidate_final_score"),
 			      diagnostics.value(QStringLiteral("final_score")));
+	}
+
+	if (!structuredFeedback.isEmpty()) {
+		record.insert(QStringLiteral("explicit_structured_feedback"), structuredFeedback);
+		const QStringList boolKeys{QStringLiteral("has_beginning"),
+					   QStringLiteral("has_development"),
+					   QStringLiteral("has_conclusion"),
+					   QStringLiteral("has_single_topic"),
+					   QStringLiteral("has_smooth_ending"),
+					   QStringLiteral("has_good_hook"),
+					   QStringLiteral("has_viewer_cue"),
+					   QStringLiteral("has_topic_shift"),
+					   QStringLiteral("starts_too_late"),
+					   QStringLiteral("starts_too_early"),
+					   QStringLiteral("ends_too_early"),
+					   QStringLiteral("overextended_after_resolution"),
+					   QStringLiteral("has_meta_noise"),
+					   QStringLiteral("approved_corrected_range"),
+					   QStringLiteral("semantic_positive_example")};
+		for (const QString &key : boolKeys) {
+			if (structuredFeedback.contains(key))
+				record.insert(QStringLiteral("feedback_%1").arg(key), structuredFeedback.value(key).toBool());
+		}
 	}
 
 	if (!humanReason.trimmed().isEmpty())
@@ -599,10 +692,80 @@ static bool validFeedbackRange(const ClipDuration &range)
 	return std::isfinite(range.startSec) && std::isfinite(range.endSec) && range.endSec > range.startSec;
 }
 
+static bool feedbackRangeMeaningfullyEdited(const ClipDuration &generated, const ClipDuration &user)
+{
+	if (!validFeedbackRange(generated) || !validFeedbackRange(user))
+		return false;
+	const double startDelta = std::fabs(generated.startSec - user.startSec);
+	const double endDelta = std::fabs(generated.endSec - user.endSec);
+	const double durationDelta = std::fabs((generated.endSec - generated.startSec) -
+						 (user.endSec - user.startSec));
+	return startDelta > 0.25 || endDelta > 0.25 || durationDelta > 0.25;
+}
+
 static ClipDuration recordRange(const QJsonObject &record, const QString &startKey, const QString &endKey)
 {
 	return ClipDuration{record.value(startKey).toDouble(std::numeric_limits<double>::quiet_NaN()),
 			    record.value(endKey).toDouble(std::numeric_limits<double>::quiet_NaN())};
+}
+
+static bool structuredFeedbackBool(const QJsonObject &record, const QString &key, bool fallback = false)
+{
+	const QJsonObject structured = record.value(QStringLiteral("explicit_structured_feedback")).toObject();
+	if (structured.contains(key))
+		return structured.value(key).toBool(fallback);
+	const QString flatKey = QStringLiteral("feedback_%1").arg(key);
+	if (record.contains(flatKey))
+		return record.value(flatKey).toBool(fallback);
+	return fallback;
+}
+
+static bool structuredFeedbackDescribesCompleteClip(const QJsonObject &record)
+{
+	return structuredFeedbackBool(record, QStringLiteral("has_beginning")) &&
+	       structuredFeedbackBool(record, QStringLiteral("has_development")) &&
+	       structuredFeedbackBool(record, QStringLiteral("has_conclusion")) &&
+	       structuredFeedbackBool(record, QStringLiteral("has_single_topic")) &&
+	       structuredFeedbackBool(record, QStringLiteral("has_smooth_ending")) &&
+	       structuredFeedbackBool(record, QStringLiteral("has_good_hook")) &&
+	       structuredFeedbackBool(record, QStringLiteral("has_viewer_cue")) &&
+	       !structuredFeedbackBool(record, QStringLiteral("has_topic_shift")) &&
+	       !structuredFeedbackBool(record, QStringLiteral("has_meta_noise")) &&
+	       !structuredFeedbackBool(record, QStringLiteral("starts_too_late")) &&
+	       !structuredFeedbackBool(record, QStringLiteral("starts_too_early")) &&
+	       !structuredFeedbackBool(record, QStringLiteral("ends_too_early")) &&
+	       !structuredFeedbackBool(record, QStringLiteral("overextended_after_resolution"));
+}
+
+static bool structuredFeedbackForcesSemanticPositive(const QJsonObject &record)
+{
+	return structuredFeedbackBool(record, QStringLiteral("semantic_positive_example")) ||
+	       structuredFeedbackBool(record, QStringLiteral("approved_corrected_range"));
+}
+
+static void countPositiveSemanticEligibility(FeedbackRangeMemory &memory, bool semanticPrototypeEligible)
+{
+	if (semanticPrototypeEligible)
+		++memory.semanticPrototypePositiveSignals;
+	else
+		++memory.boundaryOnlyPositiveSignals;
+}
+
+static bool isDefaultNoMarkerPlaceholderFeedback(const QJsonObject &record)
+{
+	const QString decision = record.value(QStringLiteral("decision")).toString().trimmed().toLower();
+	if (decision != QStringLiteral("added_by_user"))
+		return false;
+
+	const QString reviewSettingsKey = record.value(QStringLiteral("review_settings_key")).toString();
+	if (!reviewSettingsKey.endsWith(QStringLiteral(".no_markers")) &&
+	    !reviewSettingsKey.contains(QStringLiteral(".no_markers")))
+		return false;
+
+	const ClipDuration user = recordRange(record, QStringLiteral("user_start_sec"),
+					      QStringLiteral("user_end_sec"));
+	return validFeedbackRange(user) && std::fabs(user.startSec) <= 0.05 &&
+	       std::fabs(user.endSec - 90.0) <= 0.25;
 }
 
 static bool presetMatchesFeedback(const QString &recordPreset, const QString &requestedPreset)
@@ -636,11 +799,12 @@ static QString crossVideoReason(const QString &reason)
 			       : QStringLiteral("cross_video_cold_start_feedback:%1").arg(clean.left(96));
 }
 
-static void appendRangeSignal(QVector<FeedbackRangeSignal> &results, const ClipDuration &range, const QString &decision,
-			      const QString &source, const QString &reason, double weight, int sequence)
+static bool appendRangeSignal(QVector<FeedbackRangeSignal> &results, const ClipDuration &range, const QString &decision,
+				      const QString &source, const QString &reason, double weight, int sequence,
+				      bool semanticPrototypeEligible = false)
 {
 	if (!validFeedbackRange(range))
-		return;
+		return false;
 	FeedbackRangeSignal signal;
 	signal.range = range;
 	signal.decision = decision;
@@ -648,7 +812,9 @@ static void appendRangeSignal(QVector<FeedbackRangeSignal> &results, const ClipD
 	signal.reason = reason;
 	signal.weight = std::clamp(weight, 0.05, 4.0);
 	signal.sequence = sequence;
+	signal.semanticPrototypeEligible = semanticPrototypeEligible;
 	results.append(signal);
+	return true;
 }
 
 static double feedbackRangeDuration(const ClipDuration &range)
@@ -684,6 +850,43 @@ static bool feedbackSignalsConflict(const FeedbackRangeSignal &left, const Feedb
 	       (shorterCoverage >= 0.88 && longerCoverage >= 0.42);
 }
 
+static bool feedbackSignalReasonContains(const FeedbackRangeSignal &signal, const QString &needle)
+{
+	return signal.reason.contains(needle, Qt::CaseInsensitive);
+}
+
+static bool adjustedGeneratedNegativeSignal(const FeedbackRangeSignal &signal)
+{
+	return signal.decision == QStringLiteral("adjusted") &&
+	       feedbackSignalReasonContains(signal, QStringLiteral("user_adjusted_generated_boundaries"));
+}
+
+static bool adjustedCorrectedPositiveSignal(const FeedbackRangeSignal &signal)
+{
+	return signal.decision == QStringLiteral("adjusted") &&
+	       feedbackSignalReasonContains(signal, QStringLiteral("user_corrected_range"));
+}
+
+static bool approvedAdjustedOriginalNegativeSignal(const FeedbackRangeSignal &signal)
+{
+	return signal.decision == QStringLiteral("approved_adjusted") &&
+	       feedbackSignalReasonContains(signal, QStringLiteral("user_approved_corrected_original_boundaries"));
+}
+
+static bool approvedAdjustedCorrectedPositiveSignal(const FeedbackRangeSignal &signal)
+{
+	return signal.decision == QStringLiteral("approved_adjusted") &&
+	       feedbackSignalReasonContains(signal, QStringLiteral("user_approved_corrected_range_complete_clip"));
+}
+
+static bool sameCorrectedFeedbackPair(const FeedbackRangeSignal &negative, const FeedbackRangeSignal &positive)
+{
+	if (negative.sequence != positive.sequence)
+		return false;
+	return (adjustedGeneratedNegativeSignal(negative) && adjustedCorrectedPositiveSignal(positive)) ||
+	       (approvedAdjustedOriginalNegativeSignal(negative) && approvedAdjustedCorrectedPositiveSignal(positive));
+}
+
 static void resolvePositiveNegativeConflicts(FeedbackRangeMemory &memory)
 {
 	if (memory.positiveRanges.isEmpty() || memory.negativeRanges.isEmpty())
@@ -695,6 +898,8 @@ static void resolvePositiveNegativeConflicts(FeedbackRangeMemory &memory)
 		bool keep = true;
 		for (const FeedbackRangeSignal &negative : memory.negativeRanges) {
 			if (!feedbackSignalsConflict(positive, negative))
+				continue;
+			if (sameCorrectedFeedbackPair(negative, positive))
 				continue;
 			// When the same range was liked and later disliked, the newest explicit
 			// feedback is the source of truth. If ordering is tied, keep the negative
@@ -714,6 +919,8 @@ static void resolvePositiveNegativeConflicts(FeedbackRangeMemory &memory)
 		bool keep = true;
 		for (const FeedbackRangeSignal &positive : memory.positiveRanges) {
 			if (!feedbackSignalsConflict(negative, positive))
+				continue;
+			if (sameCorrectedFeedbackPair(negative, positive))
 				continue;
 			if (positive.sequence > negative.sequence) {
 				keep = false;
@@ -773,6 +980,8 @@ FeedbackRangeMemory CurationFeedbackStore::loadRangeMemoryForVideo(const QString
 			continue;
 		if (decision == QStringLiteral("removed_unrated"))
 			continue;
+		if (isDefaultNoMarkerPlaceholderFeedback(record))
+			continue;
 
 		const bool sameVideo = record.value(QStringLiteral("video_id")).toString() == videoId;
 		QStringList recordContentIds;
@@ -822,46 +1031,93 @@ FeedbackRangeMemory CurationFeedbackStore::loadRangeMemoryForVideo(const QString
 		};
 
 		if (decision == QStringLiteral("rejected") || explicitDecision == QStringLiteral("disliked")) {
-			appendRangeSignal(memory.negativeRanges, generated, decision, source,
-					  reasonForScope(record.value(QStringLiteral("reject_reason"))
-								 .toString(QStringLiteral("user_rejected_range"))),
-					  1.0 * scopeWeight, rowSequence);
+			if (appendRangeSignal(memory.negativeRanges, generated, decision, source,
+					      reasonForScope(record.value(QStringLiteral("reject_reason"))
+								     .toString(QStringLiteral("user_rejected_range"))),
+					      1.0 * scopeWeight, rowSequence))
+				++memory.rejectedNegativeSignals;
+			continue;
+		}
+
+		if (decision == QStringLiteral("approved_adjusted") || explicitDecision == QStringLiteral("approved_adjusted")) {
+			if (appendRangeSignal(memory.negativeRanges, generated, QStringLiteral("approved_adjusted"), source,
+					      reasonForScope(QStringLiteral("user_approved_corrected_original_boundaries")),
+					      0.58 * scopeWeight, rowSequence))
+				++memory.adjustedNegativeSignals;
+			const ClipDuration positiveRange = validFeedbackRange(user) ? user : generated;
+			if (appendRangeSignal(memory.positiveRanges, positiveRange, QStringLiteral("approved_adjusted"), source,
+					      reasonForScope(QStringLiteral("user_approved_corrected_range_complete_clip")),
+					      1.12 * scopeWeight, rowSequence, true)) {
+				++memory.approvedAdjustedPositiveSignals;
+				countPositiveSemanticEligibility(memory, true);
+			}
 			continue;
 		}
 
 		if (decision == QStringLiteral("adjusted")) {
-			appendRangeSignal(memory.negativeRanges, generated, decision, source,
-					  reasonForScope(QStringLiteral("user_adjusted_generated_boundaries")),
-					  0.72 * scopeWeight, rowSequence);
-			appendRangeSignal(memory.positiveRanges, user, decision, source,
-					  reasonForScope(QStringLiteral("user_corrected_range")), 0.88 * scopeWeight,
-					  rowSequence);
+			if (appendRangeSignal(memory.negativeRanges, generated, decision, source,
+					      reasonForScope(QStringLiteral("user_adjusted_generated_boundaries")),
+					      0.72 * scopeWeight, rowSequence))
+				++memory.adjustedNegativeSignals;
+			if (feedbackRangeMeaningfullyEdited(generated, user)) {
+				const bool semanticPrototypeEligible = structuredFeedbackForcesSemanticPositive(record) ||
+					structuredFeedbackDescribesCompleteClip(record);
+				if (appendRangeSignal(memory.positiveRanges, user, decision, source,
+						      reasonForScope(semanticPrototypeEligible
+							      ? QStringLiteral("user_corrected_range_complete_clip")
+							      : QStringLiteral("user_corrected_range_boundary_only")),
+						      0.88 * scopeWeight, rowSequence, semanticPrototypeEligible)) {
+					++memory.adjustedPositiveSignals;
+					countPositiveSemanticEligibility(memory, semanticPrototypeEligible);
+				}
+			} else
+				++memory.adjustedWithoutEditedRangeSignals;
 			continue;
 		}
 
 		if (decision == QStringLiteral("accepted") || explicitDecision == QStringLiteral("liked")) {
-			appendRangeSignal(memory.positiveRanges, validFeedbackRange(user) ? user : generated, decision,
-					  source, reasonForScope(QStringLiteral("user_accepted_range")),
-					  1.0 * scopeWeight, rowSequence);
+			if (appendRangeSignal(memory.positiveRanges, validFeedbackRange(user) ? user : generated,
+					      decision, source, reasonForScope(QStringLiteral("user_accepted_range")),
+					      1.0 * scopeWeight, rowSequence, true)) {
+				++memory.acceptedPositiveSignals;
+				countPositiveSemanticEligibility(memory, true);
+			}
 			continue;
 		}
 
 		if (decision == QStringLiteral("added_by_user")) {
-			appendRangeSignal(memory.positiveRanges, user, decision, source,
-					  reasonForScope(QStringLiteral("user_added_marker")), 0.90 * scopeWeight,
-					  rowSequence);
+			if (appendRangeSignal(memory.positiveRanges, user, decision, source,
+					      reasonForScope(QStringLiteral("user_added_marker")), 0.90 * scopeWeight,
+					      rowSequence, true)) {
+				++memory.addedByUserPositiveSignals;
+				countPositiveSemanticEligibility(memory, true);
+			}
 		}
 	}
 
+	memory.negativeSignalsBeforeConflictResolution = static_cast<int>(memory.negativeRanges.size());
+	memory.positiveSignalsBeforeConflictResolution = static_cast<int>(memory.positiveRanges.size());
 	resolvePositiveNegativeConflicts(memory);
+	memory.prunedNegativeSignals =
+		memory.negativeSignalsBeforeConflictResolution - static_cast<int>(memory.negativeRanges.size());
+	memory.prunedPositiveSignals =
+		memory.positiveSignalsBeforeConflictResolution - static_cast<int>(memory.positiveRanges.size());
 	memory.loaded = memory.recordsRead > 0;
 	if (memory.loaded) {
 		blog(LOG_INFO,
-		     "[clip-cropper] Loaded boundary feedback range memory. video=%s preset=%s records=%d exact=%d sameContent=%d legacySameContent=%d crossVideoColdStart=%d negative=%d positive=%d",
+		     "[clip-cropper] Loaded boundary feedback range memory. video=%s preset=%s records=%d exact=%d sameContent=%d legacySameContent=%d crossVideoColdStart=%d negative=%d positive=%d rawNegative=%d rawPositive=%d rejectedNegative=%d adjustedNegative=%d adjustedPositive=%d adjustedWithoutEditedRange=%d acceptedPositive=%d approvedAdjustedPositive=%d addedByUserPositive=%d semanticPrototypePositive=%d boundaryOnlyPositive=%d prunedNegative=%d prunedPositive=%d",
 		     videoPath.toUtf8().constData(), presetId.toUtf8().constData(), memory.recordsRead,
 		     memory.exactRecordsRead, memory.contentRecordsRead, memory.legacyContentRecordsRead,
 		     memory.crossVideoRecordsRead, static_cast<int>(memory.negativeRanges.size()),
-		     static_cast<int>(memory.positiveRanges.size()));
+		     static_cast<int>(memory.positiveRanges.size()),
+		     memory.negativeSignalsBeforeConflictResolution,
+		     memory.positiveSignalsBeforeConflictResolution,
+		     memory.rejectedNegativeSignals, memory.adjustedNegativeSignals,
+		     memory.adjustedPositiveSignals, memory.adjustedWithoutEditedRangeSignals,
+		     memory.acceptedPositiveSignals, memory.approvedAdjustedPositiveSignals,
+		     memory.addedByUserPositiveSignals, memory.semanticPrototypePositiveSignals, memory.boundaryOnlyPositiveSignals,
+		     memory.prunedNegativeSignals, memory.prunedPositiveSignals);
+
 	} else if (!currentContentIds.isEmpty()) {
 		blog(LOG_INFO,
 		     "[clip-cropper] No boundary feedback range memory matched. video=%s preset=%s contentIds=%d",
@@ -875,7 +1131,8 @@ bool CurationFeedbackStore::appendReviewFeedback(const QString &videoPath, const
 						 const FeedbackSuggestionSnapshot &suggestion,
 						 const QVector<ClipDuration> &userRanges, const QString &eventName,
 						 const QString &humanReason,
-						 const QMap<int, QString> &explicitDecisionsBySuggestedIndex)
+						 const QMap<int, QString> &explicitDecisionsBySuggestedIndex,
+						 const QMap<int, QJsonObject> &explicitFeedbackBySuggestedIndex)
 {
 	if (!hasUsefulSuggestion(suggestion))
 		return false;
@@ -895,7 +1152,8 @@ bool CurationFeedbackStore::appendReviewFeedback(const QString &videoPath, const
 			continue;
 		records.append(suggestionRecord(videoPath, settings, suggestion, i, suggested, userRanges,
 						usedUserRanges, eventName, humanReason,
-						explicitDecisionsBySuggestedIndex));
+						explicitDecisionsBySuggestedIndex,
+						explicitFeedbackBySuggestedIndex));
 	}
 
 	for (int i = 0; i < userRanges.size(); ++i) {

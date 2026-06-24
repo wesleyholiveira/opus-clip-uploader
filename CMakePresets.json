@@ -114,7 +114,7 @@
         "CMAKE_COMPILE_WARNING_AS_ERROR": false,
         "CMAKE_EXPORT_COMPILE_COMMANDS": true,
         "CMAKE_SUPPRESS_REGENERATION": true,
-        "CLIP_CROPPER_USE_LLAMA_CPP": false,
+        "CLIP_CROPPER_USE_LLAMA_CPP": "ON",
         "CLIP_CROPPER_LLAMA_CPP_DIR": "${sourceDir}/deps/llama.cpp"
       }
     },

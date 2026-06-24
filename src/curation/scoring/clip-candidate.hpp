@@ -90,6 +90,7 @@ struct ClipCandidate {
 
 struct ClipScoringResult {
 	QVector<ClipCandidate> candidates;
+	QVector<ClipCandidate> rejectedCandidateDiagnostics;
 	QString summary;
 
 	QVector<ClipDuration> ranges() const

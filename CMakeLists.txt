@@ -253,6 +253,12 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 	src/curation/scoring/semantic-model.hpp
 	src/curation/scoring/embedding-cache.cpp
 	src/curation/scoring/embedding-cache.hpp
+	src/curation/scoring/llama-cpp-model-resolver.cpp
+	src/curation/scoring/llama-cpp-model-resolver.hpp
+	src/curation/scoring/llama-cpp-embedding-provider.cpp
+	src/curation/scoring/llama-cpp-embedding-provider.hpp
+	src/curation/scoring/llama-cpp-reranker-provider.cpp
+	src/curation/scoring/llama-cpp-reranker-provider.hpp
 	src/curation/scoring/llama-server-embedding-provider.cpp
 	src/curation/scoring/llama-server-embedding-provider.hpp
 	src/curation/scoring/llama-server-reranker-provider.cpp
@@ -352,7 +358,7 @@ if (CLIP_CROPPER_USE_LLAMA_CPP)
 		message(FATAL_ERROR "CLIP_CROPPER_USE_LLAMA_CPP is ON, but deps/llama.cpp was not initialized")
 	endif ()
 else ()
-	message(STATUS "llama.cpp backend disabled. Initialize deps/llama.cpp and enable CLIP_CROPPER_USE_LLAMA_CPP when wiring a concrete embedding provider.")
+	message(STATUS "llama.cpp native backend disabled. HTTP llama-server remains available; enable CLIP_CROPPER_USE_LLAMA_CPP for in-process embeddings/reranking.")
 endif ()
 
 if (ENABLE_FRONTEND_API)

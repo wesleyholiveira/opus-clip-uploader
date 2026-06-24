@@ -11,10 +11,47 @@ extern "C" {
 #endif
 
 #include <algorithm>
+#include <cmath>
+#include <QElapsedTimer>
+
 
 using namespace Curation::Scoring::CandidateRangeUtils;
 
 namespace Curation::Scoring {
+
+namespace {
+
+static bool validFeedbackRange(const ClipDuration &range)
+{
+	return std::isfinite(range.startSec) && std::isfinite(range.endSec) && range.endSec > range.startSec;
+}
+
+static double feedbackRangeDistance(const ClipDuration &left, const ClipDuration &right)
+{
+	return std::fabs(left.startSec - right.startSec) + std::fabs(left.endSec - right.endSec);
+}
+
+static int semanticPrototypeClusterCount(const Curation::Feedback::FeedbackRangeMemory &memory)
+{
+	QVector<ClipDuration> clusters;
+	for (const Curation::Feedback::FeedbackRangeSignal &positive : memory.positiveRanges) {
+		if (!positive.semanticPrototypeEligible || !validFeedbackRange(positive.range))
+			continue;
+		bool matched = false;
+		for (const ClipDuration &cluster : clusters) {
+			if (FeedbackSimilarityScorer::rangeSimilarity(cluster, positive.range) >= 0.82 ||
+			    feedbackRangeDistance(cluster, positive.range) <= 8.0) {
+				matched = true;
+				break;
+			}
+		}
+		if (!matched)
+			clusters.append(positive.range);
+	}
+	return static_cast<int>(clusters.size());
+}
+
+} // namespace
 
 QVector<ClipCandidate> FeedbackGuidedCandidateStage::appendCandidates(const TranscriptIndex &index,
 	QVector<ClipCandidate> candidates,
@@ -24,16 +61,48 @@ QVector<ClipCandidate> FeedbackGuidedCandidateStage::appendCandidates(const Tran
 	if (!memory.loaded || memory.positiveRanges.isEmpty())
 		return candidates;
 
+	const int semanticPositiveClusters = semanticPrototypeClusterCount(memory);
 	FeedbackGuidedCandidateGenerationOptions feedbackGenerationOptions;
 	feedbackGenerationOptions.generation = options.generation;
-	feedbackGenerationOptions.maxSeeds = std::clamp(options.ranking.maxCandidates * 4, 24, 96);
-	feedbackGenerationOptions.maxSemanticPrototypeSeeds = std::clamp(options.ranking.maxCandidates * 2, 12, 48);
-	feedbackGenerationOptions.maxPatternSeeds = std::clamp(options.ranking.maxCandidates * 3, 18, 72);
+	const int clusterLimitedSeedBudget = semanticPositiveClusters <= 0
+		? 0
+		: semanticPositiveClusters == 1
+		? 8
+		: semanticPositiveClusters == 2
+		? 14
+		: semanticPositiveClusters <= 5
+		? 24
+		: semanticPositiveClusters <= 10
+		? 40
+		: 64;
+	feedbackGenerationOptions.maxSeeds = std::min(std::clamp(options.ranking.maxCandidates * 2, 12, 64),
+		clusterLimitedSeedBudget);
+	feedbackGenerationOptions.maxSemanticPrototypeSeeds = semanticPositiveClusters <= 1
+		? 2
+		: semanticPositiveClusters == 2
+		? 4
+		: semanticPositiveClusters <= 5
+		? std::min(10, semanticPositiveClusters * 2)
+		: std::min(18, semanticPositiveClusters * 2);
+	feedbackGenerationOptions.maxPatternSeeds = semanticPositiveClusters <= 1
+		? 4
+		: semanticPositiveClusters == 2
+		? 8
+		: semanticPositiveClusters <= 5
+		? 12
+		: semanticPositiveClusters <= 10
+		? 24
+		: 40;
 
+	QElapsedTimer generatorTimer;
+	generatorTimer.start();
 	FeedbackGuidedCandidateGenerator feedbackGenerator;
 	const QVector<FeedbackGuidedCandidateSeed> feedbackSeeds = feedbackGenerator.generate(index, memory, feedbackGenerationOptions);
+	const qint64 seedGenerationMs = generatorTimer.elapsed();
 	if (feedbackSeeds.isEmpty())
 		return candidates;
+	QElapsedTimer buildTimer;
+	buildTimer.start();
 
 	SemanticCoarseRegion feedbackRegion;
 	feedbackRegion.score = 0.78;
@@ -44,6 +113,11 @@ QVector<ClipCandidate> FeedbackGuidedCandidateStage::appendCandidates(const Tran
 	int boundaryVariantCount = 0;
 	int prototypeSeedCount = 0;
 	int patternSeedCount = 0;
+	int semanticPositiveCount = 0;
+	for (const Curation::Feedback::FeedbackRangeSignal &positive : memory.positiveRanges) {
+		if (positive.semanticPrototypeEligible)
+			++semanticPositiveCount;
+	}
 	for (const FeedbackGuidedCandidateSeed &seed : feedbackSeeds) {
 		if (seed.source == QStringLiteral("feedback_positive_exact_seed"))
 			++exactSeedCount;
@@ -77,10 +151,12 @@ QVector<ClipCandidate> FeedbackGuidedCandidateStage::appendCandidates(const Tran
 
 	if (addedFeedbackCandidates > 0) {
 		blog(LOG_INFO,
-		     "[clip-cropper] Added feedback-guided candidates before ranking. video=%s seeds=%d added=%d exact=%d boundary=%d prototype=%d pattern=%d positive=%d negative=%d",
+		     "[clip-cropper] Added feedback-guided candidates before ranking. video=%s seeds=%d added=%d exact=%d boundary=%d prototype=%d pattern=%d positive=%d semanticPositive=%d semanticClusters=%d negative=%d seedGenerationMs=%lld buildMs=%lld",
 		     options.videoPath.toUtf8().constData(), static_cast<int>(feedbackSeeds.size()), addedFeedbackCandidates,
 		     exactSeedCount, boundaryVariantCount, prototypeSeedCount, patternSeedCount,
-		     static_cast<int>(memory.positiveRanges.size()), static_cast<int>(memory.negativeRanges.size()));
+		     static_cast<int>(memory.positiveRanges.size()), semanticPositiveCount, semanticPositiveClusters,
+		     static_cast<int>(memory.negativeRanges.size()), static_cast<long long>(seedGenerationMs),
+		     static_cast<long long>(buildTimer.elapsed()));
 	}
 
 	return candidates;

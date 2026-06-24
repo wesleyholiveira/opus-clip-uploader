@@ -108,7 +108,7 @@ QString rejection(const QVector<ClipCandidate> &candidates)
 		bestEndingResolution = std::max(bestEndingResolution, candidate.scores.semanticEndingResolution);
 		bestBadClip = std::max(bestBadClip, candidate.scores.rerankerBadClip);
 		bestMargin = std::max(bestMargin, candidate.scores.rerankerClipQualityMargin);
-		if (candidate.rejectedByQualityGate) {
+		if (candidate.rejectedByQualityGate || candidate.rejectedAsNoise) {
 			++rejected;
 			const QString reason = candidate.rejectionReason.trimmed().isEmpty() ?
 				QStringLiteral("unknown") : candidate.rejectionReason.trimmed().left(96);
@@ -134,7 +134,7 @@ QString rejection(const QVector<ClipCandidate> &candidates)
 	});
 
 	QStringList rejectedParts;
-	const int rejectedLimit = static_cast<int>(std::min(static_cast<long long>(3), static_cast<long long>(topRejected.size())));
+	const int rejectedLimit = static_cast<int>(std::min(static_cast<long long>(5), static_cast<long long>(topRejected.size())));
 	for (int i = 0; i < rejectedLimit; ++i) {
 		const ClipCandidate &candidate = topRejected.at(i);
 		QStringList arcEvidence;

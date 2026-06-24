@@ -11,7 +11,9 @@
 #include <QTimer>
 
 #include <algorithm>
+#include <future>
 #include <utility>
+#include <vector>
 
 using namespace Curation::Scoring;
 
@@ -156,18 +158,29 @@ QVector<SemanticEmbedding> LlamaServerEmbeddingProvider::embedBatch(const QVecto
 	auto flushPending = [&]() {
 		if (pendingTexts.isEmpty())
 			return;
-		const QVector<SemanticEmbedding> embeddings = postEmbeddingBatch(pendingTexts);
-		if (embeddings.size() == pendingTexts.size()) {
-			for (int i = 0; i < static_cast<int>(embeddings.size()); ++i) {
-				if (embeddings.at(i).isValid()) {
-					result[pendingIndexes.at(i)] = embeddings.at(i);
-					cache_.put(modelId(), pendingTexts.at(i), embeddings.at(i));
-				}
+		QVector<SemanticEmbedding> embeddings = postEmbeddingBatch(pendingTexts);
+		if (embeddings.size() != pendingTexts.size()) {
+			embeddings.clear();
+			embeddings.resize(static_cast<long long>(pendingTexts.size()));
+			// Keep the HTTP fallback conservative: do not parallelize fallback
+			// individual calls because llama-server already serializes and can
+			// return Operation canceled under concurrent local load.
+			for (int i = 0; i < static_cast<int>(pendingTexts.size()); ++i) {
+				if (options_.cancellationCallback && options_.cancellationCallback())
+					break;
+				embeddings[i] = embed(pendingTexts.at(i));
 			}
-		} else {
-			// Keep the batch path safe for server builds that do not support array input.
-			for (int i = 0; i < static_cast<int>(pendingTexts.size()); ++i)
-				result[pendingIndexes.at(i)] = embed(pendingTexts.at(i));
+		}
+		for (int i = 0; i < static_cast<int>(embeddings.size()) && i < static_cast<int>(pendingIndexes.size()); ++i) {
+			const SemanticEmbedding &embedding = embeddings.at(i);
+			if (!embedding.isValid())
+				continue;
+			const int resultIndex = pendingIndexes.at(i);
+			if (resultIndex < 0 || resultIndex >= static_cast<int>(result.size()))
+				continue;
+			result[resultIndex] = embedding;
+			if (i < static_cast<int>(pendingTexts.size()))
+				cache_.put(modelId(), pendingTexts.at(i), embedding);
 		}
 		pendingTexts.clear();
 		pendingIndexes.clear();

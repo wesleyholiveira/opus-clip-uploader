@@ -246,8 +246,8 @@ void open_settings_impl(void *private_data)
 	localEmbeddingBackendItem->setText(0, obsText("Settings.LocalEmbeddingBackend"));
 
 	QComboBox *localEmbeddingBackendInput = new QComboBox(treeWidget);
-	localEmbeddingBackendInput->addItem(obsText("Combobox.Disabled"),
-						 QString::fromLatin1(Curation::Scoring::LOCAL_EMBEDDING_BACKEND_DISABLED));
+	localEmbeddingBackendInput->addItem(QStringLiteral("llama.cpp native (in-process)"),
+						 QString::fromLatin1(Curation::Scoring::LOCAL_EMBEDDING_BACKEND_LLAMA_CPP));
 	localEmbeddingBackendInput->addItem(QStringLiteral("llama-server HTTP"),
 						 QString::fromLatin1(Curation::Scoring::LOCAL_EMBEDDING_BACKEND_LLAMA_SERVER));
 	set_combo_current_data(localEmbeddingBackendInput, Curation::Scoring::localEmbeddingBackendFromConfig(), 0);
@@ -277,8 +277,8 @@ void open_settings_impl(void *private_data)
 	localRerankerBackendItem->setText(0, obsText("Settings.LocalRerankerBackend"));
 
 	QComboBox *localRerankerBackendInput = new QComboBox(treeWidget);
-	localRerankerBackendInput->addItem(obsText("Combobox.Disabled"),
-						 QString::fromLatin1(Curation::Scoring::LOCAL_RERANKER_BACKEND_DISABLED));
+	localRerankerBackendInput->addItem(QStringLiteral("llama.cpp native (in-process)"),
+						 QString::fromLatin1(Curation::Scoring::LOCAL_RERANKER_BACKEND_LLAMA_CPP));
 	localRerankerBackendInput->addItem(QStringLiteral("llama-server HTTP /v1/rerank"),
 						 QString::fromLatin1(Curation::Scoring::LOCAL_RERANKER_BACKEND_LLAMA_SERVER));
 	set_combo_current_data(localRerankerBackendInput, Curation::Scoring::localRerankerBackendFromConfig(), 0);
@@ -319,17 +319,27 @@ void open_settings_impl(void *private_data)
 	};
 
 	auto updateLocalEmbeddingFields = [localEmbeddingBackendInput, localEmbeddingEndpointInput, localEmbeddingModelInput]() {
-		const bool enabled = localEmbeddingBackendInput->currentData().toString() ==
+		const QString backend = localEmbeddingBackendInput->currentData().toString();
+		const bool serverEnabled = backend ==
 			QString::fromLatin1(Curation::Scoring::LOCAL_EMBEDDING_BACKEND_LLAMA_SERVER);
-		localEmbeddingEndpointInput->setEnabled(enabled);
-		localEmbeddingModelInput->setEnabled(enabled);
+		const bool modelEnabled = backend !=
+			QString::fromLatin1(Curation::Scoring::LOCAL_EMBEDDING_BACKEND_DISABLED);
+		localEmbeddingEndpointInput->setEnabled(serverEnabled);
+		localEmbeddingModelInput->setEnabled(modelEnabled);
+		localEmbeddingModelInput->setPlaceholderText(serverEnabled ? QStringLiteral("qwen3-embedding-0.6b-q8_0")
+								     : QStringLiteral("qwen3-embedding-0.6b-q8_0.gguf or full GGUF path"));
 	};
 
 	auto updateLocalRerankerFields = [localRerankerBackendInput, localRerankerEndpointInput, localRerankerModelInput]() {
-		const bool enabled = localRerankerBackendInput->currentData().toString() ==
+		const QString backend = localRerankerBackendInput->currentData().toString();
+		const bool serverEnabled = backend ==
 			QString::fromLatin1(Curation::Scoring::LOCAL_RERANKER_BACKEND_LLAMA_SERVER);
-		localRerankerEndpointInput->setEnabled(enabled);
-		localRerankerModelInput->setEnabled(enabled);
+		const bool modelEnabled = backend !=
+			QString::fromLatin1(Curation::Scoring::LOCAL_RERANKER_BACKEND_DISABLED);
+		localRerankerEndpointInput->setEnabled(serverEnabled);
+		localRerankerModelInput->setEnabled(modelEnabled);
+		localRerankerModelInput->setPlaceholderText(serverEnabled ? QStringLiteral("qwen3-reranker-0.6b-q8_0")
+								    : QStringLiteral("qwen3-reranker-0.6b-q8_0.gguf or full GGUF path"));
 	};
 
 	QObject::connect(localEmbeddingBackendInput, qOverload<int>(&QComboBox::currentIndexChanged), &dialog,

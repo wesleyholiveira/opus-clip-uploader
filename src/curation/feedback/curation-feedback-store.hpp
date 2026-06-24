@@ -28,6 +28,7 @@ struct FeedbackRangeSignal {
 	QString reason;
 	double weight = 1.0;
 	int sequence = 0;
+	bool semanticPrototypeEligible = false;
 };
 
 struct FeedbackRangeMemory {
@@ -38,6 +39,19 @@ struct FeedbackRangeMemory {
 	int contentRecordsRead = 0;
 	int crossVideoRecordsRead = 0;
 	int legacyContentRecordsRead = 0;
+	int rejectedNegativeSignals = 0;
+	int adjustedNegativeSignals = 0;
+	int adjustedPositiveSignals = 0;
+	int adjustedWithoutEditedRangeSignals = 0;
+	int acceptedPositiveSignals = 0;
+	int approvedAdjustedPositiveSignals = 0;
+	int addedByUserPositiveSignals = 0;
+	int semanticPrototypePositiveSignals = 0;
+	int boundaryOnlyPositiveSignals = 0;
+	int negativeSignalsBeforeConflictResolution = 0;
+	int positiveSignalsBeforeConflictResolution = 0;
+	int prunedNegativeSignals = 0;
+	int prunedPositiveSignals = 0;
 	bool loaded = false;
 };
 
@@ -48,7 +62,8 @@ public:
 	static bool appendReviewFeedback(const QString &videoPath, const CurationSettings &settings,
 		const FeedbackSuggestionSnapshot &suggestion, const QVector<ClipDuration> &userRanges,
 		const QString &eventName, const QString &humanReason = {},
-		const QMap<int, QString> &explicitDecisionsBySuggestedIndex = {});
+		const QMap<int, QString> &explicitDecisionsBySuggestedIndex = {},
+		const QMap<int, QJsonObject> &explicitFeedbackBySuggestedIndex = {});
 
 	static QString feedbackDirectoryPath();
 	static QString feedbackJsonlPath();

@@ -26,6 +26,7 @@ public:
 	explicit VideoMarkerEditor(const QString &videoPath, QWidget *parent = nullptr);
 
 	QVector<ClipDuration> clipRanges() const;
+	bool hasExplicitClipMarkers() const;
 	qint64 durationMilliseconds() const;
 	qint64 positionMilliseconds() const;
 	QString formatTimecode(double seconds) const;

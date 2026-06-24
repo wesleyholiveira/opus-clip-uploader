@@ -5,8 +5,10 @@
 #include "curation/feedback/curation-feedback-store.hpp"
 
 #include <QDialog>
+#include <QJsonObject>
 #include <QMap>
 #include <QString>
+#include <QVector>
 
 class QObject;
 class QEvent;
@@ -62,12 +64,32 @@ private:
 	int semanticSuggestionProgressGeneration = 0;
 	Curation::Feedback::FeedbackSuggestionSnapshot lastSemanticSuggestion;
 	QMap<int, QString> explicitReviewDecisions;
+	QMap<int, QJsonObject> explicitReviewFeedbackDetails;
+	QMap<int, QString> diagnosticReviewStates;
+	QMap<int, ClipDuration> diagnosticEditedRanges;
+	QMap<int, int> diagnosticFeedbackSuggestedIndices;
 	bool boundaryFeedbackSaved = false;
 	bool updatingClipTable = false;
+	bool diagnosticReviewMode = false;
 	bool feedbackTranscriptLoaded = false;
 	RecordingTranscript feedbackTranscript;
 
 	void refreshClipTable(const QVector<ClipDuration> &ranges);
+	void refreshDiagnosticCandidateTable();
+	void showDiagnosticCandidateTable();
+	void showReviewMarkerTable();
+	bool isDiagnosticTableRow(int row) const;
+	bool diagnosticRangeForTableRow(int row, ClipDuration *outRange, QJsonObject *outDiagnostic = nullptr) const;
+	void applyEditedDiagnosticRangeTime(int row, int column, const QString &rawValue);
+	ClipDuration normalizedDiagnosticRange(const ClipDuration &range) const;
+	QVector<int> selectedDiagnosticTableRows() const;
+	int diagnosticIndexForTableRow(int row) const;
+	QString diagnosticReviewState(int diagnosticIndex) const;
+	bool hasReviewDiagnosticCandidates() const;
+	void updateDiagnosticModeControls();
+	void updateSuggestClipRangesButtonState();
+	void seekReviewTableRowStart(int row);
+	void seekReviewTableRowEnd(int row);
 	void handleClipTableItemChanged(QTableWidgetItem *item);
 	void applyEditedRangeTime(int row, int column, const QString &rawValue);
 	void setClipRangeAtIndex(int row, double startSec, double endSec, bool seekToChangedBoundary);
@@ -87,7 +109,12 @@ private:
 	void ensureReviewFeedbackSnapshot(const QString &source);
 	void saveBoundaryFeedback(const QString &eventName);
 	void finishReviewFeedback();
+	void showMarkerDiagnostics(int row);
+	QJsonObject diagnosticForRange(const ClipDuration &range, int suggestedIndex = -1) const;
+	bool collectStructuredFeedback(int row, const QString &decision, QJsonObject *outFeedback);
 	void setClipReviewDecision(int row, const QString &decision);
+	void setDiagnosticReviewDecision(int row, const QString &decision);
+	int ensureDiagnosticFeedbackSuggestion(int diagnosticIndex, const ClipDuration &range, const QJsonObject &diagnostic);
 	int suggestedIndexForRange(const ClipDuration &range) const;
 	int ensureFeedbackSuggestionForRange(const ClipDuration &range, const QString &source);
 	bool loadFeedbackTranscriptIfAvailable();

@@ -554,6 +554,11 @@ QVector<ClipDuration> VideoMarkerEditor::clipRanges() const
 	return ranges;
 }
 
+bool VideoMarkerEditor::hasExplicitClipMarkers() const
+{
+	return !clipMarkersSec.isEmpty();
+}
+
 qint64 VideoMarkerEditor::durationMilliseconds() const
 {
 	return durationMs;

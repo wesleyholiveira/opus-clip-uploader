@@ -22,6 +22,35 @@ static double absoluteRerankerScore(double rawScore)
 	return boundedScore(1.0 / (1.0 + std::exp(-rawScore)));
 }
 
+
+static QVector<double> scoreBatchChunked(const SemanticReranker *reranker, const QString &query,
+	const QVector<QString> &candidateTexts)
+{
+	if (!reranker || candidateTexts.isEmpty())
+		return {};
+
+	// Keep the provider call serial. Native llama.cpp already runs in-process and
+	// HTTP llama-server is more stable with one request at a time; previous
+	// concurrent HTTP batches increased Operation canceled/invalid responses.
+	static constexpr int kBatchSize = 8;
+	QVector<double> scores;
+	scores.reserve(static_cast<long long>(candidateTexts.size()));
+	for (int offset = 0; offset < candidateTexts.size(); offset += kBatchSize) {
+		const int batchSize = std::min(kBatchSize, static_cast<int>(candidateTexts.size()) - offset);
+		QVector<QString> batchTexts;
+		batchTexts.reserve(batchSize);
+		for (int i = 0; i < batchSize; ++i)
+			batchTexts.append(candidateTexts.at(offset + i));
+		const QVector<double> batchScores = reranker->scoreBatch(query, batchTexts);
+		if (batchScores.size() != batchSize)
+			return {};
+		for (const double score : batchScores)
+			scores.append(score);
+	}
+	return scores.size() == candidateTexts.size() ? scores : QVector<double>();
+}
+
+
 static QVector<double> normalizedScores(const QVector<double> &rawScores)
 {
 	if (rawScores.isEmpty())
@@ -178,10 +207,12 @@ QVector<ClipCandidate> SemanticRerankerStage::apply(QVector<ClipCandidate> candi
 	for (const ClipCandidate &candidate : candidates)
 		candidateTexts.append(documentForCandidate(candidate, context));
 
-	for (ClipCandidate &candidate : candidates)
+	for (ClipCandidate &candidate : candidates) {
 		candidate.rerankerAttempted = true;
+		candidate.evidence.append(QStringLiteral("reranker_chunked_batch_stage"));
+	}
 
-	const QVector<double> rawPositiveScores = reranker->scoreBatch(queryForContext(context), candidateTexts);
+	const QVector<double> rawPositiveScores = scoreBatchChunked(reranker, queryForContext(context), candidateTexts);
 	if (rawPositiveScores.size() != candidates.size()) {
 		QString failureReason = reranker->lastError().trimmed();
 		if (failureReason.isEmpty())
@@ -195,9 +226,9 @@ QVector<ClipCandidate> SemanticRerankerStage::apply(QVector<ClipCandidate> candi
 		return candidates;
 	}
 
-	const QVector<double> rawOpeningDefects = reranker->scoreBatch(openingDefectQueryForContext(context), candidateTexts);
-	const QVector<double> rawEndingDefects = reranker->scoreBatch(endingDefectQueryForContext(context), candidateTexts);
-	const QVector<double> rawStructureDefects = reranker->scoreBatch(structureDefectQueryForContext(context), candidateTexts);
+	const QVector<double> rawOpeningDefects = scoreBatchChunked(reranker, openingDefectQueryForContext(context), candidateTexts);
+	const QVector<double> rawEndingDefects = scoreBatchChunked(reranker, endingDefectQueryForContext(context), candidateTexts);
+	const QVector<double> rawStructureDefects = scoreBatchChunked(reranker, structureDefectQueryForContext(context), candidateTexts);
 	const bool hasOpeningDefects = rawOpeningDefects.size() == candidates.size();
 	const bool hasEndingDefects = rawEndingDefects.size() == candidates.size();
 	const bool hasStructureDefects = rawStructureDefects.size() == candidates.size();

@@ -9,6 +9,20 @@ using namespace Curation::Scoring;
 
 namespace {
 
+static bool isNeutralRerankerFailureReason(const QString &failureReason)
+{
+	const QString failure = failureReason.trimmed().toLower();
+	if (failure.isEmpty())
+		return true;
+	return failure.contains(QStringLiteral("operation canceled")) ||
+	       failure.contains(QStringLiteral("operation cancelled")) ||
+	       failure.contains(QStringLiteral("http_error")) ||
+	       failure.contains(QStringLiteral("network")) ||
+	       failure.contains(QStringLiteral("timeout")) ||
+	       failure.contains(QStringLiteral("timed out")) ||
+	       failure.contains(QStringLiteral("invalid_batch_response"));
+}
+
 static double boundedScore(double value)
 {
 	return std::clamp(value, 0.0, 1.0);
@@ -471,13 +485,15 @@ QString CandidateQualityGate::rejectionReason(const ClipCandidate &candidate,
 	if (options.requireRerankerWhenAvailable && options.rejectInvalidRerankerWhenRequired &&
 	    candidate.rerankerAttempted && !candidate.rerankerAvailable) {
 		const QString failure = candidate.rerankerFailureReason.trimmed();
-		return failure.isEmpty() ? QStringLiteral("reranker_unavailable")
-					     : QStringLiteral("reranker_%1").arg(failure.left(80));
+		if (!isNeutralRerankerFailureReason(failure))
+			return failure.isEmpty() ? QStringLiteral("reranker_unavailable")
+						     : QStringLiteral("reranker_%1").arg(failure.left(80));
 	}
 	if (options.requireRerankerWhenAvailable && candidate.rerankerFailed) {
 		const QString failure = candidate.rerankerFailureReason.trimmed();
-		return failure.isEmpty() ? QStringLiteral("reranker_failed")
-					     : QStringLiteral("reranker_%1").arg(failure.left(80));
+		if (!isNeutralRerankerFailureReason(failure))
+			return failure.isEmpty() ? QStringLiteral("reranker_failed")
+						     : QStringLiteral("reranker_%1").arg(failure.left(80));
 	}
 
 	const bool viewerPreset = options.presetId == QStringLiteral("viewer_message_response");
