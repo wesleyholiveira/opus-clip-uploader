@@ -78,10 +78,10 @@ LlamaCppEmbeddingProviderOptions Curation::Scoring::llamaCppEmbeddingOptionsFrom
 						 options.modelPathOrId).trimmed();
 	options.maxTextChars = configInt(QString::fromLatin1(CONFIG_LOCAL_EMBEDDING_MAX_TEXT_CHARS),
 					  options.maxTextChars, 500, 24000);
-	// The native provider now packs multiple independent texts into one llama.cpp
-	// decode call. Keep the sequence batch conservative inside OBS to avoid
-	// reintroducing the Qwen3 KV crash while still amortizing decode overhead.
-	options.maxBatchSize = 8;
+	// Keep the native provider on the stable single-sequence llama.cpp path.
+	// Multi-sequence batching is intentionally disabled inside OBS; throughput is
+	// improved via persistent embedding cache and fewer embedding calls instead.
+	options.maxBatchSize = 1;
 	options.contextSize = std::max(1024, std::min(4096, options.maxTextChars));
 	options.batchSize = 512;
 	options.gpuLayers = -1;

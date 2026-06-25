@@ -217,6 +217,52 @@ bool ViewerArcGate::hasExplicitViewerOrigin(const ClipCandidate &candidate) cons
 		hasEvidenceContaining(candidate, QStringLiteral("flags=origin"));
 }
 
+
+bool ViewerArcGate::hasDirectPositiveFeedbackArcSupport(const ClipCandidate &candidate) const
+{
+	if (isFeedbackSuppressed(candidate))
+		return false;
+
+	const double positiveRange = evidenceScoreValue(candidate, QStringLiteral("feedback_positive_range:"));
+	const double positiveText = evidenceScoreValue(candidate, QStringLiteral("feedback_positive_text:"));
+	const double positiveGuided = evidenceScoreValue(candidate, QStringLiteral("feedback_positive_guided_score:"));
+	const bool exactPositiveSeed = isUserAcceptedFeedbackSeed(candidate) || positiveRange >= 0.92;
+	if (!exactPositiveSeed && hasHardContextBlockerForLearnedArc(candidate))
+		return false;
+
+	const QString reason = invalidReason(candidate);
+	if (reason == QStringLiteral("multiple_viewer_messages_inside_arc") ||
+	    reason == QStringLiteral("topic_shift_before_resolution"))
+		return false;
+
+	if (hasEvidence(candidate, QStringLiteral("feedback_negative_contamination")) ||
+	    hasEvidence(candidate, QStringLiteral("feedback_negative_suppressed")) ||
+	    hasEvidence(candidate, QStringLiteral("feedback_consistency_rejected")) ||
+	    hasEvidence(candidate, QStringLiteral("feedback_trained_ranker_rejected_negative_contamination")))
+		return false;
+
+	const double negativeRange = evidenceScoreValue(candidate, QStringLiteral("feedback_negative_range:"));
+	const double negativeText = evidenceScoreValue(candidate, QStringLiteral("feedback_negative_text:"));
+	const double feedbackMargin = evidenceScoreValue(candidate, QStringLiteral("feedback_margin:"));
+	const double positiveSum = positiveRange + positiveText + positiveGuided;
+	const double negativeSum = negativeRange + negativeText;
+	const bool exactPositiveRange = positiveRange >= 0.92;
+	const bool strongPositiveText = positiveText >= 0.82;
+	const bool explicitPositiveEvidence = hasEvidence(candidate, QStringLiteral("feedback_positive_range_explains_candidate"));
+	const bool positiveDominates = feedbackMargin >= 0.12 && positiveSum >= negativeSum + 0.18;
+	if (!(exactPositiveRange && (strongPositiveText || explicitPositiveEvidence) && positiveDominates))
+		return false;
+
+	const bool viewerOrAnswer = hasExplicitViewerOrigin(candidate) || candidate.scores.semanticViewerMessage >= 0.60 ||
+		candidate.scores.viewerResponse >= 0.60 || candidate.scores.semanticDirectAnswer >= 0.62 ||
+		(exactPositiveSeed && positiveText >= 0.82);
+	const bool hasUsefulEnding = candidate.scores.semanticEndingResolution >= 0.62 ||
+		candidate.scores.semanticResolution >= 0.62 || candidate.endsBeforeNextCue ||
+		(exactPositiveSeed && candidate.scores.semanticEndingResolution >= 0.56);
+	const bool notBadlyContaminated = negativeRange < 0.55 && negativeText < 0.58;
+	return viewerOrAnswer && hasUsefulEnding && notBadlyContaminated;
+}
+
 bool ViewerArcGate::hasLearnedFeedbackArcSupport(const ClipCandidate &candidate) const
 {
 	if (isFeedbackSuppressed(candidate))
@@ -454,9 +500,11 @@ bool ViewerArcGate::hasCompleteArc(const ClipCandidate &candidate, const ViewerA
 		return true;
 	if (candidate.range.endSec <= candidate.range.startSec || candidate.text.trimmed().isEmpty())
 		return false;
+	if (isUserAcceptedFeedbackSeed(candidate))
+		return true;
 	if (isFeedbackSuppressed(candidate))
 		return false;
-	if (isUserAcceptedFeedbackSeed(candidate))
+	if (hasDirectPositiveFeedbackArcSupport(candidate))
 		return true;
 	if (hasLearnedFeedbackArcSupport(candidate))
 		return true;
@@ -491,21 +539,23 @@ QVector<ClipCandidate> ViewerArcGate::apply(QVector<ClipCandidate> candidates, c
 	for (ClipCandidate &candidate : candidates) {
 		if (hasCompleteArc(candidate, options)) {
 			const bool userSeed = isUserAcceptedFeedbackSeed(candidate);
-			const bool learnedSeed = !userSeed && hasLearnedFeedbackArcSupport(candidate);
+			const bool directPositiveSeed = !userSeed && hasDirectPositiveFeedbackArcSupport(candidate);
+			const bool learnedSeed = !userSeed && !directPositiveSeed && hasLearnedFeedbackArcSupport(candidate);
 			const QString previousReason = candidate.rejectionReason.trimmed();
-			if (candidate.rejectedByQualityGate && (userSeed || learnedSeed)) {
+			if (candidate.rejectedByQualityGate && (userSeed || directPositiveSeed || learnedSeed)) {
 				candidate.rejectedByQualityGate = false;
 				candidate.rejectionReason.clear();
-				candidate.scores.qualityGate = std::max(candidate.scores.qualityGate, learnedSeed ? 0.68 : 0.92);
-				candidate.scores.final = std::max(candidate.scores.final, learnedSeed ? 0.52 : 0.88);
+				candidate.scores.qualityGate = std::max(candidate.scores.qualityGate, userSeed ? 0.92 : directPositiveSeed ? 0.74 : 0.68);
+				candidate.scores.final = std::max(candidate.scores.final, userSeed ? 0.88 : directPositiveSeed ? 0.60 : 0.52);
 				candidate.evidence.append(QStringLiteral("arc_gate_cleared_prior_quality_rejection"));
 				if (!previousReason.isEmpty())
 					candidate.evidence.append(QStringLiteral("arc_gate_cleared_prior_quality_rejection_from:%1").arg(previousReason.left(80)));
 			}
 			candidate.evidence.append(userSeed
 				? QStringLiteral("complete_viewer_arc_gate_passed_by_user_feedback")
-				: (learnedSeed ? QStringLiteral("complete_viewer_arc_gate_passed_by_feedback_trained_ranker")
-				               : QStringLiteral("complete_viewer_arc_gate_passed")));
+				: (directPositiveSeed ? QStringLiteral("complete_viewer_arc_gate_passed_by_direct_positive_feedback")
+				               : (learnedSeed ? QStringLiteral("complete_viewer_arc_gate_passed_by_feedback_trained_ranker")
+				                              : QStringLiteral("complete_viewer_arc_gate_passed"))));
 			candidate.evidence.removeDuplicates();
 			continue;
 		}

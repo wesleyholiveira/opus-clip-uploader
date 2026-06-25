@@ -4,6 +4,7 @@
 #include "curation/scoring/candidate-stage-limiter.hpp"
 #include "curation/scoring/candidate-beam-expander.hpp"
 #include "curation/scoring/candidate-builder.hpp"
+#include "curation/scoring/cheap-clip-scorer.hpp"
 #include "curation/scoring/candidate-source-builder.hpp"
 #include "curation/scoring/boundary-refinement-stage.hpp"
 #include "curation/scoring/feedback-aware-interval-selector.hpp"
@@ -16,6 +17,7 @@
 #include "curation/scoring/pipeline-progress.hpp"
 
 #include <QStringList>
+#include <QSet>
 #include <QElapsedTimer>
 
 #ifdef __cplusplus
@@ -153,13 +155,61 @@ static bool hasSimilarDiagnosticRange(const QVector<ClipCandidate> &diagnostics,
 	return false;
 }
 
-static QVector<ClipCandidate> topRejectedCandidatesForDiagnostics(const QVector<ClipCandidate> &candidates, int limit = 12)
+static bool validMemoryRange(const ClipDuration &range)
+{
+	return std::isfinite(range.startSec) && std::isfinite(range.endSec) && range.endSec > range.startSec;
+}
+
+static double rangeOverlapSec(const ClipDuration &left, const ClipDuration &right)
+{
+	return std::max(0.0, std::min(left.endSec, right.endSec) - std::max(left.startSec, right.startSec));
+}
+
+static bool rangeMatchesReviewedSignal(const ClipDuration &range,
+	const Curation::Feedback::FeedbackRangeSignal &signal)
+{
+	if (!validMemoryRange(range) || !validMemoryRange(signal.range))
+		return false;
+	const double similarity = FeedbackSimilarityScorer::rangeSimilarity(signal.range, range);
+	if (similarity >= 0.78)
+		return true;
+	const double boundaryDistance = std::fabs(signal.range.startSec - range.startSec) +
+		std::fabs(signal.range.endSec - range.endSec);
+	if (boundaryDistance <= 18.0)
+		return true;
+	const double centerDistance = std::fabs(diagnosticRangeCenter(signal.range) - diagnosticRangeCenter(range));
+	const double minDuration = std::min(signal.range.endSec - signal.range.startSec, range.endSec - range.startSec);
+	return centerDistance <= 24.0 && minDuration > 0.0 && rangeOverlapSec(signal.range, range) >= minDuration * 0.70;
+}
+
+static bool rangeWasAlreadyReviewedByFeedback(const ClipDuration &range,
+	const Curation::Feedback::FeedbackRangeMemory &memory)
+{
+	if (!memory.loaded)
+		return false;
+	for (const Curation::Feedback::FeedbackRangeSignal &signal : memory.positiveRanges) {
+		if (rangeMatchesReviewedSignal(range, signal))
+			return true;
+	}
+	for (const Curation::Feedback::FeedbackRangeSignal &signal : memory.negativeRanges) {
+		if (rangeMatchesReviewedSignal(range, signal))
+			return true;
+	}
+	return false;
+}
+
+
+static QVector<ClipCandidate> topRejectedCandidatesForDiagnostics(const QVector<ClipCandidate> &candidates,
+	int limit = 12,
+	const Curation::Feedback::FeedbackRangeMemory *feedbackMemory = nullptr)
 {
 	QVector<ClipCandidate> rejected;
 	for (const ClipCandidate &candidate : candidates) {
 		if (candidate.range.endSec <= candidate.range.startSec || !isRejectedCandidate(candidate))
 			continue;
 		if (isFeedbackSuppressedRejectedCandidate(candidate))
+			continue;
+		if (feedbackMemory && rangeWasAlreadyReviewedByFeedback(candidate.range, *feedbackMemory))
 			continue;
 		rejected.append(candidate);
 	}
@@ -282,6 +332,7 @@ struct NoveltyExplorationBuildStats {
 	long long generationMs = 0;
 	long long localScoreMs = 0;
 	long long diversityMs = 0;
+	int reviewedSuppressed = 0;
 };
 
 static double localExplorationScore(const ClipCandidate &candidate, const FeedbackSimilarityFeatures &feedback)
@@ -310,6 +361,124 @@ static bool hasSimilarExplorationRange(const QVector<ClipCandidate> &candidates,
 	return false;
 }
 
+static QString noveltyRangeKey(const ClipDuration &range)
+{
+	return QStringLiteral("%1:%2")
+		.arg(static_cast<int>(std::round(range.startSec * 2.0)))
+		.arg(static_cast<int>(std::round(range.endSec * 2.0)));
+}
+
+static QVector<double> fastNoveltyDurations(const CandidateGenerationOptions &generation)
+{
+	QVector<double> durations{
+		std::clamp(24.0, generation.minDurationSec, generation.maxDurationSec),
+		std::clamp(38.0, generation.minDurationSec, generation.maxDurationSec),
+		std::clamp(58.0, generation.minDurationSec, generation.maxDurationSec),
+		std::clamp(82.0, generation.minDurationSec, generation.maxDurationSec),
+	};
+	durations.erase(std::unique(durations.begin(), durations.end(), [](double left, double right) {
+		return std::fabs(left - right) < 0.25;
+	}), durations.end());
+	return durations;
+}
+
+static QVector<ClipCandidate> buildFastNoveltyRawCandidates(const TranscriptIndex &index,
+	const ClipScoringPipelineOptions &options,
+	int maxRawCandidates)
+{
+	QVector<ClipCandidate> candidates;
+	if (index.isEmpty() || maxRawCandidates <= 0)
+		return candidates;
+
+	CandidateSourceBuilderOptions sourceOptions = candidateSourceOptionsFromOptions(options);
+	sourceOptions.generation.maxRawCandidates = maxRawCandidates;
+	CheapClipScorer cueScorer;
+
+	struct Anchor {
+		int segmentIndex = -1;
+		double score = 0.0;
+		bool targetHit = false;
+		bool viewerCue = false;
+	};
+
+	QVector<Anchor> anchors;
+	anchors.reserve(96);
+	const ClipDuration searchRange = sourceOptions.generation.searchRange;
+	const int segmentStride = index.size() >= 2200 ? 2 : 1;
+	for (int i = 0; i < index.size(); i += segmentStride) {
+		const TranscriptSegment *segment = index.segmentAt(i);
+		if (!segment || !TranscriptIndex::segmentOverlapsRange(*segment, searchRange) || segment->text.trimmed().isEmpty())
+			continue;
+		const bool targetHit = sourceOptions.generation.reliableMainTarget &&
+			cueScorer.targetKeywordScore(segment->text, sourceOptions.generation.mainTarget) >= 0.30;
+		const bool strongCue = cueScorer.hasStrongLocalCue(segment->text);
+		if (!targetHit && !strongCue)
+			continue;
+		const bool viewerCue = cueScorer.looksLikeQuestionOrViewerMessage(segment->text);
+		double score = 0.0;
+		if (targetHit)
+			score += 0.44;
+		if (viewerCue)
+			score += 0.24;
+		if (strongCue)
+			score += 0.18;
+		score += std::min(0.18, static_cast<double>(segment->text.trimmed().size()) / 700.0);
+		anchors.append(Anchor{i, score, targetHit, viewerCue});
+	}
+
+	std::sort(anchors.begin(), anchors.end(), [](const Anchor &left, const Anchor &right) {
+		if (std::fabs(left.score - right.score) > 0.0001)
+			return left.score > right.score;
+		return left.segmentIndex < right.segmentIndex;
+	});
+	const int maxAnchors = std::min(static_cast<int>(anchors.size()), std::max(16, maxRawCandidates / 3));
+	const QVector<double> durations = fastNoveltyDurations(sourceOptions.generation);
+	const QVector<double> startOffsets = options.scoring.presetId == QStringLiteral("viewer_message_response")
+		? QVector<double>{-44.0, -32.0, -18.0, -8.0}
+		: QVector<double>{-18.0, -8.0, 0.0};
+	QSet<QString> seen;
+	candidates.reserve(maxRawCandidates);
+
+	SemanticCoarseRegion syntheticRegion;
+	syntheticRegion.score = 0.58;
+	syntheticRegion.evidence.append(QStringLiteral("feedback_novelty_fast_generation"));
+
+	for (int anchorPosition = 0; anchorPosition < maxAnchors && static_cast<int>(candidates.size()) < maxRawCandidates;
+	     ++anchorPosition) {
+		const Anchor &anchor = anchors.at(anchorPosition);
+		const TranscriptSegment *segment = index.segmentAt(anchor.segmentIndex);
+		if (!segment)
+			continue;
+		for (const double duration : durations) {
+			for (const double offset : startOffsets) {
+				ClipDuration range{segment->startSec + offset, segment->startSec + offset + duration};
+				range = index.clampRange(range, searchRange);
+				if (range.endSec - range.startSec < sourceOptions.generation.minDurationSec)
+					continue;
+				const QString key = noveltyRangeKey(range);
+				if (seen.contains(key))
+					continue;
+				seen.insert(key);
+				ClipCandidate candidate = CandidateBuilder::buildForRange(index, sourceOptions.generation,
+					sourceOptions.scoring, sourceOptions.qualityGate, range, syntheticRegion);
+				candidate.source = anchor.targetHit ? QStringLiteral("target_anchor") : QStringLiteral("cue_anchor");
+				candidate.startsNearViewerCue = anchor.viewerCue;
+				candidate.anchorText = segment->text.trimmed().left(220);
+				candidate.evidence.append(QStringLiteral("feedback_novelty_fast_anchor_generation"));
+				candidate.evidence.removeDuplicates();
+				if (!CandidateBuilder::isStructurallyViable(candidate, sourceOptions.generation, sourceOptions.qualityGate))
+					continue;
+				candidates.append(candidate);
+				if (static_cast<int>(candidates.size()) >= maxRawCandidates)
+					break;
+			}
+			if (static_cast<int>(candidates.size()) >= maxRawCandidates)
+				break;
+		}
+	}
+	return candidates;
+}
+
 static QVector<ClipCandidate> buildNoveltyExplorationCandidates(const TranscriptIndex &index,
 	const ClipScoringPipelineOptions &options,
 	const Curation::Feedback::FeedbackRangeMemory &memory,
@@ -328,10 +497,21 @@ static QVector<ClipCandidate> buildNoveltyExplorationCandidates(const Transcript
 	sourceOptions.generation.maxRawCandidates = explorationRawLimit;
 	sourceOptions.generation.slidingWindowStepSec = std::max(30.0, options.generation.slidingWindowStepSec);
 
-	CandidateSourceBuilder sourceBuilder;
-	QVector<ClipCandidate> raw = sourceBuilder.fromLocalHeuristics(index, sourceOptions);
+	QVector<ClipCandidate> raw = buildFastNoveltyRawCandidates(index, options, explorationRawLimit);
 	localStats.generationMs = stageTimer.elapsed();
 	localStats.rawCandidates = static_cast<int>(raw.size());
+	if (memory.loaded && !raw.isEmpty()) {
+		QVector<ClipCandidate> unreviewedRaw;
+		unreviewedRaw.reserve(raw.size());
+		for (const ClipCandidate &candidate : raw) {
+			if (rangeWasAlreadyReviewedByFeedback(candidate.range, memory)) {
+				++localStats.reviewedSuppressed;
+				continue;
+			}
+			unreviewedRaw.append(candidate);
+		}
+		raw = std::move(unreviewedRaw);
+	}
 
 	if (raw.isEmpty()) {
 		if (stats)
@@ -354,6 +534,8 @@ static QVector<ClipCandidate> buildNoveltyExplorationCandidates(const Transcript
 		QVector<LocalScoredCandidate> accepted;
 		accepted.reserve(slice.size());
 		for (ClipCandidate candidate : slice) {
+			if (rangeWasAlreadyReviewedByFeedback(candidate.range, memory))
+				continue;
 			if (candidate.range.endSec <= candidate.range.startSec || candidate.text.trimmed().size() < 80)
 				continue;
 			if (!CandidateBuilder::isStructurallyViable(candidate, sourceOptions.generation, sourceOptions.qualityGate))
@@ -413,7 +595,10 @@ static QVector<ClipCandidate> buildNoveltyExplorationCandidates(const Transcript
 	});
 
 	QVector<ClipCandidate> exploration;
-	const int expensiveLimit = semanticPositiveCount > 0 ? 10 : 12;
+	// This fallback only needs a small diagnostic pool. Keeping it tight avoids
+	// spending tens of seconds reranking and boundary-refining candidates that are
+	// likely to be shown as review diagnostics instead of applied markers.
+	const int expensiveLimit = semanticPositiveCount > 0 ? 4 : 6;
 	exploration.reserve(expensiveLimit);
 	for (const LocalScoredCandidate &candidate : scored) {
 		if (exploration.size() >= expensiveLimit)
@@ -429,9 +614,11 @@ static QVector<ClipCandidate> buildNoveltyExplorationCandidates(const Transcript
 	return exploration;
 }
 
-static QVector<ClipCandidate> explorationDiagnosticsFromCandidates(const QVector<ClipCandidate> &candidates, int limit = 12)
+static QVector<ClipCandidate> explorationDiagnosticsFromCandidates(const QVector<ClipCandidate> &candidates,
+	const Curation::Feedback::FeedbackRangeMemory &memory,
+	int limit = 12)
 {
-	QVector<ClipCandidate> diagnostics = topRejectedCandidatesForDiagnostics(candidates, limit);
+	QVector<ClipCandidate> diagnostics = topRejectedCandidatesForDiagnostics(candidates, limit, &memory);
 	if (diagnostics.size() >= limit)
 		return diagnostics;
 
@@ -439,6 +626,8 @@ static QVector<ClipCandidate> explorationDiagnosticsFromCandidates(const QVector
 		if (diagnostics.size() >= limit)
 			break;
 		if (candidate.range.endSec <= candidate.range.startSec || isFeedbackSuppressedRejectedCandidate(candidate))
+			continue;
+		if (rangeWasAlreadyReviewedByFeedback(candidate.range, memory))
 			continue;
 		if (isRejectedCandidate(candidate))
 			continue;
@@ -453,6 +642,33 @@ static QVector<ClipCandidate> explorationDiagnosticsFromCandidates(const QVector
 	}
 	return diagnostics;
 }
+
+static QVector<ClipCandidate> noveltyTimelineCandidatesFromCandidates(const QVector<ClipCandidate> &candidates,
+	const Curation::Feedback::FeedbackRangeMemory &memory,
+	int limit = 4)
+{
+	QVector<ClipCandidate> promotable;
+	const int maxItems = std::max(1, limit);
+	for (ClipCandidate candidate : candidates) {
+		if (promotable.size() >= maxItems)
+			break;
+		if (candidate.range.endSec <= candidate.range.startSec || candidate.text.trimmed().isEmpty())
+			continue;
+		if (isRejectedCandidate(candidate) || isFeedbackSuppressedRejectedCandidate(candidate))
+			continue;
+		if (rangeWasAlreadyReviewedByFeedback(candidate.range, memory) &&
+		    !candidateHasEvidence(candidate, QStringLiteral("complete_viewer_arc_gate_passed_by_user_feedback")) &&
+		    !candidateHasEvidence(candidate, QStringLiteral("complete_viewer_arc_gate_passed_by_direct_positive_feedback")))
+			continue;
+		if (hasSimilarExplorationRange(promotable, candidate.range))
+			continue;
+		candidate.evidence.append(QStringLiteral("feedback_novelty_exploration_promoted_to_timeline"));
+		candidate.evidence.removeDuplicates();
+		promotable.append(candidate);
+	}
+	return promotable;
+}
+
 
 static ViewerArcGateOptions viewerArcGateOptionsFromOptions(const ClipScoringPipelineOptions &options)
 {
@@ -701,7 +917,7 @@ if (candidates.isEmpty()) {
 		     options.videoPath.toUtf8().constData(), feedbackGateRejectionDiagnostics(candidates).toUtf8().constData());
 	}
 	const QVector<ClipCandidate> candidatesBeforeRejectedErase = candidates;
-	const QVector<ClipCandidate> rejectedAfterArcGate = topRejectedCandidatesForDiagnostics(candidates);
+	const QVector<ClipCandidate> rejectedAfterArcGate = topRejectedCandidatesForDiagnostics(candidates, 12, feedbackMemory.loaded ? &feedbackMemory : nullptr);
 	candidates.erase(std::remove_if(candidates.begin(), candidates.end(), isRejectedCandidate), candidates.end());
 
 	if (PipelineProgress::stopIfCanceled(options, result, QStringLiteral("canceled_before_final_ranking")))
@@ -718,10 +934,10 @@ if (candidates.isEmpty()) {
 			NoveltyExplorationBuildStats noveltyStats;
 			QVector<ClipCandidate> exploration = buildNoveltyExplorationCandidates(index, options, feedbackMemory, &noveltyStats);
 			blog(LOG_INFO,
-			     "[clip-cropper] Starting novelty exploration fallback. video=%s suppressed=%d raw=%d localAccepted=%d filtered=%d workers=%d generationMs=%lld localScoreMs=%lld diversityMs=%lld negative=%d positive=%d semanticPositive=%d",
+			     "[clip-cropper] Starting novelty exploration fallback. video=%s suppressed=%d raw=%d reviewedSuppressed=%d localAccepted=%d filtered=%d workers=%d generationMs=%lld localScoreMs=%lld diversityMs=%lld negative=%d positive=%d semanticPositive=%d",
 			     options.videoPath.toUtf8().constData(), feedbackSuppressedAfterArcGate, noveltyStats.rawCandidates,
-			     noveltyStats.localAccepted, static_cast<int>(exploration.size()), noveltyStats.workerCount,
-			     noveltyStats.generationMs, noveltyStats.localScoreMs, noveltyStats.diversityMs,
+			     noveltyStats.reviewedSuppressed, noveltyStats.localAccepted, static_cast<int>(exploration.size()),
+			     noveltyStats.workerCount, noveltyStats.generationMs, noveltyStats.localScoreMs, noveltyStats.diversityMs,
 			     static_cast<int>(feedbackMemory.negativeRanges.size()),
 			     static_cast<int>(feedbackMemory.positiveRanges.size()), semanticPrototypePositiveRangeCount(feedbackMemory));
 
@@ -768,15 +984,22 @@ if (candidates.isEmpty()) {
 				explorationArcGate.recoverMissingOpenings(index, exploration, arcGateOptions);
 				exploration = explorationArcGate.apply(std::move(exploration), arcGateOptions);
 				gateMs = stageTimer.elapsed();
-				diagnostics = explorationDiagnosticsFromCandidates(exploration);
-				if (diagnostics.isEmpty()) {
-					diagnostics = explorationDiagnosticsFromCandidates(diagnosticPreGatePool);
+				QVector<ClipCandidate> promotedNovelty = noveltyTimelineCandidatesFromCandidates(exploration, feedbackMemory, options.ranking.maxCandidates);
+				if (!promotedNovelty.isEmpty()) {
+					blog(LOG_INFO,
+					     "[clip-cropper] Novelty exploration promoted candidates to timeline. video=%s promoted=%d",
+					     options.videoPath.toUtf8().constData(), static_cast<int>(promotedNovelty.size()));
+					candidates = std::move(promotedNovelty);
+				}
+				diagnostics = candidates.isEmpty() ? explorationDiagnosticsFromCandidates(exploration, feedbackMemory) : QVector<ClipCandidate>{};
+				if (candidates.isEmpty() && diagnostics.isEmpty()) {
+					diagnostics = explorationDiagnosticsFromCandidates(diagnosticPreGatePool, feedbackMemory);
 					if (!diagnostics.isEmpty())
 						blog(LOG_INFO, "[clip-cropper] Novelty exploration diagnostics recovered from pre-gate pool. video=%s count=%d",
 						     options.videoPath.toUtf8().constData(), static_cast<int>(diagnostics.size()));
 				}
-				if (diagnostics.isEmpty()) {
-					diagnostics = explorationDiagnosticsFromCandidates(diagnosticFallbackPool);
+				if (candidates.isEmpty() && diagnostics.isEmpty()) {
+					diagnostics = explorationDiagnosticsFromCandidates(diagnosticFallbackPool, feedbackMemory);
 					if (!diagnostics.isEmpty())
 						blog(LOG_INFO, "[clip-cropper] Novelty exploration diagnostics recovered from local candidate pool. video=%s count=%d",
 						     options.videoPath.toUtf8().constData(), static_cast<int>(diagnostics.size()));
@@ -789,14 +1012,16 @@ if (candidates.isEmpty()) {
 			     semanticMs, rerankMs, boundaryMs, gateMs, static_cast<long long>(noveltyTimer.elapsed()));
 		}
 
-		result.rejectedCandidateDiagnostics = diagnostics;
-		const QString reason = diagnostics.isEmpty()
-			? QStringLiteral("feedback_guided_scoring_found_no_consistent_complete_arcs")
-			: QStringLiteral("feedback_novelty_exploration_candidates_require_review");
-		result.summary = ClipScoringPipelineSummary::noCandidate(reason, diagnostics);
-		logRejectedCandidateDiagnostics(options.videoPath, diagnostics.isEmpty() ? QStringLiteral("viewer_arc_gate") : QStringLiteral("novelty_exploration"), diagnostics);
-		PipelineProgress::report(options, QStringLiteral("Marker suggestion analysis finished."), 100);
-		return result;
+		if (candidates.isEmpty()) {
+			result.rejectedCandidateDiagnostics = diagnostics;
+			const QString reason = diagnostics.isEmpty()
+				? QStringLiteral("feedback_guided_scoring_found_no_consistent_complete_arcs")
+				: QStringLiteral("feedback_novelty_exploration_candidates_require_review");
+			result.summary = ClipScoringPipelineSummary::noCandidate(reason, diagnostics);
+			logRejectedCandidateDiagnostics(options.videoPath, diagnostics.isEmpty() ? QStringLiteral("viewer_arc_gate") : QStringLiteral("novelty_exploration"), diagnostics);
+			PipelineProgress::report(options, QStringLiteral("Marker suggestion analysis finished."), 100);
+			return result;
+		}
 	}
 
 	ClipRankerOptions finalRanking = options.ranking;
@@ -807,7 +1032,7 @@ if (candidates.isEmpty()) {
 		candidates = feedbackGate.apply(std::move(candidates), index, feedbackMemory, feedbackGateOptions);
 		FeedbackTrainedRanker trainedRanker;
 		candidates = trainedRanker.apply(std::move(candidates), index, feedbackMemory, options.scoring.presetId, options.videoPath);
-		const QVector<ClipCandidate> rejectedAfterFinalFeedbackGate = topRejectedCandidatesForDiagnostics(candidates);
+		const QVector<ClipCandidate> rejectedAfterFinalFeedbackGate = topRejectedCandidatesForDiagnostics(candidates, 12, &feedbackMemory);
 		candidates.erase(std::remove_if(candidates.begin(), candidates.end(), isRejectedCandidate), candidates.end());
 		if (candidates.isEmpty()) {
 			result.rejectedCandidateDiagnostics = rejectedAfterFinalFeedbackGate;

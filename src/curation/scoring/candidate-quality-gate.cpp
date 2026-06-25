@@ -476,11 +476,16 @@ QString CandidateQualityGate::rejectionReason(const ClipCandidate &candidate,
 	if (candidate.rejectedAsNoise || candidate.scores.noise >= options.maxNoiseScore)
 		return QStringLiteral("noise_or_stream_management");
 
-	if (hasHardLearnedContextBlocker(candidate))
-		return QStringLiteral("hard_context_blocker");
-
+	// Explicit user positives are ground truth for timeline application.
+	// They may still look "contextually incomplete" to the automatic arc classifier
+	// because the classifier can miss the viewer-message cue, but a liked/approved
+	// diagnostic range should be allowed to become an applied marker on the next run
+	// unless it is contaminated by explicit negative feedback.
 	if (isFeedbackPositiveGroundTruth(candidate) && !isFeedbackNegativeBlocked(candidate))
 		return {};
+
+	if (hasHardLearnedContextBlocker(candidate))
+		return QStringLiteral("hard_context_blocker");
 
 	if (options.requireRerankerWhenAvailable && options.rejectInvalidRerankerWhenRequired &&
 	    candidate.rerankerAttempted && !candidate.rerankerAvailable) {

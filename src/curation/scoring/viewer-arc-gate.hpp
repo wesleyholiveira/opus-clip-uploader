@@ -34,6 +34,7 @@ private:
 	bool hasInvalidStateMachine(const ClipCandidate &candidate) const;
 	bool hasExplicitViewerOrigin(const ClipCandidate &candidate) const;
 	bool hasLearnedFeedbackArcSupport(const ClipCandidate &candidate) const;
+	bool hasDirectPositiveFeedbackArcSupport(const ClipCandidate &candidate) const;
 	QString invalidReason(const ClipCandidate &candidate) const;
 	double calibratedMinArcConfidence(const ViewerArcGateOptions &options) const;
 };

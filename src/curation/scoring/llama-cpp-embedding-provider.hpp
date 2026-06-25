@@ -14,7 +14,7 @@ namespace Curation::Scoring {
 struct LlamaCppEmbeddingProviderOptions {
 	QString modelPathOrId = QStringLiteral("qwen3-embedding-0.6b-q8_0");
 	int maxTextChars = 6000;
-	int maxBatchSize = 8;
+	int maxBatchSize = 1;
 	int contextSize = 2048;
 	int batchSize = 512;
 	int threads = 0;
