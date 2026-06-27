@@ -76,11 +76,14 @@ static double emissionScore(const NodeFeatures &features, State state, const Arc
 	case State::Context:
 		return ((features.context * options.contextWeight) * 0.76) + (target * 0.12) - (defect * 0.52);
 	case State::Hook:
-		return ((features.hook * options.hookWeight) * 0.74) + ((features.context * options.contextWeight) * 0.18) + (target * 0.18) - (defect * 0.48);
+		return ((features.hook * options.hookWeight) * 0.74) +
+		       ((features.context * options.contextWeight) * 0.18) + (target * 0.18) - (defect * 0.48);
 	case State::Development:
-		return ((features.development * options.developmentWeight) * 0.60) + (target * 0.24) + ((features.hook * options.hookWeight) * 0.08) - (defect * 0.34);
+		return ((features.development * options.developmentWeight) * 0.60) + (target * 0.24) +
+		       ((features.hook * options.hookWeight) * 0.08) - (defect * 0.34);
 	case State::Resolution:
-		return ((features.resolution * options.resolutionWeight) * 0.72) + ((features.development * options.developmentWeight) * 0.14) + (target * 0.10) - (defect * 0.40);
+		return ((features.resolution * options.resolutionWeight) * 0.72) +
+		       ((features.development * options.developmentWeight) * 0.14) + (target * 0.10) - (defect * 0.40);
 	}
 	return NEG_INF;
 }
@@ -116,49 +119,54 @@ static ClipDuration clampRange(const ClipDuration &range, const ClipDuration &bo
 }
 
 static QVector<NodeFeatures> buildFeatures(const TranscriptIndex &index, const ClipDuration &analysisRange,
-	const ArcDpBoundaryRefinerOptions &options)
+					   const ArcDpBoundaryRefinerOptions &options)
 {
 	QVector<NodeFeatures> features;
 	CheapClipScorer scorer;
 	QString previousText;
 	for (int i = 0; i < index.size(); ++i) {
 		const TranscriptSegment *segment = index.segmentAt(i);
-		if (!segment || segment->text.trimmed().isEmpty() || !TranscriptIndex::segmentOverlapsRange(*segment, analysisRange))
+		if (!segment || segment->text.trimmed().isEmpty() ||
+		    !TranscriptIndex::segmentOverlapsRange(*segment, analysisRange))
 			continue;
 
 		const QString text = segment->text.trimmed();
 		NodeFeatures feature;
 		feature.segmentIndex = i;
 		feature.range = {segment->startSec, segment->endSec};
-		feature.viewerCue = scorer.looksLikeQuestionOrViewerMessage(text) || TextAnalysis::hasConcreteViewerQuestion(text);
+		feature.viewerCue = scorer.looksLikeQuestionOrViewerMessage(text) ||
+				    TextAnalysis::hasConcreteViewerQuestion(text);
 		feature.target = options.reliableMainTarget ? scorer.targetKeywordScore(text, options.mainTarget) : 0.0;
 		const double emotional = Curation::emotionalScoreForText(text);
 		const double advice = Curation::adviceScoreForText(text);
 		const bool mental = TextAnalysis::looksLikeMentalHealthContext(text);
-		const bool continuation = TextAnalysis::looksLikeSameExchangeContinuation(text) ||
+		const bool continuation =
+			TextAnalysis::looksLikeSameExchangeContinuation(text) ||
 			(!previousText.isEmpty() && TextAnalysis::looksLikeSameTopicContinuation(text, previousText));
 		const bool shift = !previousText.isEmpty() && TextAnalysis::looksLikeHardTopicShift(text, previousText);
-		const bool meta = TextAnalysis::isSocialOrStreamMetaText(text) || TextAnalysis::isBacklogOrGreetingText(text) ||
-			TextAnalysis::hasNoiseOnlySemanticTopic(text);
+		const bool meta = TextAnalysis::isSocialOrStreamMetaText(text) ||
+				  TextAnalysis::isBacklogOrGreetingText(text) ||
+				  TextAnalysis::hasNoiseOnlySemanticTopic(text);
 
 		feature.context = boundedScore((feature.viewerCue ? 0.74 : 0.0) + (mental ? 0.12 : 0.0) +
-			(feature.target * 0.16));
-		feature.hook = boundedScore((scorer.hasStrongLocalCue(text) ? 0.64 : 0.0) + (feature.viewerCue ? 0.20 : 0.0) +
-			(feature.target * 0.26) + (emotional * 0.12));
+					       (feature.target * 0.16));
+		feature.hook =
+			boundedScore((scorer.hasStrongLocalCue(text) ? 0.64 : 0.0) + (feature.viewerCue ? 0.20 : 0.0) +
+				     (feature.target * 0.26) + (emotional * 0.12));
 		feature.development = boundedScore((continuation ? 0.40 : 0.0) + (mental ? 0.22 : 0.0) +
-			(advice * 0.22) + (feature.target * 0.30));
-		feature.resolution = boundedScore((advice * 0.34) + (continuation ? 0.14 : 0.0) +
-			(feature.target * 0.14) + (segment->endSec >= analysisRange.startSec ? 0.04 : 0.0));
+						   (advice * 0.22) + (feature.target * 0.30));
+		feature.resolution =
+			boundedScore((advice * 0.34) + (continuation ? 0.14 : 0.0) + (feature.target * 0.14) +
+				     (segment->endSec >= analysisRange.startSec ? 0.04 : 0.0));
 		feature.defect = boundedScore((shift ? 0.74 : 0.0) + (meta ? 0.62 : 0.0) +
-			(TextAnalysis::looksLikeNewViewerTurnAfterPause(text) ? 0.42 : 0.0));
+					      (TextAnalysis::looksLikeNewViewerTurnAfterPause(text) ? 0.42 : 0.0));
 		features.append(feature);
 		previousText = text;
 	}
 	return features;
 }
 
-static BestPath bestArcPath(const QVector<NodeFeatures> &features,
-	const ArcDpBoundaryRefinerOptions &options)
+static BestPath bestArcPath(const QVector<NodeFeatures> &features, const ArcDpBoundaryRefinerOptions &options)
 {
 	BestPath best;
 	if (features.isEmpty())
@@ -183,17 +191,24 @@ static BestPath bestArcPath(const QVector<NodeFeatures> &features,
 					const Cell &previous = dp.at(i - 1).at(prev);
 					if (!finiteScore(previous.score))
 						continue;
-					const double gapSec = std::max(0.0, feature.range.startSec - features.at(i - 1).range.endSec);
+					const double gapSec =
+						std::max(0.0, feature.range.startSec - features.at(i - 1).range.endSec);
 					const double gapPenalty = gapSec > 4.0 ? std::min(0.75, gapSec * 0.06) : 0.0;
-					const double score = previous.score + emission + transitionScore(static_cast<State>(prev), state) - gapPenalty;
+					const double score = previous.score + emission +
+							     transitionScore(static_cast<State>(prev), state) -
+							     gapPenalty;
 					if (score > cell.score + 0.0001) {
 						cell = previous;
 						cell.score = score;
 						cell.previousNode = i - 1;
 						cell.previousState = static_cast<State>(prev);
-						cell.sawContext = cell.sawContext || (state == State::Context && feature.context >= 0.42);
-						cell.sawHook = cell.sawHook || (state == State::Hook && feature.hook >= 0.42);
-						cell.sawDevelopment = cell.sawDevelopment || (state == State::Development && feature.development >= 0.34);
+						cell.sawContext = cell.sawContext ||
+								  (state == State::Context && feature.context >= 0.42);
+						cell.sawHook = cell.sawHook ||
+							       (state == State::Hook && feature.hook >= 0.42);
+						cell.sawDevelopment =
+							cell.sawDevelopment ||
+							(state == State::Development && feature.development >= 0.34);
 					}
 				}
 			}
@@ -213,7 +228,8 @@ static BestPath bestArcPath(const QVector<NodeFeatures> &features,
 		if (!hasRequiredArc || normalized < std::clamp(options.minArcConfidence, 0.10, 0.85))
 			continue;
 		if (best.firstNode < 0 || normalized > best.score + 0.025 ||
-		    (std::fabs(normalized - best.score) <= 0.025 && range.startSec < features.at(best.firstNode).range.startSec)) {
+		    (std::fabs(normalized - best.score) <= 0.025 &&
+		     range.startSec < features.at(best.firstNode).range.startSec)) {
 			best.firstNode = resolution.firstNode;
 			best.lastNode = i;
 			best.score = normalized;
@@ -228,15 +244,17 @@ static BestPath bestArcPath(const QVector<NodeFeatures> &features,
 } // namespace
 
 ClipCandidate ArcDpBoundaryRefiner::refine(const TranscriptIndex &index, const ClipCandidate &candidate,
-	const ArcDpBoundaryRefinerOptions &options) const
+					   const ArcDpBoundaryRefinerOptions &options) const
 {
 	if (candidate.range.endSec <= candidate.range.startSec)
 		return candidate;
-	const ClipDuration globalBounds = options.searchRange.endSec > options.searchRange.startSec
-		? options.searchRange
-		: ClipDuration{0.0, std::max(index.durationSec(), candidate.range.endSec)};
+	const ClipDuration globalBounds =
+		options.searchRange.endSec > options.searchRange.startSec
+			? options.searchRange
+			: ClipDuration{0.0, std::max(index.durationSec(), candidate.range.endSec)};
 	const ClipDuration analysisRange = clampRange({candidate.range.startSec - std::max(0.0, options.lookbackSec),
-		candidate.range.endSec + std::max(0.0, options.lookaheadSec)}, globalBounds);
+						       candidate.range.endSec + std::max(0.0, options.lookaheadSec)},
+						      globalBounds);
 	const QVector<NodeFeatures> features = buildFeatures(index, analysisRange, options);
 	const BestPath best = bestArcPath(features, options);
 	if (best.firstNode < 0 || best.lastNode < best.firstNode)
@@ -251,7 +269,7 @@ ClipCandidate ArcDpBoundaryRefiner::refine(const TranscriptIndex &index, const C
 		return candidate;
 
 	const bool materiallyChanged = std::fabs(refinedRange.startSec - candidate.range.startSec) > 0.80 ||
-		std::fabs(refinedRange.endSec - candidate.range.endSec) > 0.80;
+				       std::fabs(refinedRange.endSec - candidate.range.endSec) > 0.80;
 	if (!materiallyChanged)
 		return candidate;
 
@@ -263,9 +281,9 @@ ClipCandidate ArcDpBoundaryRefiner::refine(const TranscriptIndex &index, const C
 	refined.timedText = index.timedTextForRange(refined.range);
 	refined.anchorText = refined.text.left(220);
 	refined.evidence.append(QStringLiteral("arc_dp_boundary_refined score:%1 startNode:%2 endNode:%3")
-		.arg(QString::number(best.score, 'f', 2))
-		.arg(best.firstNode)
-		.arg(best.lastNode));
+					.arg(QString::number(best.score, 'f', 2))
+					.arg(best.firstNode)
+					.arg(best.lastNode));
 	if (refinedRange.startSec < candidate.range.startSec - 0.80)
 		refined.evidence.append(QStringLiteral("arc_dp_context_start_extended"));
 	if (refinedRange.endSec > candidate.range.endSec + 0.80)

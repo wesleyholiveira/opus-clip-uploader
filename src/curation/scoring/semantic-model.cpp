@@ -14,12 +14,6 @@ static double boundedScore(double value)
 
 } // namespace
 
-SemanticEmbedding DisabledSemanticEmbeddingProvider::embed(const QString &text) const
-{
-	Q_UNUSED(text);
-	return {};
-}
-
 QVector<SemanticEmbedding> SemanticEmbeddingProvider::embedBatch(const QVector<QString> &texts) const
 {
 	QVector<SemanticEmbedding> result;

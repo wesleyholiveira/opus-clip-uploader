@@ -14,14 +14,12 @@ struct CandidateBeamExpansionOptions {
 
 class CandidateBeamExpander {
 public:
-	QVector<ClipCandidate> expand(const TranscriptIndex &index,
-		QVector<ClipCandidate> candidates,
-		const CandidateBeamExpansionOptions &options) const;
+	QVector<ClipCandidate> expand(const TranscriptIndex &index, QVector<ClipCandidate> candidates,
+				      const CandidateBeamExpansionOptions &options) const;
 
 private:
-	QVector<ClipCandidate> expandVariants(const TranscriptIndex &index,
-		const ClipCandidate &candidate,
-		const CandidateBeamExpansionOptions &options) const;
+	QVector<ClipCandidate> expandVariants(const TranscriptIndex &index, const ClipCandidate &candidate,
+					      const CandidateBeamExpansionOptions &options) const;
 };
 
 } // namespace Curation::Scoring

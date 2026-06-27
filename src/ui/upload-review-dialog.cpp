@@ -1,5 +1,8 @@
 #include "ui/upload-review-dialog.hpp"
 
+#include "ui/review/review-clip-table-widget.hpp"
+#include "ui/review/diagnostics-dialogs.hpp"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -68,153 +71,6 @@ extern "C" {
 #include <limits>
 #include <utility>
 
-class ReviewClipTableWidget final : public QTableWidget {
-public:
-	using QTableWidget::QTableWidget;
-
-	std::function<void()> removeSelectedRows;
-	std::function<void(double)> nudgeSelectedRange;
-	std::function<bool(int)> isDiagnosticRow;
-	std::function<void(int)> showMarkerDiagnostics;
-	std::function<void(int)> approveMarker;
-	std::function<void(int)> rejectMarker;
-	std::function<void(int)> markMarkerAdjusted;
-	std::function<void(int)> approveEditedMarker;
-	std::function<void(int)> ignoreMarker;
-	std::function<void(int)> seekMarkerStart;
-	std::function<void(int)> seekMarkerEnd;
-
-protected:
-	void keyPressEvent(QKeyEvent *event) override
-	{
-		if (!event) {
-			QTableWidget::keyPressEvent(event);
-			return;
-		}
-
-		const bool noModifiers = event->modifiers() == Qt::NoModifier;
-		if (noModifiers && (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace)) {
-			if (event->isAutoRepeat()) {
-				event->accept();
-				return;
-			}
-			if (rowCount() <= 0) {
-				event->accept();
-				return;
-			}
-			if (removeSelectedRows) {
-				removeSelectedRows();
-				event->accept();
-				return;
-			}
-		}
-
-		const bool markerNudgeModifiers = event->modifiers() == (Qt::ControlModifier | Qt::AltModifier);
-		if (markerNudgeModifiers && (event->key() == Qt::Key_Comma || event->key() == Qt::Key_Less)) {
-			if (nudgeSelectedRange) {
-				nudgeSelectedRange(-1.0);
-				event->accept();
-				return;
-			}
-		}
-
-		if (markerNudgeModifiers && (event->key() == Qt::Key_Period || event->key() == Qt::Key_Greater)) {
-			if (nudgeSelectedRange) {
-				nudgeSelectedRange(1.0);
-				event->accept();
-				return;
-			}
-		}
-
-		QTableWidget::keyPressEvent(event);
-	}
-
-	void contextMenuEvent(QContextMenuEvent *event) override
-	{
-		if (!event) {
-			QTableWidget::contextMenuEvent(event);
-			return;
-		}
-
-		const int row = rowAt(event->pos().y());
-		if (row < 0 || row >= rowCount()) {
-			QTableWidget::contextMenuEvent(event);
-			return;
-		}
-
-		if (!selectionModel() || !selectionModel()->isRowSelected(row, QModelIndex()))
-			selectRow(row);
-
-		const bool diagnosticRow = isDiagnosticRow && isDiagnosticRow(row);
-		QMenu menu(this);
-		QAction *diagnosticsAction = nullptr;
-		if (!diagnosticRow)
-			diagnosticsAction = menu.addAction(QStringLiteral("View marker diagnostics..."));
-		QAction *approveAction = nullptr;
-		QAction *rejectAction = nullptr;
-		QAction *adjustedAction = nullptr;
-		QAction *approveEditedAction = nullptr;
-		if (!diagnosticRow)
-			menu.addSeparator();
-		approveAction = menu.addAction(diagnosticRow ? QStringLiteral("Approve candidate with structured feedback...")
-								     : QStringLiteral("Approve with structured feedback..."));
-		rejectAction = menu.addAction(diagnosticRow ? QStringLiteral("Reject candidate with structured feedback...")
-								    : QStringLiteral("Reject with structured feedback..."));
-		adjustedAction = menu.addAction(diagnosticRow ? QStringLiteral("Mark candidate as needs adjustment...")
-								      : QStringLiteral("Mark as adjusted with structured feedback..."));
-		approveEditedAction = menu.addAction(diagnosticRow ? QStringLiteral("Approve edited range as good clip...")
-							 : QStringLiteral("Approve edited marker as good clip..."));
-		QAction *ignoreAction = menu.addAction(diagnosticRow ? QStringLiteral("Ignore candidate for dataset/training")
-						       : QStringLiteral("Ignore marker for dataset/training"));
-		menu.addSeparator();
-		QAction *seekStartAction = menu.addAction(QStringLiteral("Go to range start"));
-		QAction *seekEndAction = menu.addAction(QStringLiteral("Go to range end"));
-		QAction *removeAction = nullptr;
-		if (!diagnosticRow) {
-			menu.addSeparator();
-			removeAction = menu.addAction(QStringLiteral("Remove without rating"));
-		}
-
-		const QAction *selected = menu.exec(event->globalPos());
-		if (!selected)
-			return;
-		if (diagnosticsAction && selected == diagnosticsAction && showMarkerDiagnostics) {
-			showMarkerDiagnostics(row);
-			return;
-		}
-		if (selected == approveAction && approveMarker) {
-			approveMarker(row);
-			return;
-		}
-		if (selected == rejectAction && rejectMarker) {
-			rejectMarker(row);
-			return;
-		}
-		if (selected == adjustedAction && markMarkerAdjusted) {
-			markMarkerAdjusted(row);
-			return;
-		}
-		if (approveEditedAction && selected == approveEditedAction && approveEditedMarker) {
-			approveEditedMarker(row);
-			return;
-		}
-		if (ignoreAction && selected == ignoreAction && ignoreMarker) {
-			ignoreMarker(row);
-			return;
-		}
-		if (selected == seekStartAction && seekMarkerStart) {
-			seekMarkerStart(row);
-			return;
-		}
-		if (selected == seekEndAction && seekMarkerEnd) {
-			seekMarkerEnd(row);
-			return;
-		}
-		if (removeAction && selected == removeAction && removeSelectedRows)
-			removeSelectedRows();
-	}
-};
-
 static constexpr const char *CONFIG_REVIEW_SETTINGS_PREFIX = "review.settings";
 static constexpr const char *CONFIG_OPUS_SOURCE_LANGUAGE = "opus_source_lang";
 static constexpr const char *LANGUAGE_AUTO = "auto";
@@ -245,8 +101,10 @@ static bool diagnosticRangeFromObject(const QJsonObject &object, ClipDuration *o
 {
 	if (!outRange)
 		return false;
-	const double startSec = object.value(QStringLiteral("start_sec")).toDouble(std::numeric_limits<double>::quiet_NaN());
-	const double endSec = object.value(QStringLiteral("end_sec")).toDouble(std::numeric_limits<double>::quiet_NaN());
+	const double startSec =
+		object.value(QStringLiteral("start_sec")).toDouble(std::numeric_limits<double>::quiet_NaN());
+	const double endSec =
+		object.value(QStringLiteral("end_sec")).toDouble(std::numeric_limits<double>::quiet_NaN());
 	if (!std::isfinite(startSec) || !std::isfinite(endSec) || endSec <= startSec)
 		return false;
 	outRange->startSec = startSec;
@@ -262,7 +120,7 @@ static bool diagnosticRangeMeaningfullyEdited(const ClipDuration &originalRange,
 	const double startDelta = std::fabs(originalRange.startSec - reviewedRange.startSec);
 	const double endDelta = std::fabs(originalRange.endSec - reviewedRange.endSec);
 	const double durationDelta = std::fabs((originalRange.endSec - originalRange.startSec) -
-						 (reviewedRange.endSec - reviewedRange.startSec));
+					       (reviewedRange.endSec - reviewedRange.startSec));
 	return startDelta > 0.25 || endDelta > 0.25 || durationDelta > 0.25;
 }
 
@@ -307,8 +165,7 @@ static QString diagnosticStateLabel(const QString &state)
 	return QStringLiteral("Pending");
 }
 
-static bool isDefaultNoMarkerPlaceholderRange(const VideoMarkerEditor *videoEditor,
-						      const QVector<ClipDuration> &ranges)
+static bool isDefaultNoMarkerPlaceholderRange(const VideoMarkerEditor *videoEditor, const QVector<ClipDuration> &ranges)
 {
 	if (!videoEditor || videoEditor->hasExplicitClipMarkers() || ranges.size() != 1)
 		return false;
@@ -320,395 +177,9 @@ static bool isDefaultNoMarkerPlaceholderRange(const VideoMarkerEditor *videoEdit
 	const double durationSec = durationMs / 1000.0;
 	const double expectedEnd = std::min(DEFAULT_NO_MARKER_PLACEHOLDER_SEC, durationSec);
 	const ClipDuration &range = ranges.first();
-	return std::isfinite(range.startSec) && std::isfinite(range.endSec) &&
-	       std::fabs(range.startSec) <= 0.05 && std::fabs(range.endSec - expectedEnd) <= 0.25;
+	return std::isfinite(range.startSec) && std::isfinite(range.endSec) && std::fabs(range.startSec) <= 0.05 &&
+	       std::fabs(range.endSec - expectedEnd) <= 0.25;
 }
-
-
-static double diagnosticScore(const QJsonObject &diagnostic, const QString &name, double fallback = 0.0)
-{
-	const QJsonObject scores = diagnostic.value(QStringLiteral("scores")).toObject();
-	if (scores.contains(name))
-		return scores.value(name).toDouble(fallback);
-	return fallback;
-}
-
-static QString diagnosticScoreLabel(double value)
-{
-	if (value >= 0.68)
-		return QStringLiteral("bom");
-	if (value >= 0.42)
-		return QStringLiteral("ok / incerto");
-	return QStringLiteral("fraco");
-}
-
-static QString diagnosticBoolText(bool value)
-{
-	return value ? QStringLiteral("sim") : QStringLiteral("não");
-}
-
-static bool diagnosticHasEvidence(const QJsonObject &diagnostic, const QString &needle)
-{
-	const QJsonArray evidence = diagnostic.value(QStringLiteral("evidence")).toArray();
-	for (const QJsonValue &value : evidence) {
-		if (value.toString().contains(needle, Qt::CaseInsensitive))
-			return true;
-	}
-	return false;
-}
-
-static QString diagnosticEvidenceText(const QJsonObject &diagnostic, int maxItems = 18)
-{
-	const QJsonArray evidence = diagnostic.value(QStringLiteral("evidence")).toArray();
-	QStringList lines;
-	for (int i = 0; i < evidence.size() && lines.size() < maxItems; ++i) {
-		const QString item = evidence.at(i).toString().trimmed();
-		if (!item.isEmpty())
-			lines.append(QStringLiteral("- %1").arg(item));
-	}
-	return lines.join(QChar('\n'));
-}
-
-static QString diagnosticSummaryText(const ClipDuration &range, const QJsonObject &diagnostic,
-				     const QString &startLabel, const QString &endLabel)
-{
-	const double durationSec = std::max(0.0, range.endSec - range.startSec);
-	const bool rejected = diagnostic.value(QStringLiteral("rejected")).toBool(false);
-	const QString rejectionReason = diagnostic.value(QStringLiteral("rejection_reason")).toString().trimmed();
-	const QString source = diagnostic.value(QStringLiteral("source")).toString().trimmed();
-	const QString kind = diagnostic.value(QStringLiteral("diagnostic_kind")).toString().trimmed();
-	const double finalScore = diagnostic.value(QStringLiteral("final_score")).toDouble(0.0);
-	const double opening = std::max(diagnosticScore(diagnostic, QStringLiteral("arcOpening")),
-					 diagnosticScore(diagnostic, QStringLiteral("semanticOpeningHook")));
-	const double development = std::max(diagnosticScore(diagnostic, QStringLiteral("arcDevelopment")),
-					     diagnosticScore(diagnostic, QStringLiteral("semanticDirectAnswer")));
-	const double conclusion = std::max(diagnosticScore(diagnostic, QStringLiteral("arcConclusion")),
-					    diagnosticScore(diagnostic, QStringLiteral("semanticEndingResolution")));
-	const double hook = std::max(diagnosticScore(diagnostic, QStringLiteral("hook")),
-			       diagnosticScore(diagnostic, QStringLiteral("semanticHook")));
-	const double topicShift = std::max(diagnosticScore(diagnostic, QStringLiteral("semanticTopicShift")),
-				      diagnosticScore(diagnostic, QStringLiteral("semanticEndingTopicShift")));
-	const double viewerCue = std::max(diagnosticScore(diagnostic, QStringLiteral("viewerResponse")),
-				     diagnosticScore(diagnostic, QStringLiteral("semanticViewerMessage")));
-	const double metaNoise = std::max(diagnosticScore(diagnostic, QStringLiteral("semanticMetaNoise")),
-				     std::max(diagnosticScore(diagnostic, QStringLiteral("semanticOpeningMetaNoise")),
-					      diagnosticScore(diagnostic, QStringLiteral("semanticEndingMetaNoise"))));
-
-	QString recommendation;
-	if (rejected) {
-		recommendation = QStringLiteral("Recomendação: ajustar ou rejeitar. O gate marcou o candidato como rejeitado");
-		if (!rejectionReason.isEmpty())
-			recommendation += QStringLiteral(" por '%1'").arg(rejectionReason);
-		recommendation += QLatin1Char('.');
-	} else if (conclusion < 0.42) {
-		recommendation = QStringLiteral("Recomendação: revisar o final. O fechamento/conclusão parece fraco.");
-	} else if (opening < 0.42 || hook < 0.42) {
-		recommendation = QStringLiteral("Recomendação: revisar o início. O começo ou gancho parece fraco.");
-	} else if (topicShift >= 0.60) {
-		recommendation = QStringLiteral("Recomendação: ajustar ou rejeitar. Há risco de troca de tópico.");
-	} else {
-		recommendation = QStringLiteral("Recomendação: provável candidato aprovável, mas revise o texto e o final antes de confirmar.");
-	}
-
-	QStringList lines;
-	lines << QStringLiteral("Range: %1 → %2 (%3s)").arg(startLabel, endLabel).arg(durationSec, 0, 'f', 1);
-	lines << QStringLiteral("Origem: %1").arg(source.isEmpty() ? QStringLiteral("desconhecida") : source);
-	if (!kind.isEmpty())
-		lines << QStringLiteral("Tipo de diagnóstico: %1").arg(kind);
-	lines << QStringLiteral("Status: %1").arg(rejected ? QStringLiteral("rejeitado pelo gate") : QStringLiteral("selecionado pelo pipeline"));
-	if (!rejectionReason.isEmpty())
-		lines << QStringLiteral("Motivo de rejeição: %1").arg(rejectionReason);
-	lines << QStringLiteral("Score final: %1").arg(finalScore, 0, 'f', 3);
-	lines << QString();
-	lines << QStringLiteral("Resumo");
-	lines << recommendation;
-	lines << QString();
-	lines << QStringLiteral("Começo");
-	lines << QStringLiteral("- Início/hook de abertura: %1 (%2)").arg(diagnosticScoreLabel(opening)).arg(opening, 0, 'f', 2);
-	lines << QStringLiteral("- Gancho geral: %1 (%2)").arg(diagnosticScoreLabel(hook)).arg(hook, 0, 'f', 2);
-	lines << QStringLiteral("- Indício de mensagem/resposta de viewer: %1 (%2)").arg(diagnosticScoreLabel(viewerCue)).arg(viewerCue, 0, 'f', 2);
-	lines << QString();
-	lines << QStringLiteral("Meio");
-	lines << QStringLiteral("- Desenvolvimento/resposta direta: %1 (%2)").arg(diagnosticScoreLabel(development)).arg(development, 0, 'f', 2);
-	lines << QStringLiteral("- Troca de tópico: %1 (%2)").arg(topicShift >= 0.60 ? QStringLiteral("risco") : QStringLiteral("baixo risco")).arg(topicShift, 0, 'f', 2);
-	lines << QString();
-	lines << QStringLiteral("Final");
-	lines << QStringLiteral("- Conclusão/resolução: %1 (%2)").arg(diagnosticScoreLabel(conclusion)).arg(conclusion, 0, 'f', 2);
-	lines << QStringLiteral("- Ruído/meta no trecho: %1 (%2)").arg(metaNoise >= 0.60 ? QStringLiteral("risco") : QStringLiteral("baixo risco")).arg(metaNoise, 0, 'f', 2);
-
-	const QString preview = diagnostic.value(QStringLiteral("timed_text_preview")).toString().trimmed().isEmpty()
-				? diagnostic.value(QStringLiteral("text_preview")).toString().trimmed()
-				: diagnostic.value(QStringLiteral("timed_text_preview")).toString().trimmed();
-	if (!preview.isEmpty()) {
-		lines << QString();
-		lines << QStringLiteral("Texto do candidato");
-		lines << preview.left(2200);
-	}
-
-	const QString evidence = diagnosticEvidenceText(diagnostic);
-	if (!evidence.isEmpty()) {
-		lines << QString();
-		lines << QStringLiteral("Evidências brutas");
-		lines << evidence;
-	}
-
-	if (diagnostic.isEmpty()) {
-		lines.clear();
-		lines << QStringLiteral("Range: %1 → %2 (%3s)").arg(startLabel, endLabel).arg(durationSec, 0, 'f', 1);
-		lines << QStringLiteral("Nenhum diagnóstico semanticamente associado foi encontrado para este marcador.");
-		lines << QStringLiteral("Você ainda pode aprovar, rejeitar ou ajustar com feedback estruturado.");
-	}
-
-	return lines.join(QChar('\n'));
-}
-
-class MarkerDiagnosticsDialog final : public QDialog {
-public:
-	MarkerDiagnosticsDialog(const ClipDuration &range, const QJsonObject &diagnostic,
-				const QString &startLabel, const QString &endLabel, QWidget *parent = nullptr)
-		: QDialog(parent)
-	{
-		setWindowTitle(QStringLiteral("Marker diagnostics"));
-		resize(760, 620);
-		auto *layout = new QVBoxLayout(this);
-		layout->addWidget(new QLabel(QStringLiteral("Diagnóstico do marcador selecionado"), this));
-		auto *text = new QPlainTextEdit(this);
-		text->setReadOnly(true);
-		text->setPlainText(diagnosticSummaryText(range, diagnostic, startLabel, endLabel));
-		layout->addWidget(text, 1);
-		auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, this);
-		connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
-		connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
-		layout->addWidget(buttons);
-	}
-};
-
-class StructuredFeedbackDialog final : public QDialog {
-public:
-	StructuredFeedbackDialog(const QString &decision, const ClipDuration &range, const QJsonObject &diagnostic,
-				 const QString &startLabel, const QString &endLabel, QWidget *parent = nullptr)
-		: QDialog(parent), normalizedDecision(decision.trimmed().toLower()), diagnosticSnapshot(diagnostic)
-	{
-		setWindowTitle(QStringLiteral("Structured marker feedback"));
-		resize(560, 520);
-		auto *layout = new QVBoxLayout(this);
-		layout->addWidget(new QLabel(normalizedDecision == QStringLiteral("approved_adjusted")
-			? QStringLiteral("Confirme que o range editado ficou bom como clip completo. Esses sinais serão usados como exemplo positivo.")
-			: QStringLiteral("Marque os sinais que você percebeu neste candidato."), this));
-		layout->addWidget(new QLabel(QStringLiteral("Range: %1 → %2 (%3s)")
-					.arg(startLabel, endLabel)
-					.arg(std::max(0.0, range.endSec - range.startSec), 0, 'f', 1), this));
-
-		auto *structureGroup = new QGroupBox(QStringLiteral("Estrutura do clip"), this);
-		auto *structureLayout = new QVBoxLayout(structureGroup);
-		hasBeginning = addBox(structureLayout, QStringLiteral("Tem começo/contexto claro"));
-		hasDevelopment = addBox(structureLayout, QStringLiteral("Tem desenvolvimento/resposta"));
-		hasConclusion = addBox(structureLayout, QStringLiteral("Tem conclusão/resolução"));
-		hasSingleTopic = addBox(structureLayout, QStringLiteral("Mantém um único assunto"));
-		hasSmoothEnding = addBox(structureLayout, QStringLiteral("Final fica suave/natural"));
-		layout->addWidget(structureGroup);
-
-		auto *qualityGroup = new QGroupBox(QStringLiteral("Qualidade e defeitos"), this);
-		auto *qualityLayout = new QVBoxLayout(qualityGroup);
-		hasGoodHook = addBox(qualityLayout, QStringLiteral("Tem gancho bom"));
-		hasViewerCue = addBox(qualityLayout, QStringLiteral("Parece responder uma mensagem/pergunta de viewer"));
-		goodTopicBadBoundary = addBox(qualityLayout, QStringLiteral("Assunto parece bom, mas o corte/boundary está ruim"));
-		incompleteButRecoverable = addBox(qualityLayout, QStringLiteral("Arco incompleto, mas recuperável ajustando início/fim"));
-		badTopic = addBox(qualityLayout, QStringLiteral("Tema/candidato não vale clip"));
-		ignoreForTraining = addBox(qualityLayout, QStringLiteral("Diagnóstico inútil / ignorar para treino forte"));
-		hasTopicShift = addBox(qualityLayout, QStringLiteral("Tem troca de tópico"));
-		startsTooLate = addBox(qualityLayout, QStringLiteral("Começa tarde demais"));
-		startsTooEarly = addBox(qualityLayout, QStringLiteral("Começa cedo demais"));
-		endsTooEarly = addBox(qualityLayout, QStringLiteral("Termina cedo demais"));
-		overextended = addBox(qualityLayout, QStringLiteral("Passa do ponto / continua depois da resolução"));
-		hasMetaNoise = addBox(qualityLayout, QStringLiteral("Tem ruído, meta, intro, música ou gestão da live"));
-		layout->addWidget(qualityGroup);
-
-		notesInput = new QPlainTextEdit(this);
-		notesInput->setPlaceholderText(QStringLiteral("Observações opcionais: por que aprovou, rejeitou ou ajustou?"));
-		notesInput->setMaximumHeight(96);
-		layout->addWidget(notesInput);
-
-		prefillFromDiagnostic(diagnostic);
-		if (normalizedDecision == QStringLiteral("approved_adjusted"))
-			prefillAsCompletePositiveExample();
-		auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
-		connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
-		connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
-		layout->addWidget(buttons);
-	}
-
-	QJsonObject feedback() const
-	{
-		QJsonObject object;
-		object.insert(QStringLiteral("schema_version"), 1);
-		object.insert(QStringLiteral("decision"), normalizedDecision);
-		if (normalizedDecision == QStringLiteral("approved_adjusted")) {
-			object.insert(QStringLiteral("approved_corrected_range"), true);
-			object.insert(QStringLiteral("semantic_positive_example"), true);
-		}
-		const bool forceCompletePositive = normalizedDecision == QStringLiteral("approved_adjusted");
-		const bool explicitIgnore = normalizedDecision == QStringLiteral("ignored_diagnostic");
-		object.insert(QStringLiteral("has_beginning"), forceCompletePositive || (hasBeginning && hasBeginning->isChecked()));
-		object.insert(QStringLiteral("has_development"), forceCompletePositive || (hasDevelopment && hasDevelopment->isChecked()));
-		object.insert(QStringLiteral("has_conclusion"), forceCompletePositive || (hasConclusion && hasConclusion->isChecked()));
-		object.insert(QStringLiteral("has_single_topic"), forceCompletePositive || (hasSingleTopic && hasSingleTopic->isChecked()));
-		object.insert(QStringLiteral("has_smooth_ending"), forceCompletePositive || (hasSmoothEnding && hasSmoothEnding->isChecked()));
-		object.insert(QStringLiteral("has_good_hook"), forceCompletePositive || (hasGoodHook && hasGoodHook->isChecked()));
-		object.insert(QStringLiteral("has_viewer_cue"), forceCompletePositive || (hasViewerCue && hasViewerCue->isChecked()));
-		const bool goodTopicBoundary = goodTopicBadBoundary && goodTopicBadBoundary->isChecked();
-		const bool incompleteRecoverable = incompleteButRecoverable && incompleteButRecoverable->isChecked();
-		const bool userIgnored = explicitIgnore || (ignoreForTraining && ignoreForTraining->isChecked());
-		const bool topicBad = (forceCompletePositive || userIgnored) ? false : (badTopic && badTopic->isChecked());
-		object.insert(QStringLiteral("ignore_for_training"), userIgnored);
-		object.insert(QStringLiteral("weak_negative"), userIgnored ||
-			(normalizedDecision == QStringLiteral("disliked") && !topicBad && isLowSignalDiagnostic(diagnosticSnapshot)));
-		object.insert(QStringLiteral("good_topic_bad_boundary"), userIgnored ? false : goodTopicBoundary);
-		object.insert(QStringLiteral("incomplete_but_recoverable"), userIgnored ? false : incompleteRecoverable);
-		object.insert(QStringLiteral("bad_topic"), topicBad);
-		object.insert(QStringLiteral("boundary_recoverable"), !userIgnored && !topicBad && (goodTopicBoundary || incompleteRecoverable));
-		object.insert(QStringLiteral("has_topic_shift"), forceCompletePositive ? false : (hasTopicShift && hasTopicShift->isChecked()));
-		object.insert(QStringLiteral("starts_too_late"), forceCompletePositive ? false : (startsTooLate && startsTooLate->isChecked()));
-		object.insert(QStringLiteral("starts_too_early"), forceCompletePositive ? false : (startsTooEarly && startsTooEarly->isChecked()));
-		object.insert(QStringLiteral("ends_too_early"), forceCompletePositive ? false : (endsTooEarly && endsTooEarly->isChecked()));
-		object.insert(QStringLiteral("overextended_after_resolution"), forceCompletePositive ? false : (overextended && overextended->isChecked()));
-		object.insert(QStringLiteral("has_meta_noise"), forceCompletePositive ? false : (hasMetaNoise && hasMetaNoise->isChecked()));
-		const QString notes = notesInput ? notesInput->toPlainText().trimmed() : QString{};
-		if (!notes.isEmpty())
-			object.insert(QStringLiteral("notes"), notes.left(1200));
-		return object;
-	}
-
-private:
-	QString normalizedDecision;
-	QJsonObject diagnosticSnapshot;
-	QCheckBox *hasBeginning = nullptr;
-	QCheckBox *hasDevelopment = nullptr;
-	QCheckBox *hasConclusion = nullptr;
-	QCheckBox *hasSingleTopic = nullptr;
-	QCheckBox *hasSmoothEnding = nullptr;
-	QCheckBox *hasGoodHook = nullptr;
-	QCheckBox *hasViewerCue = nullptr;
-	QCheckBox *goodTopicBadBoundary = nullptr;
-	QCheckBox *incompleteButRecoverable = nullptr;
-	QCheckBox *badTopic = nullptr;
-	QCheckBox *ignoreForTraining = nullptr;
-	QCheckBox *hasTopicShift = nullptr;
-	QCheckBox *startsTooLate = nullptr;
-	QCheckBox *startsTooEarly = nullptr;
-	QCheckBox *endsTooEarly = nullptr;
-	QCheckBox *overextended = nullptr;
-	QCheckBox *hasMetaNoise = nullptr;
-	QPlainTextEdit *notesInput = nullptr;
-
-	static QCheckBox *addBox(QVBoxLayout *layout, const QString &label)
-	{
-		auto *box = new QCheckBox(label);
-		layout->addWidget(box);
-		return box;
-	}
-
-	static bool isLowSignalDiagnostic(const QJsonObject &diagnostic)
-	{
-		const QString reason = diagnostic.value(QStringLiteral("rejection_reason")).toString();
-		return reason.contains(QStringLiteral("too_short"), Qt::CaseInsensitive) ||
-		       reason.contains(QStringLiteral("novelty_exploration_review_required"), Qt::CaseInsensitive) ||
-		       reason.contains(QStringLiteral("incomplete_viewer_arc"), Qt::CaseInsensitive);
-	}
-
-	void prefillAsCompletePositiveExample()
-	{
-		if (hasBeginning)
-			hasBeginning->setChecked(true);
-		if (hasDevelopment)
-			hasDevelopment->setChecked(true);
-		if (hasConclusion)
-			hasConclusion->setChecked(true);
-		if (hasSingleTopic)
-			hasSingleTopic->setChecked(true);
-		if (hasSmoothEnding)
-			hasSmoothEnding->setChecked(true);
-		if (hasGoodHook)
-			hasGoodHook->setChecked(true);
-		if (hasViewerCue)
-			hasViewerCue->setChecked(true);
-		if (badTopic)
-			badTopic->setChecked(false);
-		if (ignoreForTraining)
-			ignoreForTraining->setChecked(false);
-		if (hasTopicShift)
-			hasTopicShift->setChecked(false);
-		if (startsTooLate)
-			startsTooLate->setChecked(false);
-		if (startsTooEarly)
-			startsTooEarly->setChecked(false);
-		if (endsTooEarly)
-			endsTooEarly->setChecked(false);
-		if (overextended)
-			overextended->setChecked(false);
-		if (hasMetaNoise)
-			hasMetaNoise->setChecked(false);
-	}
-
-	void prefillFromDiagnostic(const QJsonObject &diagnostic)
-	{
-		const double opening = std::max(diagnosticScore(diagnostic, QStringLiteral("arcOpening")),
-					     diagnosticScore(diagnostic, QStringLiteral("semanticOpeningHook")));
-		const double development = std::max(diagnosticScore(diagnostic, QStringLiteral("arcDevelopment")),
-						 diagnosticScore(diagnostic, QStringLiteral("semanticDirectAnswer")));
-		const double conclusion = std::max(diagnosticScore(diagnostic, QStringLiteral("arcConclusion")),
-					       diagnosticScore(diagnostic, QStringLiteral("semanticEndingResolution")));
-		const double hook = std::max(diagnosticScore(diagnostic, QStringLiteral("hook")),
-				 diagnosticScore(diagnostic, QStringLiteral("semanticHook")));
-		const double topicShift = std::max(diagnosticScore(diagnostic, QStringLiteral("semanticTopicShift")),
-					  diagnosticScore(diagnostic, QStringLiteral("semanticEndingTopicShift")));
-		const double viewerCue = std::max(diagnosticScore(diagnostic, QStringLiteral("viewerResponse")),
-					  diagnosticScore(diagnostic, QStringLiteral("semanticViewerMessage")));
-		const double metaNoise = std::max(diagnosticScore(diagnostic, QStringLiteral("semanticMetaNoise")),
-					  std::max(diagnosticScore(diagnostic, QStringLiteral("semanticOpeningMetaNoise")),
-						   diagnosticScore(diagnostic, QStringLiteral("semanticEndingMetaNoise"))));
-
-		if (hasBeginning)
-			hasBeginning->setChecked(opening >= 0.42 || diagnosticHasEvidence(diagnostic, QStringLiteral("opening")));
-		if (hasDevelopment)
-			hasDevelopment->setChecked(development >= 0.42 || diagnosticHasEvidence(diagnostic, QStringLiteral("direct_answer")));
-		if (hasConclusion)
-			hasConclusion->setChecked(conclusion >= 0.42 || diagnosticHasEvidence(diagnostic, QStringLiteral("resolution")));
-		if (hasSingleTopic)
-			hasSingleTopic->setChecked(topicShift < 0.60);
-		if (hasSmoothEnding)
-			hasSmoothEnding->setChecked(conclusion >= 0.52 && topicShift < 0.60);
-		if (hasGoodHook)
-			hasGoodHook->setChecked(hook >= 0.48);
-		if (hasViewerCue)
-			hasViewerCue->setChecked(viewerCue >= 0.42 || diagnosticHasEvidence(diagnostic, QStringLiteral("viewer")));
-
-		const QString rejection = diagnostic.value(QStringLiteral("rejection_reason")).toString();
-		const bool incompleteArc = rejection.contains(QStringLiteral("incomplete_viewer_arc"), Qt::CaseInsensitive);
-		const bool looksRecoverable = incompleteArc && topicShift < 0.70 && metaNoise < 0.70;
-		if (goodTopicBadBoundary)
-			goodTopicBadBoundary->setChecked(looksRecoverable);
-		if (incompleteButRecoverable)
-			incompleteButRecoverable->setChecked(looksRecoverable);
-		if (badTopic)
-			badTopic->setChecked(!looksRecoverable && diagnosticScore(diagnostic, QStringLiteral("semanticClipValue")) > 0.0 &&
-				diagnosticScore(diagnostic, QStringLiteral("semanticClipValue")) < 0.25);
-		if (ignoreForTraining && normalizedDecision == QStringLiteral("ignored_diagnostic"))
-			ignoreForTraining->setChecked(true);
-		else if (ignoreForTraining && normalizedDecision == QStringLiteral("disliked") && isLowSignalDiagnostic(diagnostic))
-			ignoreForTraining->setChecked(true);
-
-		if (hasTopicShift)
-			hasTopicShift->setChecked(topicShift >= 0.60);
-		if (hasMetaNoise)
-			hasMetaNoise->setChecked(metaNoise >= 0.60 || diagnosticHasEvidence(diagnostic, QStringLiteral("meta")));
-
-		if (endsTooEarly)
-			endsTooEarly->setChecked(rejection.contains(QStringLiteral("incomplete"), Qt::CaseInsensitive));
-		if (overextended)
-			overextended->setChecked(rejection.contains(QStringLiteral("overextended"), Qt::CaseInsensitive));
-	}
-};
 
 static QString normalizeLanguageSetting(QString value)
 {
@@ -874,7 +345,7 @@ static double reviewRangeCenter(const ClipDuration &range)
 }
 
 static bool reviewRangeAlreadyInList(const QVector<ClipDuration> &ranges, const ClipDuration &candidate,
-	double similarityThreshold = 0.88)
+				     double similarityThreshold = 0.88)
 {
 	if (!reviewRangeValid(candidate))
 		return true;
@@ -883,8 +354,8 @@ static bool reviewRangeAlreadyInList(const QVector<ClipDuration> &ranges, const 
 			continue;
 		if (reviewRangeSimilarity(range, candidate) >= similarityThreshold)
 			return true;
-		const double boundaryDistance = std::fabs(range.startSec - candidate.startSec) +
-			std::fabs(range.endSec - candidate.endSec);
+		const double boundaryDistance =
+			std::fabs(range.startSec - candidate.startSec) + std::fabs(range.endSec - candidate.endSec);
 		if (boundaryDistance <= 8.0)
 			return true;
 	}
@@ -892,7 +363,8 @@ static bool reviewRangeAlreadyInList(const QVector<ClipDuration> &ranges, const 
 }
 
 static QVector<ClipDuration> mergeReviewRangesPreservingExisting(QVector<ClipDuration> existing,
-	const QVector<ClipDuration> &suggested, int *addedCount = nullptr)
+								 const QVector<ClipDuration> &suggested,
+								 int *addedCount = nullptr)
 {
 	int added = 0;
 	for (const ClipDuration &range : suggested) {
@@ -903,47 +375,46 @@ static QVector<ClipDuration> mergeReviewRangesPreservingExisting(QVector<ClipDur
 		existing.append(range);
 		++added;
 	}
-	std::sort(existing.begin(), existing.end(), [](const ClipDuration &left, const ClipDuration &right) {
-		return left.startSec < right.startSec;
-	});
+	std::sort(existing.begin(), existing.end(),
+		  [](const ClipDuration &left, const ClipDuration &right) { return left.startSec < right.startSec; });
 	if (addedCount)
 		*addedCount = added;
 	return existing;
 }
 
 static bool reviewRangeMatchesPersistedFeedback(const ClipDuration &range,
-	const Curation::Feedback::FeedbackRangeSignal &signal)
+						const Curation::Feedback::FeedbackRangeSignal &signal)
 {
 	if (!reviewRangeValid(range) || !reviewRangeValid(signal.range))
 		return false;
 	if (reviewRangeSimilarity(range, signal.range) >= 0.94)
 		return true;
-	const double boundaryDistance = std::fabs(range.startSec - signal.range.startSec) +
-		std::fabs(range.endSec - signal.range.endSec);
+	const double boundaryDistance =
+		std::fabs(range.startSec - signal.range.startSec) + std::fabs(range.endSec - signal.range.endSec);
 	if (boundaryDistance <= 6.0)
 		return true;
-	const double minDuration = std::min(range.endSec - range.startSec,
-		signal.range.endSec - signal.range.startSec);
-	return std::fabs(reviewRangeCenter(range) - reviewRangeCenter(signal.range)) <= 8.0 &&
-	       minDuration > 0.0 && reviewOverlapSec(range, signal.range) >= minDuration * 0.90;
+	const double minDuration = std::min(range.endSec - range.startSec, signal.range.endSec - signal.range.startSec);
+	return std::fabs(reviewRangeCenter(range) - reviewRangeCenter(signal.range)) <= 8.0 && minDuration > 0.0 &&
+	       reviewOverlapSec(range, signal.range) >= minDuration * 0.90;
 }
 
 static QString persistedFeedbackDecisionForRange(const ClipDuration &range,
-	const Curation::Feedback::FeedbackRangeMemory &memory)
+						 const Curation::Feedback::FeedbackRangeMemory &memory)
 {
 	if (!memory.loaded || !reviewRangeValid(range))
 		return {};
 	for (const Curation::Feedback::FeedbackRangeSignal &signal : memory.positiveRanges) {
 		if (reviewRangeMatchesPersistedFeedback(range, signal))
-			return signal.decision.trimmed().isEmpty() ? QStringLiteral("positive") : signal.decision.trimmed();
+			return signal.decision.trimmed().isEmpty() ? QStringLiteral("positive")
+								   : signal.decision.trimmed();
 	}
 	for (const Curation::Feedback::FeedbackRangeSignal &signal : memory.negativeRanges) {
 		if (reviewRangeMatchesPersistedFeedback(range, signal))
-			return signal.decision.trimmed().isEmpty() ? QStringLiteral("negative") : signal.decision.trimmed();
+			return signal.decision.trimmed().isEmpty() ? QStringLiteral("negative")
+								   : signal.decision.trimmed();
 	}
 	return {};
 }
-
 
 static bool reviewedPositiveSignalCanRestoreMarker(const Curation::Feedback::FeedbackRangeSignal &signal)
 {
@@ -960,7 +431,7 @@ static bool reviewedPositiveSignalCanRestoreMarker(const Curation::Feedback::Fee
 }
 
 static bool betterReviewedPositiveRestoreSignal(const Curation::Feedback::FeedbackRangeSignal &candidate,
-	const Curation::Feedback::FeedbackRangeSignal &current)
+						const Curation::Feedback::FeedbackRangeSignal &current)
 {
 	const auto priority = [](const Curation::Feedback::FeedbackRangeSignal &signal) {
 		const QString decision = signal.decision.trimmed().toLower();
@@ -983,8 +454,8 @@ static bool betterReviewedPositiveRestoreSignal(const Curation::Feedback::Feedba
 	return candidate.sequence > current.sequence;
 }
 
-static QVector<ClipDuration> restoredReviewedPositiveRangesFromMemory(
-	const Curation::Feedback::FeedbackRangeMemory &memory, int maxRanges = 32)
+static QVector<ClipDuration>
+restoredReviewedPositiveRangesFromMemory(const Curation::Feedback::FeedbackRangeMemory &memory, int maxRanges = 32)
 {
 	QVector<Curation::Feedback::FeedbackRangeSignal> representatives;
 	for (const Curation::Feedback::FeedbackRangeSignal &signal : memory.positiveRanges) {
@@ -1004,12 +475,12 @@ static QVector<ClipDuration> restoredReviewedPositiveRangesFromMemory(
 	}
 
 	std::sort(representatives.begin(), representatives.end(),
-		[](const Curation::Feedback::FeedbackRangeSignal &left,
-		   const Curation::Feedback::FeedbackRangeSignal &right) {
-			if (left.sequence != right.sequence)
-				return left.sequence > right.sequence;
-			return left.range.startSec < right.range.startSec;
-		});
+		  [](const Curation::Feedback::FeedbackRangeSignal &left,
+		     const Curation::Feedback::FeedbackRangeSignal &right) {
+			  if (left.sequence != right.sequence)
+				  return left.sequence > right.sequence;
+			  return left.range.startSec < right.range.startSec;
+		  });
 
 	QVector<ClipDuration> restored;
 	for (const Curation::Feedback::FeedbackRangeSignal &signal : std::as_const(representatives)) {
@@ -1019,9 +490,8 @@ static QVector<ClipDuration> restoredReviewedPositiveRangesFromMemory(
 			continue;
 		restored.append(signal.range);
 	}
-	std::sort(restored.begin(), restored.end(), [](const ClipDuration &left, const ClipDuration &right) {
-		return left.startSec < right.startSec;
-	});
+	std::sort(restored.begin(), restored.end(),
+		  [](const ClipDuration &left, const ClipDuration &right) { return left.startSec < right.startSec; });
 	return restored;
 }
 
@@ -1405,18 +875,17 @@ UploadReviewDialog::UploadReviewDialog(const QString &videoPath, const CurationS
 				Q_UNUSED(ranges);
 				refreshClipTable(videoEditor ? videoEditor->clipRanges() : QVector<ClipDuration>{});
 			});
-		connect(clipTable, &QTableWidget::currentCellChanged, this,
-			[this](int currentRow, int, int, int) {
-				if (!videoEditor || currentRow < 0)
-					return;
-				if (isDiagnosticTableRow(currentRow)) {
-					ClipDuration range;
-					if (diagnosticRangeForTableRow(currentRow, &range))
-						videoEditor->seekToSeconds(range.startSec);
-					return;
-				}
-				videoEditor->selectRange(currentRow);
-			});
+		connect(clipTable, &QTableWidget::currentCellChanged, this, [this](int currentRow, int, int, int) {
+			if (!videoEditor || currentRow < 0)
+				return;
+			if (isDiagnosticTableRow(currentRow)) {
+				ClipDuration range;
+				if (diagnosticRangeForTableRow(currentRow, &range))
+					videoEditor->seekToSeconds(range.startSec);
+				return;
+			}
+			videoEditor->selectRange(currentRow);
+		});
 		connect(clipTable, &QTableWidget::cellClicked, this, [this](int row, int column) {
 			if (!videoEditor || row < 0)
 				return;
@@ -1447,38 +916,49 @@ UploadReviewDialog::UploadReviewDialog(const QString &videoPath, const CurationS
 			[this]() { updateDiagnosticModeControls(); });
 
 		if (auto *reviewTable = dynamic_cast<ReviewClipTableWidget *>(clipTable)) {
-			reviewTable->isDiagnosticRow = [this](int row) {
-				return isDiagnosticTableRow(row);
+			const QPointer<UploadReviewDialog> self(this);
+			reviewTable->isDiagnosticRow = [self](int row) {
+				return self && self->isDiagnosticTableRow(row);
 			};
-			reviewTable->removeSelectedRows = [this]() {
-				removeSelectedRangeWithoutFeedbackDecision();
+			reviewTable->removeSelectedRows = [self]() {
+				if (self)
+					self->removeSelectedRangeWithoutFeedbackDecision();
 			};
-			reviewTable->nudgeSelectedRange = [this](double deltaSec) {
-				nudgeSelectedRangeOrBoundary(deltaSec);
+			reviewTable->nudgeSelectedRange = [self](double deltaSec) {
+				if (self)
+					self->nudgeSelectedRangeOrBoundary(deltaSec);
 			};
-			reviewTable->showMarkerDiagnostics = [this](int row) {
-				showMarkerDiagnostics(row);
+			reviewTable->showMarkerDiagnostics = [self](int row) {
+				if (self)
+					self->showMarkerDiagnostics(row);
 			};
-			reviewTable->approveMarker = [this](int row) {
-				setClipReviewDecision(row, QStringLiteral("liked"));
+			reviewTable->approveMarker = [self](int row) {
+				if (self)
+					self->setClipReviewDecision(row, QStringLiteral("liked"));
 			};
-			reviewTable->rejectMarker = [this](int row) {
-				setClipReviewDecision(row, QStringLiteral("disliked"));
+			reviewTable->rejectMarker = [self](int row) {
+				if (self)
+					self->setClipReviewDecision(row, QStringLiteral("disliked"));
 			};
-			reviewTable->markMarkerAdjusted = [this](int row) {
-				setClipReviewDecision(row, QStringLiteral("adjusted"));
+			reviewTable->markMarkerAdjusted = [self](int row) {
+				if (self)
+					self->setClipReviewDecision(row, QStringLiteral("adjusted"));
 			};
-			reviewTable->approveEditedMarker = [this](int row) {
-				setClipReviewDecision(row, QStringLiteral("approved_adjusted"));
+			reviewTable->approveEditedMarker = [self](int row) {
+				if (self)
+					self->setClipReviewDecision(row, QStringLiteral("approved_adjusted"));
 			};
-			reviewTable->ignoreMarker = [this](int row) {
-				setClipReviewDecision(row, QStringLiteral("ignored_diagnostic"));
+			reviewTable->ignoreMarker = [self](int row) {
+				if (self)
+					self->setClipReviewDecision(row, QStringLiteral("ignored_diagnostic"));
 			};
-			reviewTable->seekMarkerStart = [this](int row) {
-				seekReviewTableRowStart(row);
+			reviewTable->seekMarkerStart = [self](int row) {
+				if (self)
+					self->seekReviewTableRowStart(row);
 			};
-			reviewTable->seekMarkerEnd = [this](int row) {
-				seekReviewTableRowEnd(row);
+			reviewTable->seekMarkerEnd = [self](int row) {
+				if (self)
+					self->seekReviewTableRowEnd(row);
 			};
 		}
 	}
@@ -1532,7 +1012,6 @@ UploadReviewDialog::UploadReviewDialog(const QString &videoPath, const CurationS
 		finishReviewButton->setToolTip(
 			QStringLiteral("Persist like/dislike and marker adjustments without starting upload."));
 		connect(finishReviewButton, &QPushButton::clicked, this, &UploadReviewDialog::finishReviewFeedback);
-
 	}
 
 	QHBoxLayout *languageRow = nullptr;
@@ -1573,7 +1052,8 @@ UploadReviewDialog::UploadReviewDialog(const QString &videoPath, const CurationS
 	} else {
 		loadSavedCurationOptions();
 		if (videoEditor && initialSettings.clipDurations.isEmpty())
-			restoreReviewedPositiveMarkersFromFeedbackIfEmpty(QStringLiteral("dialog_open_no_saved_markers"));
+			restoreReviewedPositiveMarkersFromFeedbackIfEmpty(
+				QStringLiteral("dialog_open_no_saved_markers"));
 		if (videoEditor && !initialSettings.clipDurations.isEmpty()) {
 			videoEditor->setMarkerPositions(markerPositionsFromRanges(initialSettings.clipDurations));
 			refreshClipTable(videoEditor->clipRanges());
@@ -1703,14 +1183,15 @@ void UploadReviewDialog::refreshClipTable(const QVector<ClipDuration> &ranges)
 		auto *feedbackLayout = new QHBoxLayout(feedbackWidget);
 		feedbackLayout->setContentsMargins(2, 0, 2, 0);
 		feedbackLayout->setSpacing(4);
-		const QString persistedDecision = decision.trimmed().isEmpty()
-			? persistedFeedbackDecisionForRange(range, persistedReviewMemory)
-			: QString{};
+		const QString persistedDecision =
+			decision.trimmed().isEmpty() ? persistedFeedbackDecisionForRange(range, persistedReviewMemory)
+						     : QString{};
 		const bool alreadyReviewed = !decision.trimmed().isEmpty() || !persistedDecision.trimmed().isEmpty();
 		if (alreadyReviewed) {
 			startItem->setFlags(startItem->flags() & ~Qt::ItemIsEditable);
 			endItem->setFlags(endItem->flags() & ~Qt::ItemIsEditable);
-			startItem->setToolTip(QStringLiteral("This reviewed marker is locked. Remove it from the list or create a new marker instead of re-editing/re-rating it."));
+			startItem->setToolTip(QStringLiteral(
+				"This reviewed marker is locked. Remove it from the list or create a new marker instead of re-editing/re-rating it."));
 			endItem->setToolTip(startItem->toolTip());
 			const QString displayDecision = !decision.trimmed().isEmpty() ? decision : persistedDecision;
 			auto *reviewedLabel = new QLabel(reviewDecisionDisplayLabel(displayDecision), feedbackWidget);
@@ -1728,12 +1209,16 @@ void UploadReviewDialog::refreshClipTable(const QVector<ClipDuration> &ranges)
 			adjustedButton->setFocusPolicy(Qt::NoFocus);
 			approvedAdjustedButton->setFocusPolicy(Qt::NoFocus);
 			ignoreButton->setFocusPolicy(Qt::NoFocus);
-			likeButton->setToolTip(QStringLiteral("Approve this candidate as-is and describe its structure. This becomes a positive training signal."));
+			likeButton->setToolTip(QStringLiteral(
+				"Approve this candidate as-is and describe its structure. This becomes a positive training signal."));
 			dislikeButton->setToolTip(QStringLiteral(
 				"Reject this candidate, describe why, and remove it from upload ranges. Use only for truly bad patterns."));
-			adjustedButton->setToolTip(QStringLiteral("Mark this edited candidate as recoverable boundary feedback."));
-			approvedAdjustedButton->setToolTip(QStringLiteral("Edit start/end first, then save the corrected marker as a good semantic clip example."));
-			ignoreButton->setToolTip(QStringLiteral("Ignore this candidate for dataset/training. It suppresses near-duplicates without becoming a strong negative."));
+			adjustedButton->setToolTip(
+				QStringLiteral("Mark this edited candidate as recoverable boundary feedback."));
+			approvedAdjustedButton->setToolTip(QStringLiteral(
+				"Edit start/end first, then save the corrected marker as a good semantic clip example."));
+			ignoreButton->setToolTip(QStringLiteral(
+				"Ignore this candidate for dataset/training. It suppresses near-duplicates without becoming a strong negative."));
 			connect(likeButton, &QPushButton::clicked, this,
 				[this, row]() { setClipReviewDecision(row, QStringLiteral("liked")); });
 			connect(dislikeButton, &QPushButton::clicked, this,
@@ -1753,7 +1238,6 @@ void UploadReviewDialog::refreshClipTable(const QVector<ClipDuration> &ranges)
 		clipTable->setCellWidget(row, 3, feedbackWidget);
 	}
 
-
 	int visibleSupplementalDiagnostics = 0;
 	for (int i = 0; i < lastSemanticSuggestion.candidateDiagnostics.size(); ++i) {
 		const QJsonValue value = lastSemanticSuggestion.candidateDiagnostics.at(i);
@@ -1768,8 +1252,8 @@ void UploadReviewDialog::refreshClipTable(const QVector<ClipDuration> &ranges)
 			continue;
 
 		const ClipDuration range = diagnosticEditedRanges.contains(i)
-			? normalizedDiagnosticRange(diagnosticEditedRanges.value(i))
-			: normalizedDiagnosticRange(originalRange);
+						   ? normalizedDiagnosticRange(diagnosticEditedRanges.value(i))
+						   : normalizedDiagnosticRange(originalRange);
 		const bool rangeEdited = diagnosticRangeMeaningfullyEdited(originalRange, range);
 
 		const int row = clipTable->rowCount();
@@ -1780,15 +1264,16 @@ void UploadReviewDialog::refreshClipTable(const QVector<ClipDuration> &ranges)
 		const QString state = diagnosticReviewState(i);
 		const QString stateLabel = diagnosticStateLabel(state);
 
-		auto *markerItem = new QTableWidgetItem(
-			QStringLiteral("Diagnostic #%1  [%2%3]  %4 → %5  (%6s)  %7  final=%8")
-				.arg(visibleSupplementalDiagnostics + 1)
-				.arg(stateLabel)
-				.arg(rangeEdited ? QStringLiteral(" / range edited") : QString{})
-				.arg(videoEditor->formatTimecode(range.startSec), videoEditor->formatTimecode(range.endSec))
-				.arg(selectedSec, 0, 'f', 0)
-				.arg(reason.left(42))
-				.arg(finalScore, 0, 'f', 2));
+		auto *markerItem =
+			new QTableWidgetItem(QStringLiteral("Diagnostic #%1  [%2%3]  %4 → %5  (%6s)  %7  final=%8")
+						     .arg(visibleSupplementalDiagnostics + 1)
+						     .arg(stateLabel)
+						     .arg(rangeEdited ? QStringLiteral(" / range edited") : QString{})
+						     .arg(videoEditor->formatTimecode(range.startSec),
+							  videoEditor->formatTimecode(range.endSec))
+						     .arg(selectedSec, 0, 'f', 0)
+						     .arg(reason.left(42))
+						     .arg(finalScore, 0, 'f', 2));
 		markerItem->setToolTip(QStringLiteral(
 			"Supplemental rejected/diagnostic candidate kept for feedback. Double-click this description to open the full diagnostic."));
 		markerItem->setFlags(markerItem->flags() & ~Qt::ItemIsEditable);
@@ -1816,14 +1301,15 @@ void UploadReviewDialog::refreshClipTable(const QVector<ClipDuration> &ranges)
 		auto *feedbackLayout = new QHBoxLayout(feedbackWidget);
 		feedbackLayout->setContentsMargins(2, 0, 2, 0);
 		feedbackLayout->setSpacing(4);
-		const QString persistedDecision = state.trimmed().isEmpty()
-			? persistedFeedbackDecisionForRange(range, persistedReviewMemory)
-			: QString{};
+		const QString persistedDecision =
+			state.trimmed().isEmpty() ? persistedFeedbackDecisionForRange(range, persistedReviewMemory)
+						  : QString{};
 		const bool alreadyReviewed = !state.trimmed().isEmpty() || !persistedDecision.trimmed().isEmpty();
 		if (alreadyReviewed) {
 			startItem->setFlags(startItem->flags() & ~Qt::ItemIsEditable);
 			endItem->setFlags(endItem->flags() & ~Qt::ItemIsEditable);
-			startItem->setToolTip(QStringLiteral("This reviewed diagnostic/probe is locked. It cannot be edited or rated again in this session."));
+			startItem->setToolTip(QStringLiteral(
+				"This reviewed diagnostic/probe is locked. It cannot be edited or rated again in this session."));
 			endItem->setToolTip(startItem->toolTip());
 			const QString displayDecision = !state.trimmed().isEmpty() ? state : persistedDecision;
 			auto *reviewedLabel = new QLabel(reviewDecisionDisplayLabel(displayDecision), feedbackWidget);
@@ -1841,20 +1327,21 @@ void UploadReviewDialog::refreshClipTable(const QVector<ClipDuration> &ranges)
 			adjustedButton->setFocusPolicy(Qt::NoFocus);
 			approvedAdjustedButton->setFocusPolicy(Qt::NoFocus);
 			ignoreButton->setFocusPolicy(Qt::NoFocus);
-			likeButton->setToolTip(QStringLiteral("Approve this diagnostic candidate as-is and describe its structure."));
+			likeButton->setToolTip(
+				QStringLiteral("Approve this diagnostic candidate as-is and describe its structure."));
 			dislikeButton->setToolTip(QStringLiteral("Reject this diagnostic candidate and describe why."));
-			adjustedButton->setToolTip(QStringLiteral("Edit start/end first, then mark this diagnostic as adjusted boundary feedback."));
-			approvedAdjustedButton->setToolTip(QStringLiteral("Edit start/end first, then save the corrected range as a good semantic clip example."));
-			ignoreButton->setToolTip(QStringLiteral("Ignore this exploration diagnostic for training. It only suppresses near-duplicates lightly and does not become a strong negative."));
-			connect(likeButton, &QPushButton::clicked, this, [this, row]() {
-				setDiagnosticReviewDecision(row, QStringLiteral("liked"));
-			});
-			connect(dislikeButton, &QPushButton::clicked, this, [this, row]() {
-				setDiagnosticReviewDecision(row, QStringLiteral("disliked"));
-			});
-			connect(adjustedButton, &QPushButton::clicked, this, [this, row]() {
-				setDiagnosticReviewDecision(row, QStringLiteral("adjusted"));
-			});
+			adjustedButton->setToolTip(QStringLiteral(
+				"Edit start/end first, then mark this diagnostic as adjusted boundary feedback."));
+			approvedAdjustedButton->setToolTip(QStringLiteral(
+				"Edit start/end first, then save the corrected range as a good semantic clip example."));
+			ignoreButton->setToolTip(QStringLiteral(
+				"Ignore this exploration diagnostic for training. It only suppresses near-duplicates lightly and does not become a strong negative."));
+			connect(likeButton, &QPushButton::clicked, this,
+				[this, row]() { setDiagnosticReviewDecision(row, QStringLiteral("liked")); });
+			connect(dislikeButton, &QPushButton::clicked, this,
+				[this, row]() { setDiagnosticReviewDecision(row, QStringLiteral("disliked")); });
+			connect(adjustedButton, &QPushButton::clicked, this,
+				[this, row]() { setDiagnosticReviewDecision(row, QStringLiteral("adjusted")); });
 			connect(approvedAdjustedButton, &QPushButton::clicked, this, [this, row]() {
 				setDiagnosticReviewDecision(row, QStringLiteral("approved_adjusted"));
 			});
@@ -1895,14 +1382,13 @@ void UploadReviewDialog::refreshClipTable(const QVector<ClipDuration> &ranges)
 	updateDiagnosticModeControls();
 }
 
-
-
 int UploadReviewDialog::diagnosticIndexForTableRow(int row) const
 {
 	if (!clipTable || row < 0 || row >= clipTable->rowCount())
 		return -1;
 	const QTableWidgetItem *item = clipTable->item(row, 0);
-	if (!item || tableItemIntDataOr(item, REVIEW_ROW_KIND_ROLE, REVIEW_ROW_KIND_MARKER) != REVIEW_ROW_KIND_DIAGNOSTIC)
+	if (!item ||
+	    tableItemIntDataOr(item, REVIEW_ROW_KIND_ROLE, REVIEW_ROW_KIND_MARKER) != REVIEW_ROW_KIND_DIAGNOSTIC)
 		return -1;
 	return tableItemIntDataOr(item, REVIEW_DIAGNOSTIC_INDEX_ROLE, -1);
 }
@@ -1940,9 +1426,7 @@ QVector<int> UploadReviewDialog::selectedDiagnosticTableRows() const
 	return rows;
 }
 
-void UploadReviewDialog::updateDiagnosticModeControls()
-{
-}
+void UploadReviewDialog::updateDiagnosticModeControls() {}
 
 void UploadReviewDialog::updateSuggestClipRangesButtonState()
 {
@@ -1992,7 +1476,8 @@ bool UploadReviewDialog::isDiagnosticTableRow(int row) const
 	if (!clipTable || row < 0 || row >= clipTable->rowCount())
 		return false;
 	const QTableWidgetItem *item = clipTable->item(row, 0);
-	return item && tableItemIntDataOr(item, REVIEW_ROW_KIND_ROLE, REVIEW_ROW_KIND_MARKER) == REVIEW_ROW_KIND_DIAGNOSTIC;
+	return item &&
+	       tableItemIntDataOr(item, REVIEW_ROW_KIND_ROLE, REVIEW_ROW_KIND_MARKER) == REVIEW_ROW_KIND_DIAGNOSTIC;
 }
 
 bool UploadReviewDialog::diagnosticRangeForTableRow(int row, ClipDuration *outRange, QJsonObject *outDiagnostic) const
@@ -2000,7 +1485,8 @@ bool UploadReviewDialog::diagnosticRangeForTableRow(int row, ClipDuration *outRa
 	if (!outRange || !clipTable || row < 0 || row >= clipTable->rowCount())
 		return false;
 	const QTableWidgetItem *item = clipTable->item(row, 0);
-	if (!item || tableItemIntDataOr(item, REVIEW_ROW_KIND_ROLE, REVIEW_ROW_KIND_MARKER) != REVIEW_ROW_KIND_DIAGNOSTIC)
+	if (!item ||
+	    tableItemIntDataOr(item, REVIEW_ROW_KIND_ROLE, REVIEW_ROW_KIND_MARKER) != REVIEW_ROW_KIND_DIAGNOSTIC)
 		return false;
 	const int diagnosticIndex = tableItemIntDataOr(item, REVIEW_DIAGNOSTIC_INDEX_ROLE, -1);
 	if (diagnosticIndex < 0 || diagnosticIndex >= lastSemanticSuggestion.candidateDiagnostics.size())
@@ -2071,21 +1557,23 @@ void UploadReviewDialog::handleClipTableItemChanged(QTableWidgetItem *item)
 
 	const QString value = item->text();
 	const bool diagnosticRow = isDiagnosticTableRow(row);
-	QTimer::singleShot(0, this, [this, row, column, value, diagnosticRow]() {
-		if (!clipTable || updatingClipTable || row < 0 || row >= clipTable->rowCount())
+	QTimer::singleShot(0, this, [guard = QPointer<UploadReviewDialog>(this), row, column, value, diagnosticRow]() {
+		if (!guard || !guard->clipTable || guard->updatingClipTable || row < 0 ||
+		    row >= guard->clipTable->rowCount())
 			return;
 		if (diagnosticRow)
-			applyEditedDiagnosticRangeTime(row, column, value);
+			guard->applyEditedDiagnosticRangeTime(row, column, value);
 		else
-			applyEditedRangeTime(row, column, value);
+			guard->applyEditedRangeTime(row, column, value);
 	});
 }
 
 ClipDuration UploadReviewDialog::normalizedDiagnosticRange(const ClipDuration &range) const
 {
 	ClipDuration normalized = range;
-	const double durationSec =
-		videoEditor && videoEditor->durationMilliseconds() > 0 ? videoEditor->durationMilliseconds() / 1000.0 : 0.0;
+	const double durationSec = videoEditor && videoEditor->durationMilliseconds() > 0
+					   ? videoEditor->durationMilliseconds() / 1000.0
+					   : 0.0;
 	normalized.startSec = std::max(0.0, normalized.startSec);
 	normalized.endSec = std::max(0.0, normalized.endSec);
 	if (durationSec > 0.0) {
@@ -2096,8 +1584,9 @@ ClipDuration UploadReviewDialog::normalizedDiagnosticRange(const ClipDuration &r
 	if (normalized.endSec <= normalized.startSec) {
 		if (durationSec > 0.0 && normalized.startSec + MinRangeDurationSec > durationSec)
 			normalized.startSec = std::max(0.0, durationSec - MinRangeDurationSec);
-		normalized.endSec = std::min(durationSec > 0.0 ? durationSec : normalized.startSec + MinRangeDurationSec,
-						normalized.startSec + MinRangeDurationSec);
+		normalized.endSec =
+			std::min(durationSec > 0.0 ? durationSec : normalized.startSec + MinRangeDurationSec,
+				 normalized.startSec + MinRangeDurationSec);
 	}
 	return normalized;
 }
@@ -2134,7 +1623,7 @@ void UploadReviewDialog::applyEditedDiagnosticRangeTime(int row, int column, con
 	diagnosticEditedRanges.insert(diagnosticIndex, range);
 	ClipDuration originalRange;
 	const bool edited = diagnosticRangeFromObject(diagnostic, &originalRange) &&
-		diagnosticRangeMeaningfullyEdited(originalRange, range);
+			    diagnosticRangeMeaningfullyEdited(originalRange, range);
 	const int previousSuggestedIndex = diagnosticFeedbackSuggestedIndices.value(diagnosticIndex, -1);
 	if (previousSuggestedIndex >= 0 && previousSuggestedIndex < lastSemanticSuggestion.ranges.size()) {
 		ensureDiagnosticFeedbackSuggestion(diagnosticIndex, range, diagnostic);
@@ -2158,8 +1647,7 @@ void UploadReviewDialog::applyEditedDiagnosticRangeTime(int row, int column, con
 		clipTable->setCurrentCell(row, column);
 	}
 
-	blog(LOG_INFO,
-	     "Edited diagnostic candidate review range. video=%s row=%d diagnosticIndex=%d range=%.2f-%.2f",
+	blog(LOG_INFO, "Edited diagnostic candidate review range. video=%s row=%d diagnosticIndex=%d range=%.2f-%.2f",
 	     videoPath.toUtf8().constData(), row, diagnosticIndex, range.startSec, range.endSec);
 }
 
@@ -2181,7 +1669,8 @@ void UploadReviewDialog::applyEditedRangeTime(int row, int column, const QString
 		if (!fileContentId.isEmpty())
 			contentIds.append(fileContentId);
 		const Curation::Feedback::FeedbackRangeMemory memory =
-			Curation::Feedback::CurationFeedbackStore::loadRangeMemoryForVideo(videoPath, presetId, contentIds);
+			Curation::Feedback::CurationFeedbackStore::loadRangeMemoryForVideo(videoPath, presetId,
+											   contentIds);
 		const QString persistedDecision = persistedFeedbackDecisionForRange(ranges.at(row), memory);
 		if (!persistedDecision.trimmed().isEmpty()) {
 			blog(LOG_INFO,
@@ -2658,7 +2147,8 @@ void UploadReviewDialog::applySemanticClipSuggestionResult(const ReviewScoringPr
 		return;
 
 	if (!result.applied) {
-		restoreReviewedPositiveMarkersFromFeedbackIfEmpty(QStringLiteral("diagnostics_only_result_preserve_reviewed_markers"));
+		restoreReviewedPositiveMarkersFromFeedbackIfEmpty(
+			QStringLiteral("diagnostics_only_result_preserve_reviewed_markers"));
 		lastSemanticSuggestion.ranges.clear();
 		lastSemanticSuggestion.contentId = result.contentId;
 		lastSemanticSuggestion.contentIdAliases = result.contentIdAliases;
@@ -2838,8 +2328,7 @@ int UploadReviewDialog::ensureFeedbackSuggestionForRange(const ClipDuration &ran
 		    reviewRangeSimilarity(range, currentRanges.first()) >= 0.99) {
 			blog(LOG_INFO,
 			     "Skipping default no-marker placeholder as explicit feedback candidate. video=%s range=%.2f-%.2f source=%s",
-			     videoPath.toUtf8().constData(), range.startSec, range.endSec,
-			     source.toUtf8().constData());
+			     videoPath.toUtf8().constData(), range.startSec, range.endSec, source.toUtf8().constData());
 			return -1;
 		}
 	}
@@ -3018,7 +2507,6 @@ QJsonObject UploadReviewDialog::reevaluateFeedbackRange(const ClipDuration &rang
 	return diagnostic;
 }
 
-
 static double diagnosticRangeSimilarityForReview(const ClipDuration &a, const ClipDuration &b)
 {
 	const double overlap = std::max(0.0, std::min(a.endSec, b.endSec) - std::max(a.startSec, b.startSec));
@@ -3077,9 +2565,9 @@ void UploadReviewDialog::showMarkerDiagnostics(int row)
 		QJsonObject diagnostic;
 		if (!diagnosticRangeForTableRow(row, &range, &diagnostic))
 			return;
-		MarkerDiagnosticsDialog dialog(range, diagnostic, videoEditor->formatTimecode(range.startSec),
-					       videoEditor->formatTimecode(range.endSec), this);
-		dialog.exec();
+		ClipCropper::Review::showMarkerDiagnosticsDialog(range, diagnostic,
+								 videoEditor->formatTimecode(range.startSec),
+								 videoEditor->formatTimecode(range.endSec), this);
 		return;
 	}
 
@@ -3090,12 +2578,12 @@ void UploadReviewDialog::showMarkerDiagnostics(int row)
 	const ClipDuration range = ranges.at(row);
 	const int suggestedIndex = suggestedIndexForRange(range);
 	const QJsonObject diagnostic = diagnosticForRange(range, suggestedIndex);
-	MarkerDiagnosticsDialog dialog(range, diagnostic, videoEditor->formatTimecode(range.startSec),
-				       videoEditor->formatTimecode(range.endSec), this);
-	dialog.exec();
+	ClipCropper::Review::showMarkerDiagnosticsDialog(range, diagnostic, videoEditor->formatTimecode(range.startSec),
+							 videoEditor->formatTimecode(range.endSec), this);
 }
 
-int UploadReviewDialog::ensureDiagnosticFeedbackSuggestion(int diagnosticIndex, const ClipDuration &range, const QJsonObject &diagnostic)
+int UploadReviewDialog::ensureDiagnosticFeedbackSuggestion(int diagnosticIndex, const ClipDuration &range,
+							   const QJsonObject &diagnostic)
 {
 	if (diagnosticIndex < 0 || !std::isfinite(range.startSec) || !std::isfinite(range.endSec) ||
 	    range.endSec <= range.startSec)
@@ -3124,7 +2612,8 @@ int UploadReviewDialog::ensureDiagnosticFeedbackSuggestion(int diagnosticIndex, 
 		taggedDiagnostic.insert(QStringLiteral("end_sec"), reviewedRange.endSec);
 		taggedDiagnostic.insert(QStringLiteral("duration_sec"), reviewedRange.endSec - reviewedRange.startSec);
 		if (hasOriginalRange) {
-			taggedDiagnostic.insert(QStringLiteral("diagnostic_original_start_sec"), originalRange.startSec);
+			taggedDiagnostic.insert(QStringLiteral("diagnostic_original_start_sec"),
+						originalRange.startSec);
 			taggedDiagnostic.insert(QStringLiteral("diagnostic_original_end_sec"), originalRange.endSec);
 			const bool edited = diagnosticRangeMeaningfullyEdited(originalRange, reviewedRange);
 			taggedDiagnostic.insert(QStringLiteral("diagnostic_range_edited"), edited);
@@ -3135,7 +2624,8 @@ int UploadReviewDialog::ensureDiagnosticFeedbackSuggestion(int diagnosticIndex, 
 			if (!value.isObject())
 				continue;
 			const QJsonObject object = value.toObject();
-			if (object.value(QStringLiteral("diagnostic_feedback_source_index")).toInt(-1) == diagnosticIndex) {
+			if (object.value(QStringLiteral("diagnostic_feedback_source_index")).toInt(-1) ==
+			    diagnosticIndex) {
 				lastSemanticSuggestion.candidateDiagnostics.replace(i, taggedDiagnostic);
 				return;
 			}
@@ -3182,12 +2672,13 @@ bool UploadReviewDialog::collectStructuredFeedback(int row, const QString &decis
 	const ClipDuration range = ranges.at(row);
 	const int suggestedIndex = suggestedIndexForRange(range);
 	const QJsonObject diagnostic = diagnosticForRange(range, suggestedIndex);
-	StructuredFeedbackDialog dialog(decision, range, diagnostic, videoEditor->formatTimecode(range.startSec),
-					 videoEditor->formatTimecode(range.endSec), this);
-	if (dialog.exec() != QDialog::Accepted)
+	auto feedback = ClipCropper::Review::collectStructuredFeedbackDialog(
+		decision, range, diagnostic, videoEditor->formatTimecode(range.startSec),
+		videoEditor->formatTimecode(range.endSec), this);
+	if (!feedback)
 		return false;
 
-	*outFeedback = dialog.feedback();
+	*outFeedback = std::move(*feedback);
 	outFeedback->insert(QStringLiteral("range_start_sec"), range.startSec);
 	outFeedback->insert(QStringLiteral("range_end_sec"), range.endSec);
 	if (suggestedIndex >= 0)
@@ -3232,13 +2723,15 @@ void UploadReviewDialog::setDiagnosticReviewDecision(int row, const QString &dec
 		if (!fileContentId.isEmpty())
 			contentIds.append(fileContentId);
 		const Curation::Feedback::FeedbackRangeMemory memory =
-			Curation::Feedback::CurationFeedbackStore::loadRangeMemoryForVideo(videoPath, presetId, contentIds);
+			Curation::Feedback::CurationFeedbackStore::loadRangeMemoryForVideo(videoPath, presetId,
+											   contentIds);
 		const QString persistedDecision = persistedFeedbackDecisionForRange(range, memory);
 		if (!persistedDecision.trimmed().isEmpty()) {
 			blog(LOG_INFO,
 			     "Ignored duplicate diagnostic feedback decision for already-reviewed range. video=%s row=%d diagnosticIndex=%d decision=%s previous=%s range=%.2f-%.2f",
-			     videoPath.toUtf8().constData(), row, diagnosticIndex, normalizedDecision.toUtf8().constData(),
-			     persistedDecision.toUtf8().constData(), range.startSec, range.endSec);
+			     videoPath.toUtf8().constData(), row, diagnosticIndex,
+			     normalizedDecision.toUtf8().constData(), persistedDecision.toUtf8().constData(),
+			     range.startSec, range.endSec);
 			refreshDiagnosticCandidateTable();
 			return;
 		}
@@ -3263,14 +2756,16 @@ void UploadReviewDialog::setDiagnosticReviewDecision(int row, const QString &dec
 		structuredFeedback.insert(QStringLiteral("suggested_index"), suggestedIndex);
 		structuredFeedback.insert(QStringLiteral("diagnostic_source_index"), diagnosticIndex);
 		if (hasOriginalRange) {
-			structuredFeedback.insert(QStringLiteral("diagnostic_original_start_sec"), originalRange.startSec);
+			structuredFeedback.insert(QStringLiteral("diagnostic_original_start_sec"),
+						  originalRange.startSec);
 			structuredFeedback.insert(QStringLiteral("diagnostic_original_end_sec"), originalRange.endSec);
 			structuredFeedback.insert(QStringLiteral("diagnostic_range_edited"), rangeEdited);
 		}
 		const QString diagnosticKind = diagnostic.value(QStringLiteral("diagnostic_kind")).toString().trimmed();
 		if (!diagnosticKind.isEmpty())
 			structuredFeedback.insert(QStringLiteral("diagnostic_kind"), diagnosticKind);
-		const QString rejectionReason = diagnostic.value(QStringLiteral("rejection_reason")).toString().trimmed();
+		const QString rejectionReason =
+			diagnostic.value(QStringLiteral("rejection_reason")).toString().trimmed();
 		if (!rejectionReason.isEmpty())
 			structuredFeedback.insert(QStringLiteral("diagnostic_rejection_reason"), rejectionReason);
 
@@ -3288,21 +2783,28 @@ void UploadReviewDialog::setDiagnosticReviewDecision(int row, const QString &dec
 			clipTable->selectRow(row);
 		blog(LOG_INFO,
 		     "Explicit diagnostic candidate ignored for training. video=%s row=%d diagnosticIndex=%d suggestionIndex=%d range=%.2f-%.2f",
-		     videoPath.toUtf8().constData(), row, diagnosticIndex, suggestedIndex, range.startSec, range.endSec);
+		     videoPath.toUtf8().constData(), row, diagnosticIndex, suggestedIndex, range.startSec,
+		     range.endSec);
 		return;
 	}
-	if ((normalizedDecision == QStringLiteral("adjusted") || normalizedDecision == QStringLiteral("approved_adjusted")) && !rangeEdited) {
-		QMessageBox::information(this, QStringLiteral("Adjust range first"),
+	if ((normalizedDecision == QStringLiteral("adjusted") ||
+	     normalizedDecision == QStringLiteral("approved_adjusted")) &&
+	    !rangeEdited) {
+		QMessageBox::information(
+			this, QStringLiteral("Adjust range first"),
 			normalizedDecision == QStringLiteral("approved_adjusted")
-				? QStringLiteral("Para salvar como bom clip corrigido, edite o início ou o fim do range antes. Se o range original já está bom, use aprovar.")
-				: QStringLiteral("Para marcar um diagnóstico como ajustado, edite o início ou o fim do range antes. Se o range já está bom, use aprovar; se continua ruim, use rejeitar."));
+				? QStringLiteral(
+					  "Para salvar como bom clip corrigido, edite o início ou o fim do range antes. Se o range original já está bom, use aprovar.")
+				: QStringLiteral(
+					  "Para marcar um diagnóstico como ajustado, edite o início ou o fim do range antes. Se o range já está bom, use aprovar; se continua ruim, use rejeitar."));
 		refreshDiagnosticCandidateTable();
 		return;
 	}
 
-	StructuredFeedbackDialog dialog(normalizedDecision, range, diagnostic, videoEditor->formatTimecode(range.startSec),
-					 videoEditor->formatTimecode(range.endSec), this);
-	if (dialog.exec() != QDialog::Accepted) {
+	auto feedback = ClipCropper::Review::collectStructuredFeedbackDialog(
+		normalizedDecision, range, diagnostic, videoEditor->formatTimecode(range.startSec),
+		videoEditor->formatTimecode(range.endSec), this);
+	if (!feedback) {
 		refreshDiagnosticCandidateTable();
 		return;
 	}
@@ -3311,7 +2813,7 @@ void UploadReviewDialog::setDiagnosticReviewDecision(int row, const QString &dec
 	if (suggestedIndex < 0)
 		return;
 
-	QJsonObject structuredFeedback = dialog.feedback();
+	QJsonObject structuredFeedback = std::move(*feedback);
 	structuredFeedback.insert(QStringLiteral("range_start_sec"), range.startSec);
 	structuredFeedback.insert(QStringLiteral("range_end_sec"), range.endSec);
 	structuredFeedback.insert(QStringLiteral("suggested_index"), suggestedIndex);
@@ -3376,7 +2878,8 @@ void UploadReviewDialog::setClipReviewDecision(int row, const QString &decision)
 		if (!fileContentId.isEmpty())
 			contentIds.append(fileContentId);
 		const Curation::Feedback::FeedbackRangeMemory memory =
-			Curation::Feedback::CurationFeedbackStore::loadRangeMemoryForVideo(videoPath, presetId, contentIds);
+			Curation::Feedback::CurationFeedbackStore::loadRangeMemoryForVideo(videoPath, presetId,
+											   contentIds);
 		const QString persistedDecision = persistedFeedbackDecisionForRange(reviewedRange, memory);
 		if (!persistedDecision.trimmed().isEmpty()) {
 			blog(LOG_INFO,
@@ -3421,7 +2924,8 @@ void UploadReviewDialog::setClipReviewDecision(int row, const QString &decision)
 		const QString diagnosticKind = diagnostic.value(QStringLiteral("diagnostic_kind")).toString().trimmed();
 		if (!diagnosticKind.isEmpty())
 			structuredFeedback.insert(QStringLiteral("diagnostic_kind"), diagnosticKind);
-		const QString rejectionReason = diagnostic.value(QStringLiteral("rejection_reason")).toString().trimmed();
+		const QString rejectionReason =
+			diagnostic.value(QStringLiteral("rejection_reason")).toString().trimmed();
 		if (!rejectionReason.isEmpty())
 			structuredFeedback.insert(QStringLiteral("diagnostic_rejection_reason"), rejectionReason);
 	} else {
@@ -3448,7 +2952,8 @@ void UploadReviewDialog::setClipReviewDecision(int row, const QString &decision)
 		finishReviewButton->setEnabled(true);
 		finishReviewButton->setText(QStringLiteral("Finish review (save feedback)"));
 	}
-	if (normalizedDecision == QStringLiteral("disliked") || normalizedDecision == QStringLiteral("ignored_diagnostic")) {
+	if (normalizedDecision == QStringLiteral("disliked") ||
+	    normalizedDecision == QStringLiteral("ignored_diagnostic")) {
 		videoEditor->selectRange(row);
 		videoEditor->removeSelectedRange();
 		return;
@@ -3472,8 +2977,7 @@ void UploadReviewDialog::saveBoundaryFeedback(const QString &eventName)
 	if (advancedSettingsOnly || boundaryFeedbackSaved || !videoEditor)
 		return;
 	if (explicitReviewDecisions.isEmpty()) {
-		blog(LOG_INFO,
-		     "Skipping boundary feedback save without explicit review decisions. video=%s event=%s",
+		blog(LOG_INFO, "Skipping boundary feedback save without explicit review decisions. video=%s event=%s",
 		     videoPath.toUtf8().constData(), eventName.toUtf8().constData());
 		return;
 	}

@@ -25,13 +25,13 @@ private:
 	QVector<ClipCandidate> rankGreedy(QVector<ClipCandidate> candidates, const ClipRankerOptions &options) const;
 	QVector<ClipCandidate> rankWithMmr(QVector<ClipCandidate> candidates, const ClipRankerOptions &options) const;
 	bool rangesOverlapTooMuch(const ClipDuration &left, const ClipDuration &right,
-				   double overlapToleranceSec) const;
+				  double overlapToleranceSec) const;
 	bool rangesAreTooClose(const ClipDuration &left, const ClipDuration &right, double minSpacingSec) const;
 	bool candidateConflictsWithSelected(const ClipCandidate &candidate, const QVector<ClipCandidate> &selected,
-					  const ClipRankerOptions &options) const;
+					    const ClipRankerOptions &options) const;
 	double relevanceScore(const ClipCandidate &candidate) const;
 	double mmrScore(const ClipCandidate &candidate, const QVector<ClipCandidate> &selected,
-			 const ClipRankerOptions &options, double *maxSimilarity) const;
+			const ClipRankerOptions &options, double *maxSimilarity) const;
 	double candidateSimilarity(const ClipCandidate &left, const ClipCandidate &right,
 				   const ClipRankerOptions &options) const;
 	double temporalSimilarity(const ClipDuration &left, const ClipDuration &right,

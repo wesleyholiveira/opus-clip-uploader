@@ -29,7 +29,7 @@ bool substantiallyOverlapsFocus(const ClipDuration &candidate, const ClipDuratio
 		return true;
 	const double overlap = overlapSec(candidate, focus);
 	return overlap >= std::min(8.0, focusDuration * 0.35) ||
-		(candidate.startSec <= rangeCenterSec(focus) && candidate.endSec >= rangeCenterSec(focus));
+	       (candidate.startSec <= rangeCenterSec(focus) && candidate.endSec >= rangeCenterSec(focus));
 }
 
 void appendUniqueStart(QVector<double> &starts, double startSec)
@@ -72,10 +72,8 @@ bool rangeIsWithinDurationLimits(const ClipDuration &range, const CandidateGener
 	return durationSec >= options.minDurationSec && durationSec <= options.maxDurationSec + 0.50;
 }
 
-ClipDuration normalizedVariantRange(const TranscriptIndex &index,
-	const CandidateGenerationOptions &options,
-	const ClipDuration &candidateRange,
-	const ClipDuration &localSearchRange)
+ClipDuration normalizedVariantRange(const TranscriptIndex &index, const CandidateGenerationOptions &options,
+				    const ClipDuration &candidateRange, const ClipDuration &localSearchRange)
 {
 	ClipDuration range = candidateRange;
 	if (range.startSec < localSearchRange.startSec) {

@@ -30,20 +30,21 @@ public:
 
 private:
 	QVector<ClipCandidate> cueAnchoredCandidates(const TranscriptIndex &index,
-					       const CandidateGenerationOptions &options) const;
+						     const CandidateGenerationOptions &options) const;
 	QVector<ClipCandidate> arcDpCandidates(const TranscriptIndex &index,
 					       const CandidateGenerationOptions &options) const;
 	QVector<ClipCandidate> slidingWindowCandidates(const TranscriptIndex &index,
-					       const CandidateGenerationOptions &options) const;
+						       const CandidateGenerationOptions &options) const;
 	ClipCandidate buildCandidate(const TranscriptIndex &index, const CandidateGenerationOptions &options,
 				     double startSec, double endSec, const QString &source,
 				     bool startsNearViewerCue) const;
-	ClipDuration expandStartForViewerContext(const TranscriptIndex &index, const CandidateGenerationOptions &options,
-						 const ClipDuration &range, int anchorSegmentIndex) const;
+	ClipDuration expandStartForViewerContext(const TranscriptIndex &index,
+						 const CandidateGenerationOptions &options, const ClipDuration &range,
+						 int anchorSegmentIndex) const;
 	ClipDuration extendForOpenExplanation(const TranscriptIndex &index, const CandidateGenerationOptions &options,
-					       const ClipDuration &range) const;
+					      const ClipDuration &range) const;
 	ClipDuration trimBeforeNextTopicShift(const TranscriptIndex &index, const CandidateGenerationOptions &options,
-					       const ClipDuration &range, int anchorSegmentIndex) const;
+					      const ClipDuration &range, int anchorSegmentIndex) const;
 };
 
 } // namespace Curation::Scoring

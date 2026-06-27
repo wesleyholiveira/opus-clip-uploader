@@ -84,8 +84,9 @@ QString findCaseInsensitiveGgufMatch(const QString &configuredModel)
 		QDir dir(dirPath);
 		if (!dir.exists())
 			continue;
-		const QFileInfoList files = dir.entryInfoList(QStringList{QStringLiteral("*.gguf"), QStringLiteral("*.GGUF")},
-								     QDir::Files | QDir::Readable, QDir::Name);
+		const QFileInfoList files =
+			dir.entryInfoList(QStringList{QStringLiteral("*.gguf"), QStringLiteral("*.GGUF")},
+					  QDir::Files | QDir::Readable, QDir::Name);
 		for (const QFileInfo &file : files) {
 			const QString key = normalizedLookupKey(file.fileName());
 			if (key == wanted)
@@ -136,7 +137,8 @@ QString Curation::Scoring::resolveLlamaCppModelPath(const QString &configuredMod
 
 	const QString scanned = findCaseInsensitiveGgufMatch(configuredModel);
 	if (!scanned.isEmpty()) {
-		blog(LOG_INFO, "[clip-cropper] Native llama.cpp model resolved by case-insensitive GGUF scan. requested=%s path=%s",
+		blog(LOG_INFO,
+		     "[clip-cropper] Native llama.cpp model resolved by case-insensitive GGUF scan. requested=%s path=%s",
 		     configuredModel.toUtf8().constData(), scanned.toUtf8().constData());
 		return scanned;
 	}

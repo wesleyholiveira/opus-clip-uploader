@@ -4,9 +4,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <future>
-#include <thread>
-#include <vector>
 
 using namespace Curation::Scoring;
 
@@ -64,14 +61,6 @@ static double centerSec(const ClipDuration &range)
 	return range.startSec + ((range.endSec - range.startSec) * 0.5);
 }
 
-
-static int boundedWorkerCount(int taskCount, int preferredMaxWorkers)
-{
-	if (taskCount <= 1)
-		return 1;
-	const unsigned int hardware = std::max(1u, std::thread::hardware_concurrency());
-	return std::clamp(taskCount, 1, std::max(1, std::min(preferredMaxWorkers, static_cast<int>(hardware))));
-}
 
 } // namespace
 

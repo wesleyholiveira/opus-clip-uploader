@@ -14,7 +14,6 @@ extern "C" {
 #include <cmath>
 #include <QElapsedTimer>
 
-
 using namespace Curation::Scoring::CandidateRangeUtils;
 
 namespace Curation::Scoring {
@@ -53,10 +52,10 @@ static int semanticPrototypeClusterCount(const Curation::Feedback::FeedbackRange
 
 } // namespace
 
-QVector<ClipCandidate> FeedbackGuidedCandidateStage::appendCandidates(const TranscriptIndex &index,
-	QVector<ClipCandidate> candidates,
-	const Curation::Feedback::FeedbackRangeMemory &memory,
-	const FeedbackGuidedCandidateStageOptions &options) const
+QVector<ClipCandidate>
+FeedbackGuidedCandidateStage::appendCandidates(const TranscriptIndex &index, QVector<ClipCandidate> candidates,
+					       const Curation::Feedback::FeedbackRangeMemory &memory,
+					       const FeedbackGuidedCandidateStageOptions &options) const
 {
 	if (!memory.loaded || memory.positiveRanges.isEmpty())
 		return candidates;
@@ -64,48 +63,40 @@ QVector<ClipCandidate> FeedbackGuidedCandidateStage::appendCandidates(const Tran
 	const int semanticPositiveClusters = semanticPrototypeClusterCount(memory);
 	FeedbackGuidedCandidateGenerationOptions feedbackGenerationOptions;
 	feedbackGenerationOptions.generation = options.generation;
-	const int clusterLimitedSeedBudget = semanticPositiveClusters <= 0
-		? 0
-		: semanticPositiveClusters == 1
-		? 8
-		: semanticPositiveClusters == 2
-		? 14
-		: semanticPositiveClusters <= 5
-		? 24
-		: semanticPositiveClusters <= 10
-		? 40
-		: 64;
-	feedbackGenerationOptions.maxSeeds = std::min(std::clamp(options.ranking.maxCandidates * 2, 12, 64),
-		clusterLimitedSeedBudget);
-	feedbackGenerationOptions.maxSemanticPrototypeSeeds = semanticPositiveClusters <= 1
-		? 2
-		: semanticPositiveClusters == 2
-		? 4
-		: semanticPositiveClusters <= 5
-		? std::min(10, semanticPositiveClusters * 2)
-		: std::min(18, semanticPositiveClusters * 2);
-	feedbackGenerationOptions.maxPatternSeeds = semanticPositiveClusters <= 1
-		? 4
-		: semanticPositiveClusters == 2
-		? 8
-		: semanticPositiveClusters <= 5
-		? 12
-		: semanticPositiveClusters <= 10
-		? 24
-		: 40;
+	const int clusterLimitedSeedBudget = semanticPositiveClusters <= 0    ? 0
+					     : semanticPositiveClusters == 1  ? 8
+					     : semanticPositiveClusters == 2  ? 14
+					     : semanticPositiveClusters <= 5  ? 24
+					     : semanticPositiveClusters <= 10 ? 40
+									      : 64;
+	feedbackGenerationOptions.maxSeeds =
+		std::min(std::clamp(options.ranking.maxCandidates * 2, 12, 64), clusterLimitedSeedBudget);
+	feedbackGenerationOptions.maxSemanticPrototypeSeeds = semanticPositiveClusters <= 1   ? 2
+							      : semanticPositiveClusters == 2 ? 4
+							      : semanticPositiveClusters <= 5
+								      ? std::min(10, semanticPositiveClusters * 2)
+								      : std::min(18, semanticPositiveClusters * 2);
+	feedbackGenerationOptions.maxPatternSeeds = semanticPositiveClusters <= 1    ? 4
+						    : semanticPositiveClusters == 2  ? 8
+						    : semanticPositiveClusters <= 5  ? 12
+						    : semanticPositiveClusters <= 10 ? 24
+										     : 40;
 
 	const bool saturatedSameVideoMemory = memory.recordsRead >= 80 || memory.ignoredDiagnosticSignals >= 40 ||
-		memory.approvedAdjustedPositiveSignals >= 20 || semanticPositiveClusters >= 16;
+					      memory.approvedAdjustedPositiveSignals >= 20 ||
+					      semanticPositiveClusters >= 16;
 	if (saturatedSameVideoMemory) {
 		feedbackGenerationOptions.maxExactPositiveSeeds = 0;
 		feedbackGenerationOptions.maxBoundaryVariantSeeds = 4;
-		feedbackGenerationOptions.maxSemanticPrototypeSeeds = std::max(feedbackGenerationOptions.maxSemanticPrototypeSeeds, 24);
+		feedbackGenerationOptions.maxSemanticPrototypeSeeds =
+			std::max(feedbackGenerationOptions.maxSemanticPrototypeSeeds, 24);
 		feedbackGenerationOptions.maxPatternSeeds = std::max(feedbackGenerationOptions.maxPatternSeeds, 40);
 		blog(LOG_INFO,
 		     "[clip-cropper] Feedback-guided repetition guard active. video=%s records=%d ignored=%d approvedAdjusted=%d semanticClusters=%d maxExact=%d maxBoundary=%d",
 		     options.videoPath.toUtf8().constData(), memory.recordsRead, memory.ignoredDiagnosticSignals,
 		     memory.approvedAdjustedPositiveSignals, semanticPositiveClusters,
-		     feedbackGenerationOptions.maxExactPositiveSeeds, feedbackGenerationOptions.maxBoundaryVariantSeeds);
+		     feedbackGenerationOptions.maxExactPositiveSeeds,
+		     feedbackGenerationOptions.maxBoundaryVariantSeeds);
 	} else {
 		feedbackGenerationOptions.maxExactPositiveSeeds = semanticPositiveClusters <= 3 ? 4 : 2;
 		feedbackGenerationOptions.maxBoundaryVariantSeeds = semanticPositiveClusters <= 3 ? 8 : 6;
@@ -114,7 +105,8 @@ QVector<ClipCandidate> FeedbackGuidedCandidateStage::appendCandidates(const Tran
 	QElapsedTimer generatorTimer;
 	generatorTimer.start();
 	FeedbackGuidedCandidateGenerator feedbackGenerator;
-	const QVector<FeedbackGuidedCandidateSeed> feedbackSeeds = feedbackGenerator.generate(index, memory, feedbackGenerationOptions);
+	const QVector<FeedbackGuidedCandidateSeed> feedbackSeeds =
+		feedbackGenerator.generate(index, memory, feedbackGenerationOptions);
 	const qint64 seedGenerationMs = generatorTimer.elapsed();
 	if (feedbackSeeds.isEmpty())
 		return candidates;
@@ -146,11 +138,12 @@ QVector<ClipCandidate> FeedbackGuidedCandidateStage::appendCandidates(const Tran
 			++patternSeedCount;
 		if (hasSimilarRange(candidates, seed.range, 1.0))
 			continue;
-		ClipCandidate candidate = CandidateBuilder::buildForRange(index, options.generation, options.scoring,
-			options.qualityGate, seed.range, feedbackRegion);
+		ClipCandidate candidate = CandidateBuilder::buildForRange(
+			index, options.generation, options.scoring, options.qualityGate, seed.range, feedbackRegion);
 		if (candidate.text.trimmed().isEmpty())
 			continue;
-		candidate.source = seed.source.trimmed().isEmpty() ? QStringLiteral("feedback_guided_candidate") : seed.source;
+		candidate.source = seed.source.trimmed().isEmpty() ? QStringLiteral("feedback_guided_candidate")
+								   : seed.source;
 		candidate.scores.final = std::max(candidate.scores.final, seed.priorScore);
 		candidate.scores.semanticTarget = std::max(candidate.scores.semanticTarget, 0.62);
 		candidate.scores.semanticClipValue = std::max(candidate.scores.semanticClipValue, 0.62);
@@ -169,11 +162,11 @@ QVector<ClipCandidate> FeedbackGuidedCandidateStage::appendCandidates(const Tran
 	if (addedFeedbackCandidates > 0) {
 		blog(LOG_INFO,
 		     "[clip-cropper] Added feedback-guided candidates before ranking. video=%s seeds=%d added=%d exact=%d boundary=%d prototype=%d pattern=%d positive=%d semanticPositive=%d semanticClusters=%d negative=%d seedGenerationMs=%lld buildMs=%lld",
-		     options.videoPath.toUtf8().constData(), static_cast<int>(feedbackSeeds.size()), addedFeedbackCandidates,
-		     exactSeedCount, boundaryVariantCount, prototypeSeedCount, patternSeedCount,
-		     static_cast<int>(memory.positiveRanges.size()), semanticPositiveCount, semanticPositiveClusters,
-		     static_cast<int>(memory.negativeRanges.size()), static_cast<long long>(seedGenerationMs),
-		     static_cast<long long>(buildTimer.elapsed()));
+		     options.videoPath.toUtf8().constData(), static_cast<int>(feedbackSeeds.size()),
+		     addedFeedbackCandidates, exactSeedCount, boundaryVariantCount, prototypeSeedCount,
+		     patternSeedCount, static_cast<int>(memory.positiveRanges.size()), semanticPositiveCount,
+		     semanticPositiveClusters, static_cast<int>(memory.negativeRanges.size()),
+		     static_cast<long long>(seedGenerationMs), static_cast<long long>(buildTimer.elapsed()));
 	}
 
 	return candidates;

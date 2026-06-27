@@ -198,8 +198,8 @@ void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCance
 	QObject::connect(btnCancel, &QPushButton::clicked, dialog, cancelUpload);
 	bind_progress_window_cancel(dialog, cancelUpload);
 
-	auto *startNext = new std::function<void()>();
-	QObject::connect(dialog, &QObject::destroyed, dialog, [startNext]() { delete startNext; });
+	auto startNext = std::make_shared<std::function<void()>>();
+	QObject::connect(dialog, &QObject::destroyed, dialog, [startNext]() { *startNext = nullptr; });
 
 	*startNext = [=]() mutable {
 		if (state->canceled)
@@ -239,7 +239,6 @@ void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCance
 			QString sourceLang = curationSettings.sourceLanguage.trimmed();
 			if (sourceLang.isEmpty())
 				sourceLang = QStringLiteral("auto");
-
 
 			auto *worker = new UploadWorker(apiKey, QString::fromStdString(fInfo.filePath),
 							QString::fromStdString(fInfo.fileName),

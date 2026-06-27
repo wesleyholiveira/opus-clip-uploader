@@ -17,10 +17,9 @@ struct FeedbackGuidedCandidateStageOptions {
 
 class FeedbackGuidedCandidateStage {
 public:
-	QVector<ClipCandidate> appendCandidates(const TranscriptIndex &index,
-		QVector<ClipCandidate> candidates,
-		const Curation::Feedback::FeedbackRangeMemory &memory,
-		const FeedbackGuidedCandidateStageOptions &options) const;
+	QVector<ClipCandidate> appendCandidates(const TranscriptIndex &index, QVector<ClipCandidate> candidates,
+						const Curation::Feedback::FeedbackRangeMemory &memory,
+						const FeedbackGuidedCandidateStageOptions &options) const;
 };
 
 } // namespace Curation::Scoring

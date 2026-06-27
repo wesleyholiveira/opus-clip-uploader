@@ -8,7 +8,6 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <limits>
 
 namespace Curation::Scoring {
 
@@ -72,11 +71,14 @@ static double emissionScore(const SegmentArcFeatures &features, ArcDpState state
 	case ArcDpState::Context:
 		return (features.context * 0.70) + (features.target * 0.16) - (features.bad * 0.50);
 	case ArcDpState::Hook:
-		return (features.hook * 0.72) + (features.context * 0.22) + (features.target * 0.18) - (features.bad * 0.46);
+		return (features.hook * 0.72) + (features.context * 0.22) + (features.target * 0.18) -
+		       (features.bad * 0.46);
 	case ArcDpState::Development:
-		return (features.development * 0.58) + (features.target * 0.24) + (features.hook * 0.10) - (features.bad * 0.34);
+		return (features.development * 0.58) + (features.target * 0.24) + (features.hook * 0.10) -
+		       (features.bad * 0.34);
 	case ArcDpState::Resolution:
-		return (features.resolution * 0.70) + (features.development * 0.12) + (features.target * 0.12) - (features.bad * 0.42);
+		return (features.resolution * 0.70) + (features.development * 0.12) + (features.target * 0.12) -
+		       (features.bad * 0.42);
 	case ArcDpState::Done:
 		break;
 	}
@@ -108,7 +110,7 @@ static double transitionScore(ArcDpState from, ArcDpState to)
 }
 
 static QVector<SegmentArcFeatures> buildFeatures(const TranscriptIndex &index,
-	const CandidateGenerationOptions &options)
+						 const CandidateGenerationOptions &options)
 {
 	QVector<SegmentArcFeatures> features;
 	CheapClipScorer scorer;
@@ -123,27 +125,32 @@ static QVector<SegmentArcFeatures> buildFeatures(const TranscriptIndex &index,
 		SegmentArcFeatures feature;
 		feature.index = i;
 		feature.range = {segment->startSec, segment->endSec};
-		feature.viewerCue = scorer.looksLikeQuestionOrViewerMessage(text) || TextAnalysis::hasConcreteViewerQuestion(text);
+		feature.viewerCue = scorer.looksLikeQuestionOrViewerMessage(text) ||
+				    TextAnalysis::hasConcreteViewerQuestion(text);
 		feature.target = options.reliableMainTarget ? scorer.targetKeywordScore(text, options.mainTarget) : 0.0;
 		const double emotional = Curation::emotionalScoreForText(text);
 		const double advice = Curation::adviceScoreForText(text);
 		const bool mentalHealth = TextAnalysis::looksLikeMentalHealthContext(text);
 		const bool sameExchange = TextAnalysis::looksLikeSameExchangeContinuation(text);
-		const bool hardShift = !previousUsefulText.isEmpty() && TextAnalysis::looksLikeHardTopicShift(text, previousUsefulText);
-		const bool meta = TextAnalysis::isSocialOrStreamMetaText(text) || TextAnalysis::isBacklogOrGreetingText(text) ||
-			TextAnalysis::hasNoiseOnlySemanticTopic(text);
+		const bool hardShift = !previousUsefulText.isEmpty() &&
+				       TextAnalysis::looksLikeHardTopicShift(text, previousUsefulText);
+		const bool meta = TextAnalysis::isSocialOrStreamMetaText(text) ||
+				  TextAnalysis::isBacklogOrGreetingText(text) ||
+				  TextAnalysis::hasNoiseOnlySemanticTopic(text);
 
 		feature.context = boundedScore((feature.viewerCue ? 0.72 : 0.0) + (mentalHealth ? 0.16 : 0.0) +
-			(feature.target * 0.18));
-		feature.hook = boundedScore((scorer.hasStrongLocalCue(text) ? 0.66 : 0.0) + (feature.viewerCue ? 0.22 : 0.0) +
-			(feature.target * 0.30) + (emotional * 0.10));
+					       (feature.target * 0.18));
+		feature.hook =
+			boundedScore((scorer.hasStrongLocalCue(text) ? 0.66 : 0.0) + (feature.viewerCue ? 0.22 : 0.0) +
+				     (feature.target * 0.30) + (emotional * 0.10));
 		feature.development = boundedScore((sameExchange ? 0.38 : 0.0) + (mentalHealth ? 0.24 : 0.0) +
-			(advice * 0.25) + (feature.target * 0.32));
-		feature.resolution = boundedScore((TextAnalysis::looksLikeSameExchangeContinuation(text) ? 0.18 : 0.0) +
-			(advice * 0.28) + (feature.target * 0.16) +
-			(text.contains(QLatin1Char('.')) || text.contains(QLatin1Char('!')) ? 0.08 : 0.0));
+						   (advice * 0.25) + (feature.target * 0.32));
+		feature.resolution =
+			boundedScore((TextAnalysis::looksLikeSameExchangeContinuation(text) ? 0.18 : 0.0) +
+				     (advice * 0.28) + (feature.target * 0.16) +
+				     (text.contains(QLatin1Char('.')) || text.contains(QLatin1Char('!')) ? 0.08 : 0.0));
 		feature.bad = boundedScore((hardShift ? 0.72 : 0.0) + (meta ? 0.62 : 0.0) +
-			(TextAnalysis::looksLikeNewViewerTurnAfterPause(text) ? 0.40 : 0.0));
+					   (TextAnalysis::looksLikeNewViewerTurnAfterPause(text) ? 0.40 : 0.0));
 
 		features.append(feature);
 		previousUsefulText = text;
@@ -158,7 +165,7 @@ static bool durationAllowed(const ClipDuration &range, const CandidateGeneration
 }
 
 static QVector<CompletedArc> recoverArcs(const QVector<SegmentArcFeatures> &features,
-	const CandidateGenerationOptions &options)
+					 const CandidateGenerationOptions &options)
 {
 	QVector<CompletedArc> arcs;
 	if (features.isEmpty())
@@ -182,9 +189,11 @@ static QVector<CompletedArc> recoverArcs(const QVector<SegmentArcFeatures> &feat
 					const DpCell &previous = dp.at(i - 1).at(prev);
 					if (!finiteScore(previous.score))
 						continue;
-					const double gapSec = std::max(0.0, feature.range.startSec - features.at(i - 1).range.endSec);
+					const double gapSec =
+						std::max(0.0, feature.range.startSec - features.at(i - 1).range.endSec);
 					const double gapPenalty = gapSec > 3.5 ? std::min(0.65, gapSec * 0.055) : 0.0;
-					const double candidateScore = previous.score + emission +
+					const double candidateScore =
+						previous.score + emission +
 						transitionScore(static_cast<ArcDpState>(prev), state) - gapPenalty;
 					if (candidateScore > best.score + 0.0001) {
 						best.score = candidateScore;
@@ -218,9 +227,9 @@ static QVector<CompletedArc> recoverArcs(const QVector<SegmentArcFeatures> &feat
 			}
 		}
 		arc.evidence.append(QStringLiteral("candidate_arc_dp score:%1 startFeature:%2 endFeature:%3")
-			.arg(QString::number(arc.score, 'f', 2))
-			.arg(arc.firstFeature)
-			.arg(arc.lastFeature));
+					    .arg(QString::number(arc.score, 'f', 2))
+					    .arg(arc.firstFeature)
+					    .arg(arc.lastFeature));
 		arcs.append(arc);
 	}
 	return arcs;
@@ -228,15 +237,15 @@ static QVector<CompletedArc> recoverArcs(const QVector<SegmentArcFeatures> &feat
 
 static bool rangesConflict(const PlannedArcCandidateRange &left, const PlannedArcCandidateRange &right)
 {
-	const double overlap = std::min(left.range.endSec, right.range.endSec) -
-		std::max(left.range.startSec, right.range.startSec);
+	const double overlap =
+		std::min(left.range.endSec, right.range.endSec) - std::max(left.range.startSec, right.range.startSec);
 	return overlap > 0.0;
 }
 
 } // namespace
 
 QVector<PlannedArcCandidateRange> CandidateArcPlanner::plan(const TranscriptIndex &index,
-	const CandidateGenerationOptions &options) const
+							    const CandidateGenerationOptions &options) const
 {
 	QVector<PlannedArcCandidateRange> planned;
 	const QVector<SegmentArcFeatures> features = buildFeatures(index, options);
@@ -248,7 +257,8 @@ QVector<PlannedArcCandidateRange> CandidateArcPlanner::plan(const TranscriptInde
 	});
 
 	for (const CompletedArc &arc : arcs) {
-		if (arc.firstFeature < 0 || arc.lastFeature < arc.firstFeature || arc.lastFeature >= static_cast<int>(features.size()))
+		if (arc.firstFeature < 0 || arc.lastFeature < arc.firstFeature ||
+		    arc.lastFeature >= static_cast<int>(features.size()))
 			continue;
 		PlannedArcCandidateRange range;
 		range.range = {features.at(arc.firstFeature).range.startSec, features.at(arc.lastFeature).range.endSec};

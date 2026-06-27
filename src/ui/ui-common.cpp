@@ -177,7 +177,6 @@ QString get_opus_api_key()
 	return PluginConfig::getValue("opus_api_key").trimmed();
 }
 
-
 QStringList whisper_model_search_paths(const QString &modelFile)
 {
 	QString normalizedModelFile = modelFile.trimmed();

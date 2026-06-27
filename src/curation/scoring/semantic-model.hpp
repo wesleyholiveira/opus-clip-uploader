@@ -21,13 +21,6 @@ public:
 	virtual QVector<SemanticEmbedding> embedBatch(const QVector<QString> &texts) const;
 };
 
-class DisabledSemanticEmbeddingProvider final : public SemanticEmbeddingProvider {
-public:
-	bool isAvailable() const override { return false; }
-	QString modelId() const override { return QStringLiteral("disabled"); }
-	SemanticEmbedding embed(const QString &text) const override;
-};
-
 double cosineSimilarity(const SemanticEmbedding &left, const SemanticEmbedding &right);
 
 } // namespace Curation::Scoring

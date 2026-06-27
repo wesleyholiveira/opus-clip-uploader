@@ -13,6 +13,7 @@ namespace Curation::Scoring {
 struct LlamaCppRerankerProviderOptions {
 	QString modelPathOrId = QStringLiteral("qwen3-reranker-0.6b-q8_0");
 	int maxTextChars = 3200;
+	int maxBatchSize = 4;
 	int contextSize = 4096;
 	int batchSize = 512;
 	int threads = 0;

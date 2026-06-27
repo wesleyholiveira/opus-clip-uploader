@@ -6,7 +6,6 @@
 #include "ui/upload-review-dialog.hpp"
 #include "ui/video-marker-editor.hpp"
 
-
 #include <obs-frontend-api.h>
 #include <obs-module.h>
 
@@ -90,7 +89,7 @@ static void upload_reviewed_video(QWidget *parent, const QString &videoPath, con
 }
 
 static void upload_after_video_review(QWidget *parent, const QString &videoPath,
-                                      const CurationSettings &curationSettings)
+				      const CurationSettings &curationSettings)
 {
 	blog(LOG_INFO, "Starting Opus upload after video editor review: %s", videoPath.toUtf8().constData());
 	upload_reviewed_video(parent, videoPath, curationSettings);
@@ -137,8 +136,7 @@ void open_video_editor_impl(void *private_data)
 
 			UploadReviewDialog reviewDialog(videoPath, initialSettings, false, parentWidget);
 			if (reviewDialog.exec() == QDialog::Accepted) {
-				blog(LOG_INFO,
-				     "Upload review accepted. Starting Opus upload with reviewed ranges: %s",
+				blog(LOG_INFO, "Upload review accepted. Starting Opus upload with reviewed ranges: %s",
 				     videoPath.toUtf8().constData());
 				const CurationSettings curationSettings = reviewDialog.curationSettings();
 				upload_after_video_review(parentWidget, videoPath, curationSettings);

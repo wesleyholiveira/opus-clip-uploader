@@ -21,11 +21,11 @@ struct WeightedIntervalSelectionOptions {
 class IntervalDpSelector {
 public:
 	QVector<int> select(const QVector<WeightedIntervalCandidate> &intervals,
-		const WeightedIntervalSelectionOptions &options) const;
+			    const WeightedIntervalSelectionOptions &options) const;
 
 private:
 	bool compatible(const WeightedIntervalCandidate &left, const WeightedIntervalCandidate &right,
-		const WeightedIntervalSelectionOptions &options) const;
+			const WeightedIntervalSelectionOptions &options) const;
 };
 
 } // namespace Curation::Scoring

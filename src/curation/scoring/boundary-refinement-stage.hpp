@@ -15,14 +15,12 @@ struct BoundaryRefinementStageOptions {
 
 class BoundaryRefinementStage {
 public:
-	QVector<ClipCandidate> apply(const TranscriptIndex &index,
-		QVector<ClipCandidate> candidates,
-		const BoundaryRefinementStageOptions &options) const;
+	QVector<ClipCandidate> apply(const TranscriptIndex &index, QVector<ClipCandidate> candidates,
+				     const BoundaryRefinementStageOptions &options) const;
 
 private:
-	ClipCandidate refineOne(const TranscriptIndex &index,
-		const ClipCandidate &candidate,
-		const BoundaryRefinementStageOptions &options) const;
+	ClipCandidate refineOne(const TranscriptIndex &index, const ClipCandidate &candidate,
+				const BoundaryRefinementStageOptions &options) const;
 };
 
 } // namespace Curation::Scoring

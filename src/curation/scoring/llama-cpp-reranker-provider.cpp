@@ -1,6 +1,7 @@
 #include "curation/scoring/llama-cpp-reranker-provider.hpp"
 
 #include "curation/scoring/llama-cpp-model-resolver.hpp"
+#include "curation/scoring/llama-cpp-batch-wrapper.hpp"
 
 #include <obs-module.h>
 
@@ -150,9 +151,9 @@ public:
 		nClassOutputs = std::max<uint32_t>(1, llama_model_n_cls_out(model));
 		blog(LOG_INFO,
 		     "[clip-cropper] Native llama.cpp reranker model loaded. path=%s clsOut=%u nCtx=%u nBatch=%u nUBatch=%u nSeqMax=%u threads=%d batchThreads=%d gpuLayers=%d pooling=rank attention=default offloadKqv=false kvUnified=false elapsedMs=%lld",
-		     path.toUtf8().constData(), nClassOutputs, llama_n_ctx(ctx), llama_n_batch(ctx), llama_n_ubatch(ctx),
-		     llama_n_seq_max(ctx), llama_n_threads(ctx), llama_n_threads_batch(ctx), options.gpuLayers,
-		     static_cast<long long>(timer.elapsed()));
+		     path.toUtf8().constData(), nClassOutputs, llama_n_ctx(ctx), llama_n_batch(ctx),
+		     llama_n_ubatch(ctx), llama_n_seq_max(ctx), llama_n_threads(ctx), llama_n_threads_batch(ctx),
+		     options.gpuLayers, static_cast<long long>(timer.elapsed()));
 		return true;
 	}
 
@@ -165,8 +166,8 @@ public:
 
 		const QByteArray bytes = pairText.toUtf8();
 		const llama_vocab *vocab = llama_model_get_vocab(model);
-		int tokenCount = llama_tokenize(vocab, bytes.constData(), static_cast<int32_t>(bytes.size()), nullptr, 0,
-						 true, true);
+		int tokenCount = llama_tokenize(vocab, bytes.constData(), static_cast<int32_t>(bytes.size()), nullptr,
+						0, true, true);
 		if (tokenCount < 0)
 			tokenCount = -tokenCount;
 		if (tokenCount <= 0)
@@ -174,7 +175,7 @@ public:
 
 		std::vector<llama_token> tokens(static_cast<size_t>(tokenCount));
 		int actual = llama_tokenize(vocab, bytes.constData(), static_cast<int32_t>(bytes.size()), tokens.data(),
-						 static_cast<int32_t>(tokens.size()), true, true);
+					    static_cast<int32_t>(tokens.size()), true, true);
 		if (actual < 0)
 			actual = -actual;
 		if (actual <= 0)
@@ -293,18 +294,49 @@ double LlamaCppRerankerProvider::score(const QString &query, const QString &cand
 QVector<double> LlamaCppRerankerProvider::scoreBatch(const QString &query, const QVector<QString> &candidateTexts) const
 {
 	QVector<double> scores;
-	scores.reserve(candidateTexts.size());
-	if (!isAvailable()) {
-		scores.resize(candidateTexts.size());
+	scores.resize(candidateTexts.size());
+	if (candidateTexts.isEmpty() || !isAvailable())
 		return scores;
-	}
-	for (const QString &candidate : candidateTexts) {
+
+	QVector<QString> pairs;
+	pairs.reserve(candidateTexts.size());
+	QVector<int> resultIndexes;
+	resultIndexes.reserve(candidateTexts.size());
+	for (int i = 0; i < static_cast<int>(candidateTexts.size()); ++i) {
 		if (options_.cancellationCallback && options_.cancellationCallback())
 			break;
-		scores.append(score(query, candidate));
+		const QString pair = preparedPairText(query, candidateTexts.at(i));
+		if (pair.isEmpty())
+			continue;
+		pairs.append(pair);
+		resultIndexes.append(i);
 	}
-	while (scores.size() < candidateTexts.size())
-		scores.append(0.0);
+
+	QString error;
+	QVector<double> computed;
+	{
+		QMutexLocker locker(&mutex_);
+		if (!engine_)
+			return scores;
+		computed = runSafeLlamaCppBatch<QString, double>(
+			pairs, options_.maxBatchSize, options_.cancellationCallback,
+			[this, &error](const QString &pair, int) {
+				if (!error.isEmpty())
+					return 0.0;
+				const double raw = engine_->scorePrepared(pair, options_, &error);
+				if (!error.isEmpty()) {
+					lastError_ = error;
+					return 0.0;
+				}
+				return normalizeRankScore(raw);
+			});
+	}
+
+	for (int i = 0; i < computed.size() && i < resultIndexes.size(); ++i) {
+		const int resultIndex = resultIndexes.at(i);
+		if (resultIndex >= 0 && resultIndex < scores.size())
+			scores[resultIndex] = computed.at(i);
+	}
 	return scores;
 }
 

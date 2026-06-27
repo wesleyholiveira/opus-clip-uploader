@@ -19,7 +19,7 @@ struct PlannedArcCandidateRange {
 class CandidateArcPlanner {
 public:
 	QVector<PlannedArcCandidateRange> plan(const TranscriptIndex &index,
-		const CandidateGenerationOptions &options) const;
+					       const CandidateGenerationOptions &options) const;
 };
 
 } // namespace Curation::Scoring

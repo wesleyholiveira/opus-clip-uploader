@@ -1,26 +1,18 @@
 #include "curation/scoring/candidate-source-builder.hpp"
 
+#include "curation/scoring/candidate-dedupe.hpp"
 #include "curation/scoring/candidate-range-utils.hpp"
+#include "curation/scoring/parallel-chunk-map.hpp"
 
 #include <algorithm>
-#include <QStringList>
+#include <QSet>
 #include <cmath>
-#include <future>
-#include <thread>
-#include <vector>
+#include <utility>
 
 using namespace Curation::Scoring::CandidateRangeUtils;
 
 namespace Curation::Scoring {
 namespace {
-
-int boundedWorkerCount(int taskCount, int preferredMaxWorkers)
-{
-	if (taskCount <= 1)
-		return 1;
-	const unsigned int hardware = std::max(1u, std::thread::hardware_concurrency());
-	return std::clamp(taskCount, 1, std::max(1, std::min(preferredMaxWorkers, static_cast<int>(hardware))));
-}
 
 QVector<double> targetDurationsForOptions(const CandidateSourceBuilderOptions &options)
 {
@@ -55,17 +47,15 @@ QVector<double> targetDurationsForOptions(const CandidateSourceBuilderOptions &o
 			generation.maxDurationSec,
 		};
 	}
-	targetDurations.erase(std::unique(targetDurations.begin(), targetDurations.end(), [](double left, double right) {
-		return std::fabs(left - right) < 0.25;
-	}), targetDurations.end());
+	targetDurations.erase(std::unique(targetDurations.begin(), targetDurations.end(),
+					  [](double left, double right) { return std::fabs(left - right) < 0.25; }),
+			      targetDurations.end());
 	return targetDurations;
 }
 
-QVector<ClipCandidate> buildRegionCandidates(const TranscriptIndex &index,
-	const SemanticCoarseRegion &region,
-	const CandidateSourceBuilderOptions &options,
-	const QVector<double> &targetDurations,
-	int maxCandidatesPerRegion)
+QVector<ClipCandidate> buildRegionCandidates(const TranscriptIndex &index, const SemanticCoarseRegion &region,
+					     const CandidateSourceBuilderOptions &options,
+					     const QVector<double> &targetDurations, int maxCandidatesPerRegion)
 {
 	QVector<ClipCandidate> regionCandidates;
 	const ClipDuration searchRange = index.clampRange(region.range, options.generation.searchRange);
@@ -84,7 +74,7 @@ QVector<ClipCandidate> buildRegionCandidates(const TranscriptIndex &index,
 	QVector<int> focusAnchorIndices;
 	const int desiredAnchors = std::max(5, maxCandidatesPerRegion * 2);
 	const int anchorStep = std::max(1, static_cast<int>(std::ceil(static_cast<double>(focusSegmentIndices.size()) /
-		static_cast<double>(desiredAnchors))));
+								      static_cast<double>(desiredAnchors))));
 	for (int position = 0; position < static_cast<int>(focusSegmentIndices.size()); position += anchorStep)
 		focusAnchorIndices.append(focusSegmentIndices.at(position));
 	if (!focusAnchorIndices.contains(focusSegmentIndices.first()))
@@ -93,7 +83,8 @@ QVector<ClipCandidate> buildRegionCandidates(const TranscriptIndex &index,
 		focusAnchorIndices.append(focusSegmentIndices.last());
 
 	regionCandidates.reserve(maxCandidatesPerRegion * 6);
-	QStringList regionSeen;
+	QSet<QString> regionSeen;
+	regionSeen.reserve(maxCandidatesPerRegion * 6);
 	for (const int anchorIndex : focusAnchorIndices) {
 		const TranscriptSegment *anchorSegment = index.segmentAt(anchorIndex);
 		if (!anchorSegment || anchorSegment->text.trimmed().isEmpty())
@@ -123,25 +114,25 @@ QVector<ClipCandidate> buildRegionCandidates(const TranscriptIndex &index,
 			appendUniqueStart(startTimes, focusRange.endSec - requestedDurationSec + 6.0);
 
 			for (double requestedStartSec : startTimes) {
-				ClipDuration range = normalizedVariantRange(index, options.generation,
+				ClipDuration range = normalizedVariantRange(
+					index, options.generation,
 					{requestedStartSec, requestedStartSec + requestedDurationSec}, searchRange);
 				if (range.endSec <= range.startSec)
 					continue;
 				if (!substantiallyOverlapsFocus(range, focusRange))
 					continue;
 
-				ClipCandidate candidate = CandidateBuilder::buildForRange(index, options.generation,
-					options.scoring, options.qualityGate, range, region);
+				ClipCandidate candidate = CandidateBuilder::buildForRange(
+					index, options.generation, options.scoring, options.qualityGate, range, region);
 				candidate.evidence.append(QStringLiteral("coarse_focus_seed_only"));
 				candidate.evidence.append(QStringLiteral("candidate_generated_around_coarse_focus"));
 				candidate.evidence.removeDuplicates();
-				const QString key = rangeKey(candidate.range);
-				if (regionSeen.contains(key) || !CandidateBuilder::isStructurallyViable(candidate,
-					    options.generation, options.qualityGate))
+				if (!CandidateBuilder::isStructurallyViable(candidate, options.generation,
+									    options.qualityGate) ||
+				    !CandidateDedupe::markSeen(regionSeen, candidate.range))
 					continue;
 
-				regionSeen.append(key);
-				regionCandidates.append(candidate);
+				regionCandidates.append(std::move(candidate));
 				if (static_cast<int>(regionCandidates.size()) >= maxCandidatesPerRegion * 6)
 					break;
 			}
@@ -152,71 +143,55 @@ QVector<ClipCandidate> buildRegionCandidates(const TranscriptIndex &index,
 			break;
 	}
 
-	std::sort(regionCandidates.begin(), regionCandidates.end(), [](const ClipCandidate &left,
-		const ClipCandidate &right) {
-		if (std::fabs(left.scores.final - right.scores.final) > 0.0001)
-			return left.scores.final > right.scores.final;
-		if (std::fabs(left.scores.coarseSemantic - right.scores.coarseSemantic) > 0.0001)
-			return left.scores.coarseSemantic > right.scores.coarseSemantic;
-		return left.range.startSec < right.range.startSec;
-	});
+	std::sort(regionCandidates.begin(), regionCandidates.end(),
+		  [](const ClipCandidate &left, const ClipCandidate &right) {
+			  if (std::fabs(left.scores.final - right.scores.final) > 0.0001)
+				  return left.scores.final > right.scores.final;
+			  if (std::fabs(left.scores.coarseSemantic - right.scores.coarseSemantic) > 0.0001)
+				  return left.scores.coarseSemantic > right.scores.coarseSemantic;
+			  return left.range.startSec < right.range.startSec;
+		  });
 	return regionCandidates;
 }
 
 } // namespace
 
-QVector<ClipCandidate> CandidateSourceBuilder::fromSemanticCoarseRegions(const TranscriptIndex &index,
-	const QVector<SemanticCoarseRegion> &regions,
-	const CandidateSourceBuilderOptions &options) const
+QVector<ClipCandidate>
+CandidateSourceBuilder::fromSemanticCoarseRegions(const TranscriptIndex &index,
+						  const QVector<SemanticCoarseRegion> &regions,
+						  const CandidateSourceBuilderOptions &options) const
 {
 	QVector<ClipCandidate> candidates;
-	QStringList seen;
 	if (regions.isEmpty())
 		return candidates;
 
 	const int maxRawCandidates = std::max(1, options.maxRawCandidates);
-	const int maxCandidatesPerRegion = std::max(4, maxRawCandidates / std::max(1, static_cast<int>(regions.size())));
+	const int maxCandidatesPerRegion =
+		std::max(4, maxRawCandidates / std::max(1, static_cast<int>(regions.size())));
 	const QVector<double> targetDurations = targetDurationsForOptions(options);
 
-	const int workerCount = boundedWorkerCount(static_cast<int>(regions.size()), 4);
-	QVector<QVector<ClipCandidate>> perRegion;
-	perRegion.reserve(regions.size());
-	if (workerCount <= 1) {
-		for (const SemanticCoarseRegion &region : regions)
-			perRegion.append(buildRegionCandidates(index, region, options, targetDurations, maxCandidatesPerRegion));
-	} else {
-		std::vector<std::future<QVector<QVector<ClipCandidate>>>> futures;
-		futures.reserve(workerCount);
-		const int chunkSize = static_cast<int>(std::ceil(static_cast<double>(regions.size()) /
-			static_cast<double>(workerCount)));
-		for (int first = 0; first < static_cast<int>(regions.size()); first += chunkSize) {
-			const int last = std::min(static_cast<int>(regions.size()), first + chunkSize);
-			futures.emplace_back(std::async(std::launch::async, [&index, &regions, &options, &targetDurations,
-				maxCandidatesPerRegion, first, last]() {
-				QVector<QVector<ClipCandidate>> chunk;
-				chunk.reserve(std::max(0, last - first));
-				for (int i = first; i < last; ++i)
-					chunk.append(buildRegionCandidates(index, regions.at(i), options, targetDurations, maxCandidatesPerRegion));
-				return chunk;
-			}));
-		}
-		for (std::future<QVector<QVector<ClipCandidate>>> &future : futures) {
-			const QVector<QVector<ClipCandidate>> chunk = future.get();
-			for (const QVector<ClipCandidate> &regionCandidates : chunk)
-				perRegion.append(regionCandidates);
-		}
-	}
+	QVector<QVector<ClipCandidate>> perRegion = ParallelChunkMap::runIndexed(
+		static_cast<int>(regions.size()), 4,
+		[&index, &regions, &options, &targetDurations, maxCandidatesPerRegion](int first, int last) {
+			QVector<QVector<ClipCandidate>> chunk;
+			chunk.reserve(std::max(0, last - first));
+			for (int i = first; i < last; ++i)
+				chunk.append(buildRegionCandidates(index, regions.at(i), options, targetDurations,
+								   maxCandidatesPerRegion));
+			return chunk;
+		});
 
-	for (const QVector<ClipCandidate> &regionCandidates : perRegion) {
+	QSet<QString> seen;
+	seen.reserve(maxRawCandidates);
+	for (QVector<ClipCandidate> &regionCandidates : perRegion) {
 		int acceptedFromRegion = 0;
-		for (const ClipCandidate &candidate : regionCandidates) {
-			const QString key = rangeKey(candidate.range);
-			if (seen.contains(key))
+		for (ClipCandidate &candidate : regionCandidates) {
+			if (!CandidateDedupe::markSeen(seen, candidate.range))
 				continue;
-			seen.append(key);
-			candidates.append(candidate);
+			candidates.append(std::move(candidate));
 			++acceptedFromRegion;
-			if (acceptedFromRegion >= maxCandidatesPerRegion || static_cast<int>(candidates.size()) >= maxRawCandidates)
+			if (acceptedFromRegion >= maxCandidatesPerRegion ||
+			    static_cast<int>(candidates.size()) >= maxRawCandidates)
 				break;
 		}
 		if (static_cast<int>(candidates.size()) >= maxRawCandidates)
@@ -227,7 +202,7 @@ QVector<ClipCandidate> CandidateSourceBuilder::fromSemanticCoarseRegions(const T
 }
 
 QVector<ClipCandidate> CandidateSourceBuilder::fromLocalHeuristics(const TranscriptIndex &index,
-	const CandidateSourceBuilderOptions &options) const
+								   const CandidateSourceBuilderOptions &options) const
 {
 	CandidateGenerator generator;
 	QVector<ClipCandidate> candidates = generator.generate(index, options.generation);
@@ -237,7 +212,8 @@ QVector<ClipCandidate> CandidateSourceBuilder::fromLocalHeuristics(const Transcr
 	return candidates;
 }
 
-int CandidateSourceBuilder::semanticCandidateBudget(const CandidateSourceBuilderOptions &options, int requestedBeforeEmbedding)
+int CandidateSourceBuilder::semanticCandidateBudget(const CandidateSourceBuilderOptions &options,
+						    int requestedBeforeEmbedding)
 {
 	const int requested = std::max(1, requestedBeforeEmbedding);
 	const int rawBudget = std::max(1, options.maxRawCandidates);

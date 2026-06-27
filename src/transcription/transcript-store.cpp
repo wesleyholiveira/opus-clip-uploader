@@ -42,7 +42,6 @@ QString safeLanguageKey(const QString &language)
 	return normalized.isEmpty() ? QString::fromLatin1(AutoLanguage) : normalized;
 }
 
-
 QString transcriptFileCacheDirectory()
 {
 	QString baseDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
@@ -211,7 +210,7 @@ RecordingTranscript TranscriptStore::loadForVideoPath(const QString &videoPath, 
 }
 
 void TranscriptStore::saveAlignedForVideoPath(const QString &videoPath, const QString &transcriptionLanguage,
-					     const RecordingTranscript &transcript)
+					      const RecordingTranscript &transcript)
 {
 	const QString normalizedLanguage = normalizeTranscriptionLanguage(transcriptionLanguage);
 	const QString path = alignedTranscriptFilePath(videoPath, normalizedLanguage);
@@ -253,7 +252,8 @@ void TranscriptStore::saveAlignedForVideoPath(const QString &videoPath, const QS
 	file.commit();
 }
 
-RecordingTranscript TranscriptStore::loadAlignedForVideoPath(const QString &videoPath, const QString &transcriptionLanguage)
+RecordingTranscript TranscriptStore::loadAlignedForVideoPath(const QString &videoPath,
+							     const QString &transcriptionLanguage)
 {
 	RecordingTranscript transcript;
 	transcript.videoFileName = QFileInfo(videoPath).fileName();
@@ -276,7 +276,8 @@ RecordingTranscript TranscriptStore::loadAlignedForVideoPath(const QString &vide
 		const QJsonObject item = doc.object();
 		const QString type = item.value(QStringLiteral("type")).toString();
 		if (type == QStringLiteral("meta")) {
-			transcript.videoFileName = item.value(QStringLiteral("videoFileName")).toString(transcript.videoFileName);
+			transcript.videoFileName =
+				item.value(QStringLiteral("videoFileName")).toString(transcript.videoFileName);
 			transcript.videoPath = item.value(QStringLiteral("videoPath")).toString(videoPath);
 			transcript.wordAligned = item.value(QStringLiteral("wordAligned")).toBool(false);
 			transcript.alignmentBackend = item.value(QStringLiteral("alignmentBackend")).toString();

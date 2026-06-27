@@ -124,9 +124,8 @@ QVector<ClipCandidate> CandidateGenerator::cueAnchoredCandidates(const Transcrip
 	return candidates;
 }
 
-
 QVector<ClipCandidate> CandidateGenerator::arcDpCandidates(const TranscriptIndex &index,
-	const CandidateGenerationOptions &options) const
+							   const CandidateGenerationOptions &options) const
 {
 	QVector<ClipCandidate> candidates;
 	CandidateArcPlanner planner;
@@ -134,7 +133,7 @@ QVector<ClipCandidate> CandidateGenerator::arcDpCandidates(const TranscriptIndex
 	candidates.reserve(plannedRanges.size());
 	for (const PlannedArcCandidateRange &planned : plannedRanges) {
 		ClipCandidate candidate = buildCandidate(index, options, planned.range.startSec, planned.range.endSec,
-			planned.source, planned.startsNearViewerCue);
+							 planned.source, planned.startsNearViewerCue);
 		for (const QString &evidence : planned.evidence)
 			candidate.evidence.append(evidence);
 		candidate.evidence.append(QStringLiteral("candidate_generation_arc_dp"));

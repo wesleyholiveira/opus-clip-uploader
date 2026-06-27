@@ -28,7 +28,7 @@ struct ArcDpBoundaryRefinerOptions {
 class ArcDpBoundaryRefiner {
 public:
 	ClipCandidate refine(const TranscriptIndex &index, const ClipCandidate &candidate,
-		const ArcDpBoundaryRefinerOptions &options) const;
+			     const ArcDpBoundaryRefinerOptions &options) const;
 };
 
 } // namespace Curation::Scoring

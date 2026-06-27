@@ -25,9 +25,9 @@ public:
 						TranscriptionProgressCallback progressCallback = {},
 						TranscriptionCancelCallback cancelCallback = {});
 	RecordingTranscript alignTranscriptWithWhisperX(const QString &videoPath, const QString &transcriptionLanguage,
-							 const RecordingTranscript &baseTranscript,
-							 TranscriptionProgressCallback progressCallback = {},
-							 TranscriptionCancelCallback cancelCallback = {});
+							const RecordingTranscript &baseTranscript,
+							TranscriptionProgressCallback progressCallback = {},
+							TranscriptionCancelCallback cancelCallback = {});
 	RecordingTranscript transcribeVideoRanges(const QString &videoPath, const QString &whisperModelPath,
 						  const QString &transcriptionLanguage,
 						  const QVector<ClipDuration> &ranges,

@@ -11,9 +11,7 @@
 #include <QTimer>
 
 #include <algorithm>
-#include <future>
 #include <utility>
-#include <vector>
 
 using namespace Curation::Scoring;
 
@@ -133,8 +131,9 @@ SemanticEmbedding LlamaServerEmbeddingProvider::embed(const QString &text) const
 		QString preview = QString::fromUtf8(response).simplified();
 		if (preview.size() > 240)
 			preview = preview.left(240) + QStringLiteral("...");
-		markFailure(preview.isEmpty() ? QStringLiteral("llama_server_invalid_embedding_response")
-					: QStringLiteral("llama_server_invalid_embedding_response:%1").arg(preview));
+		markFailure(preview.isEmpty()
+				    ? QStringLiteral("llama_server_invalid_embedding_response")
+				    : QStringLiteral("llama_server_invalid_embedding_response:%1").arg(preview));
 		return {};
 	}
 
@@ -171,7 +170,8 @@ QVector<SemanticEmbedding> LlamaServerEmbeddingProvider::embedBatch(const QVecto
 				embeddings[i] = embed(pendingTexts.at(i));
 			}
 		}
-		for (int i = 0; i < static_cast<int>(embeddings.size()) && i < static_cast<int>(pendingIndexes.size()); ++i) {
+		for (int i = 0; i < static_cast<int>(embeddings.size()) && i < static_cast<int>(pendingIndexes.size());
+		     ++i) {
 			const SemanticEmbedding &embedding = embeddings.at(i);
 			if (!embedding.isValid())
 				continue;
@@ -296,7 +296,7 @@ SemanticEmbedding LlamaServerEmbeddingProvider::parseEmbeddingResponse(const QBy
 }
 
 QVector<SemanticEmbedding> LlamaServerEmbeddingProvider::parseEmbeddingBatchResponse(const QByteArray &payload,
-	qsizetype expectedSize) const
+										     qsizetype expectedSize) const
 {
 	QJsonParseError parseError;
 	const QJsonDocument document = QJsonDocument::fromJson(payload, &parseError);
@@ -406,8 +406,9 @@ QVector<SemanticEmbedding> LlamaServerEmbeddingProvider::postEmbeddingBatch(cons
 		QString preview = QString::fromUtf8(response).simplified();
 		if (preview.size() > 240)
 			preview = preview.left(240) + QStringLiteral("...");
-		markFailure(preview.isEmpty() ? QStringLiteral("llama_server_invalid_batch_embedding_response")
-					: QStringLiteral("llama_server_invalid_batch_embedding_response:%1").arg(preview));
+		markFailure(preview.isEmpty()
+				    ? QStringLiteral("llama_server_invalid_batch_embedding_response")
+				    : QStringLiteral("llama_server_invalid_batch_embedding_response:%1").arg(preview));
 		return {};
 	}
 	markSuccess();

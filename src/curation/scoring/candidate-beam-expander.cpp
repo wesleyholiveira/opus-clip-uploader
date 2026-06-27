@@ -1,10 +1,13 @@
 #include "curation/scoring/candidate-beam-expander.hpp"
 
+#include "curation/scoring/candidate-dedupe.hpp"
 #include "curation/scoring/candidate-range-utils.hpp"
 
 #include <algorithm>
 #include <QPair>
+#include <QSet>
 #include <cmath>
+#include <utility>
 
 using namespace Curation::Scoring::CandidateRangeUtils;
 
@@ -21,7 +24,8 @@ QVector<ClipCandidate> CandidateBeamExpander::expand(const TranscriptIndex &inde
 	const int variantsPerSeed = options.viewerMessagePreset ? 12 : 5;
 	const int protectedVariantsPerSeed = options.viewerMessagePreset ? 6 : 1;
 	QVector<ClipCandidate> expanded;
-	QStringList seen;
+	QSet<QString> seen;
+	seen.reserve(finalBudget);
 	expanded.reserve(std::min(finalBudget, static_cast<int>(candidates.size()) * variantsPerSeed));
 
 	for (const ClipCandidate &candidate : candidates) {
@@ -31,14 +35,10 @@ QVector<ClipCandidate> CandidateBeamExpander::expand(const TranscriptIndex &inde
 
 		int acceptedFromSeed = 0;
 		auto appendVariant = [&expanded, &seen, &acceptedFromSeed, variantsPerSeed](ClipCandidate variant) {
-			if (acceptedFromSeed >= variantsPerSeed)
-				return;
-			const QString key = rangeKey(variant.range);
-			if (seen.contains(key))
+			if (acceptedFromSeed >= variantsPerSeed || !CandidateDedupe::markSeen(seen, variant.range))
 				return;
 			variant.evidence.append(QStringLiteral("candidate_beam_selected"));
 			variant.evidence.removeDuplicates();
-			seen.append(key);
 			expanded.append(std::move(variant));
 			++acceptedFromSeed;
 		};

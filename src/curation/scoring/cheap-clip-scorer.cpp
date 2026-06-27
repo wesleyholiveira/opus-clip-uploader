@@ -4,11 +4,7 @@
 
 #include "curation/curation-signals.hpp"
 
-#include <QRegularExpression>
-#include <QSet>
-
 #include <algorithm>
-#include <cmath>
 #include <initializer_list>
 
 namespace {
@@ -42,16 +38,16 @@ int phraseHitCount(const QString &text, const QStringList &phrases)
 namespace Curation::Scoring {
 
 ClipCandidate CheapClipScorer::score(const TranscriptIndex &index, const ClipCandidate &candidate,
-					     const CheapScoringContext &context) const
+				     const CheapScoringContext &context) const
 {
 	ClipCandidate scored = candidate;
 	scored.text = scored.text.trimmed().isEmpty() ? index.textForRange(scored.range) : scored.text.simplified();
 	if (scored.timedText.trimmed().isEmpty())
 		scored.timedText = index.timedTextForRange(scored.range);
-	scored.firstSegmentIndex = scored.firstSegmentIndex >= 0 ? scored.firstSegmentIndex :
-		index.firstSegmentIndexOverlapping(scored.range);
-	scored.lastSegmentIndex = scored.lastSegmentIndex >= 0 ? scored.lastSegmentIndex :
-		index.lastSegmentIndexOverlapping(scored.range);
+	scored.firstSegmentIndex = scored.firstSegmentIndex >= 0 ? scored.firstSegmentIndex
+								 : index.firstSegmentIndexOverlapping(scored.range);
+	scored.lastSegmentIndex = scored.lastSegmentIndex >= 0 ? scored.lastSegmentIndex
+							       : index.lastSegmentIndexOverlapping(scored.range);
 	scored.hasReliableMainTarget = context.reliableMainTarget && !context.mainTarget.trimmed().isEmpty();
 
 	QStringList cues;
@@ -67,13 +63,17 @@ ClipCandidate CheapClipScorer::score(const TranscriptIndex &index, const ClipCan
 	scored.scores.pauseAfterSec = index.silenceAfterRange(scored.range);
 	scored.scores.maxInternalPauseSec = index.maxInternalSilenceInRange(scored.range);
 	scored.scores.pauseBoundary = boundedScore((std::min(scored.scores.pauseBeforeSec, 4.0) * 0.12) +
-		(std::min(scored.scores.pauseAfterSec, 4.0) * 0.18));
+						   (std::min(scored.scores.pauseAfterSec, 4.0) * 0.18));
 	scored.scores.boundary = boundedScore(boundaryScore(index, scored) + (scored.scores.pauseBoundary * 0.18));
 	scored.scores.hook = hookScore(scored.text);
 	scored.scores.topicContinuity = topicContinuityScore(scored.text);
-	scored.scores.noise = TextAnalysis::isBacklogOrGreetingText(scored.text) || TextAnalysis::hasNoiseOnlySemanticTopic(scored.text) ? 1.0 : 0.0;
+	scored.scores.noise = TextAnalysis::isBacklogOrGreetingText(scored.text) ||
+					      TextAnalysis::hasNoiseOnlySemanticTopic(scored.text)
+				      ? 1.0
+				      : 0.0;
 	scored.rejectedAsNoise = scored.scores.noise >= 1.0;
-	scored.scores.viewerResponse = viewerResponseScore(scored.text, scored.startsNearViewerCue, scored.endsBeforeNextCue);
+	scored.scores.viewerResponse =
+		viewerResponseScore(scored.text, scored.startsNearViewerCue, scored.endsBeforeNextCue);
 	scored.scores.semanticTarget = targetKeywordScore(scored.text, context.mainTarget);
 	scored.scores.final = finalScore(scored, context);
 
@@ -86,9 +86,11 @@ ClipCandidate CheapClipScorer::score(const TranscriptIndex &index, const ClipCan
 	if (scored.scores.viewerResponse > 0.0)
 		scored.evidence.append(QStringLiteral("viewer_response_cue"));
 	if (scored.scores.pauseAfterSec >= 3.0)
-		scored.evidence.append(QStringLiteral("pause_after:%1").arg(QString::number(scored.scores.pauseAfterSec, 'f', 1)));
+		scored.evidence.append(
+			QStringLiteral("pause_after:%1").arg(QString::number(scored.scores.pauseAfterSec, 'f', 1)));
 	if (scored.scores.maxInternalPauseSec >= 2.0)
-		scored.evidence.append(QStringLiteral("internal_pause:%1").arg(QString::number(scored.scores.maxInternalPauseSec, 'f', 1)));
+		scored.evidence.append(QStringLiteral("internal_pause:%1")
+					       .arg(QString::number(scored.scores.maxInternalPauseSec, 'f', 1)));
 	if (scored.scores.semanticTarget > 0.0)
 		scored.evidence.append(QStringLiteral("target_keyword_match"));
 	if (scored.scores.boundary >= 0.7)
@@ -127,7 +129,8 @@ double CheapClipScorer::targetKeywordScore(const QString &text, const QString &t
 			++hits;
 	}
 
-	return boundedScore(static_cast<double>(hits) / static_cast<double>(std::max(2, static_cast<int>(terms.size()))));
+	return boundedScore(static_cast<double>(hits) /
+			    static_cast<double>(std::max(2, static_cast<int>(terms.size()))));
 }
 
 double CheapClipScorer::durationScore(double durationSec) const
@@ -173,21 +176,22 @@ double CheapClipScorer::boundaryScore(const TranscriptIndex &index, const ClipCa
 double CheapClipScorer::hookScore(const QString &text) const
 {
 	const QString lower = text.left(320).toLower();
-	const int hits = phraseHitCount(lower,
-		{QStringLiteral("olha"), QStringLiteral("honestly"), QStringLiteral("the thing is"),
-		 QStringLiteral("o ponto é"), QStringLiteral("o ponto e"), QStringLiteral("a verdade"),
-		 QStringLiteral("vou te falar"), QStringLiteral("deixa eu"), QStringLiteral("listen"),
-		 QStringLiteral("here's"), QStringLiteral("primeiro"), QStringLiteral("first")});
+	const int hits = phraseHitCount(
+		lower, {QStringLiteral("olha"), QStringLiteral("honestly"), QStringLiteral("the thing is"),
+			QStringLiteral("o ponto é"), QStringLiteral("o ponto e"), QStringLiteral("a verdade"),
+			QStringLiteral("vou te falar"), QStringLiteral("deixa eu"), QStringLiteral("listen"),
+			QStringLiteral("here's"), QStringLiteral("primeiro"), QStringLiteral("first")});
 	return boundedScore(static_cast<double>(hits) / 2.0);
 }
 
 double CheapClipScorer::topicContinuityScore(const QString &text) const
 {
 	const QString lower = text.toLower();
-	const int hardShifts = phraseHitCount(lower,
-		{QStringLiteral("mudando de assunto"), QStringLiteral("anyway"), QStringLiteral("by the way"),
-		 QStringLiteral("next question"), QStringLiteral("próxima pergunta"), QStringLiteral("proxima pergunta"),
-		 QStringLiteral("outra coisa"), QStringLiteral("agora vamos")});
+	const int hardShifts =
+		phraseHitCount(lower, {QStringLiteral("mudando de assunto"), QStringLiteral("anyway"),
+				       QStringLiteral("by the way"), QStringLiteral("next question"),
+				       QStringLiteral("próxima pergunta"), QStringLiteral("proxima pergunta"),
+				       QStringLiteral("outra coisa"), QStringLiteral("agora vamos")});
 	return boundedScore(1.0 - (static_cast<double>(hardShifts) * 0.35));
 }
 
@@ -199,9 +203,9 @@ double CheapClipScorer::viewerResponseScore(const QString &text, bool startsNear
 		score += 0.35;
 	if (Curation::textHasViewerExchangeSignals(text))
 		score += 0.20;
-	if (containsAny(lower, {QStringLiteral("eu faria"), QStringLiteral("você deveria"), QStringLiteral("voce deveria"),
-				 QStringLiteral("o que eu recomendo"), QStringLiteral("my advice"),
-				 QStringLiteral("you should"), QStringLiteral("i would") }))
+	if (containsAny(lower, {QStringLiteral("eu faria"), QStringLiteral("você deveria"),
+				QStringLiteral("voce deveria"), QStringLiteral("o que eu recomendo"),
+				QStringLiteral("my advice"), QStringLiteral("you should"), QStringLiteral("i would")}))
 		score += 0.25;
 	if (endsBeforeNextCue)
 		score += 0.20;
@@ -218,8 +222,8 @@ double CheapClipScorer::finalScore(const ClipCandidate &candidate, const CheapSc
 
 	if (context.presetId == QStringLiteral("viewer_message_response")) {
 		return boundedScore((s.viewerResponse * 0.34) + (std::max(s.advice, s.explanation) * 0.18) +
-				    (s.boundary * 0.18) + (s.emotional * 0.14) + (s.hook * 0.08) +
-				    (s.duration * 0.08) - (s.noise * 0.40));
+				    (s.boundary * 0.18) + (s.emotional * 0.14) + (s.hook * 0.08) + (s.duration * 0.08) -
+				    (s.noise * 0.40));
 	}
 
 	return boundedScore((s.boundary * 0.20) + (s.duration * 0.15) + (s.hook * 0.12) +

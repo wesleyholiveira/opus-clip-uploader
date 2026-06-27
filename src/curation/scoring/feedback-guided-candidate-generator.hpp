@@ -33,26 +33,23 @@ struct FeedbackGuidedCandidateGenerationOptions {
 class FeedbackGuidedCandidateGenerator {
 public:
 	QVector<FeedbackGuidedCandidateSeed> generate(const TranscriptIndex &index,
-		const Curation::Feedback::FeedbackRangeMemory &memory,
-		const FeedbackGuidedCandidateGenerationOptions &options) const;
+						      const Curation::Feedback::FeedbackRangeMemory &memory,
+						      const FeedbackGuidedCandidateGenerationOptions &options) const;
 
 private:
-	void appendPositiveRangeSeeds(QVector<FeedbackGuidedCandidateSeed> &seeds,
-		const TranscriptIndex &index,
-		const Curation::Feedback::FeedbackRangeMemory &memory,
-		const FeedbackGuidedCandidateGenerationOptions &options) const;
-	void appendPrototypeSimilaritySeeds(QVector<FeedbackGuidedCandidateSeed> &seeds,
-		const TranscriptIndex &index,
-		const Curation::Feedback::FeedbackRangeMemory &memory,
-		const FeedbackGuidedCandidateGenerationOptions &options) const;
-	void appendPatternSearchSeeds(QVector<FeedbackGuidedCandidateSeed> &seeds,
-		const TranscriptIndex &index,
-		const Curation::Feedback::FeedbackRangeMemory &memory,
-		const FeedbackGuidedCandidateGenerationOptions &options) const;
+	void appendPositiveRangeSeeds(QVector<FeedbackGuidedCandidateSeed> &seeds, const TranscriptIndex &index,
+				      const Curation::Feedback::FeedbackRangeMemory &memory,
+				      const FeedbackGuidedCandidateGenerationOptions &options) const;
+	void appendPrototypeSimilaritySeeds(QVector<FeedbackGuidedCandidateSeed> &seeds, const TranscriptIndex &index,
+					    const Curation::Feedback::FeedbackRangeMemory &memory,
+					    const FeedbackGuidedCandidateGenerationOptions &options) const;
+	void appendPatternSearchSeeds(QVector<FeedbackGuidedCandidateSeed> &seeds, const TranscriptIndex &index,
+				      const Curation::Feedback::FeedbackRangeMemory &memory,
+				      const FeedbackGuidedCandidateGenerationOptions &options) const;
 	bool appendSeed(QVector<FeedbackGuidedCandidateSeed> &seeds, const TranscriptIndex &index,
-		const Curation::Feedback::FeedbackRangeMemory &memory,
-		const FeedbackGuidedCandidateGenerationOptions &options,
-		FeedbackGuidedCandidateSeed seed) const;
+			const Curation::Feedback::FeedbackRangeMemory &memory,
+			const FeedbackGuidedCandidateGenerationOptions &options,
+			FeedbackGuidedCandidateSeed seed) const;
 	bool similarSeedExists(const QVector<FeedbackGuidedCandidateSeed> &seeds, const ClipDuration &range) const;
 };
 

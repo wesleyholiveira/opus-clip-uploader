@@ -1,5 +1,8 @@
 #include "ui/video-marker-editor.hpp"
 
+#include "ui/review/playback-icon-button.hpp"
+#include "ui/review/timeline-widget.hpp"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -10,7 +13,6 @@ extern "C" {
 
 #include <QAudioOutput>
 #include <QByteArray>
-#include <QElapsedTimer>
 #include <QEvent>
 #include <QCloseEvent>
 #include <QFileInfo>
@@ -33,8 +35,7 @@ extern "C" {
 #include <QLabel>
 #include <QMediaPlayer>
 #include <QMouseEvent>
-#include <QPainter>
-#include <QPainterPath>
+#include <QPointer>
 #include <QPushButton>
 #include <QShortcut>
 #include <QSizePolicy>
@@ -45,355 +46,12 @@ extern "C" {
 
 #include <algorithm>
 #include <cmath>
-#include <functional>
 #include <limits>
 
 static QString obsText(const char *key)
 {
 	return QString::fromUtf8(obs_module_text(key));
 }
-
-class TimelineWidget final : public QWidget {
-public:
-	explicit TimelineWidget(QWidget *parent = nullptr) : QWidget(parent)
-	{
-		setMinimumHeight(38);
-		setMouseTracking(true);
-		setCursor(Qt::PointingHandCursor);
-		setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-		seekThrottle.invalidate();
-	}
-
-	void setDuration(qint64 value)
-	{
-		durationMs = std::max<qint64>(0, value);
-		positionMs = std::clamp(positionMs, qint64(0), durationMs);
-		update();
-	}
-
-	void setPosition(qint64 value)
-	{
-		if (draggingPosition || draggingMarker)
-			return;
-
-		positionMs = clampPosition(value);
-		update();
-	}
-
-	qint64 position() const { return positionMs; }
-
-	void setMarkers(const QList<qint64> &newMarkers)
-	{
-		markers = newMarkers;
-		if (selectedMarkerIndex >= markers.size())
-			selectedMarkerIndex = -1;
-		update();
-	}
-
-	void setSelectedMarkerIndex(int index)
-	{
-		selectedMarkerIndex = index >= 0 && index < markers.size() ? index : -1;
-		update();
-	}
-
-	void setClipRanges(const QVector<ClipDuration> &newRanges)
-	{
-		clipRanges = newRanges;
-		update();
-	}
-
-	std::function<void(qint64)> previewSeekRequested;
-	std::function<void(qint64)> commitSeekRequested;
-	std::function<void(int)> markerSelected;
-	std::function<void(int, qint64)> markerMovePreviewRequested;
-	std::function<void(int, qint64)> markerMoveCommitted;
-
-protected:
-	void paintEvent(QPaintEvent *) override
-	{
-		QPainter painter(this);
-		painter.setRenderHint(QPainter::Antialiasing);
-
-		const QRectF track = trackRect();
-		const qreal radius = track.height() / 2.0;
-
-		painter.setPen(Qt::NoPen);
-		painter.setBrush(QColor(65, 65, 65));
-		painter.drawRoundedRect(track, radius, radius);
-
-		const qreal progressX = xForPosition(positionMs);
-		QRectF progress = track;
-		progress.setRight(progressX);
-		painter.setBrush(QColor(210, 50, 60));
-		painter.drawRoundedRect(progress, radius, radius);
-
-		for (const auto &range : clipRanges) {
-			const qint64 startMs = static_cast<qint64>(range.startSec * 1000.0);
-			const qint64 endMs = static_cast<qint64>(range.endSec * 1000.0);
-			if (durationMs <= 0 || endMs <= startMs)
-				continue;
-
-			QRectF rangeRect = track.adjusted(0.0, -4.0, 0.0, 4.0);
-			rangeRect.setLeft(xForPosition(startMs));
-			rangeRect.setRight(xForPosition(endMs));
-			painter.setPen(QPen(QColor(255, 210, 60), 2));
-			painter.setBrush(QColor(255, 193, 7, 170));
-			painter.drawRoundedRect(rangeRect, rangeRect.height() / 2.0, rangeRect.height() / 2.0);
-			painter.setPen(Qt::NoPen);
-		}
-
-		for (int i = 0; i < markers.size(); ++i) {
-			const qint64 marker = markers[i];
-			if (durationMs <= 0 || marker < 0 || marker > durationMs)
-				continue;
-
-			const bool selected = i == selectedMarkerIndex;
-			const qreal x = xForPosition(marker);
-			const qreal top = track.top() - 16.0;
-
-			QPainterPath markerPath;
-			markerPath.moveTo(x - 6.0, top);
-			markerPath.lineTo(x + 6.0, top);
-			markerPath.lineTo(x + 6.0, top + 9.0);
-			markerPath.lineTo(x + 2.0, top + 9.0);
-			markerPath.lineTo(x, top + 14.0);
-			markerPath.lineTo(x - 2.0, top + 9.0);
-			markerPath.lineTo(x - 6.0, top + 9.0);
-			markerPath.closeSubpath();
-
-			painter.setPen(QPen(selected ? QColor(255, 255, 255) : QColor(20, 20, 20), selected ? 2 : 1));
-			painter.setBrush(selected ? QColor(255, 225, 90) : QColor(255, 193, 7));
-			painter.drawPath(markerPath);
-		}
-
-		painter.setPen(Qt::NoPen);
-		painter.setBrush(QColor(245, 245, 245));
-		const bool dragging = draggingPosition || draggingMarker;
-		painter.drawEllipse(QPointF(progressX, track.center().y()), dragging ? 8.0 : 6.0, dragging ? 8.0 : 6.0);
-		painter.setPen(QPen(QColor(35, 35, 35), 1));
-		painter.setBrush(Qt::NoBrush);
-		painter.drawEllipse(QPointF(progressX, track.center().y()), dragging ? 8.0 : 6.0, dragging ? 8.0 : 6.0);
-	}
-
-	void mousePressEvent(QMouseEvent *event) override
-	{
-		const int markerIndex = markerIndexAt(event->position().x(), event->position().y());
-		if (markerIndex >= 0) {
-			draggingPosition = false;
-			draggingMarker = true;
-			selectedMarkerIndex = markerIndex;
-			positionMs = markers[markerIndex];
-			update();
-			if (markerSelected)
-				markerSelected(markerIndex);
-			if (commitSeekRequested)
-				commitSeekRequested(positionMs);
-			event->accept();
-			return;
-		}
-
-		selectedMarkerIndex = -1;
-		if (markerSelected)
-			markerSelected(-1);
-		draggingPosition = true;
-		setPositionFromMouse(event->position().x(), true);
-		event->accept();
-	}
-
-	void mouseMoveEvent(QMouseEvent *event) override
-	{
-		if (draggingMarker) {
-			setMarkerFromMouse(event->position().x(), false);
-			event->accept();
-			return;
-		}
-
-		if (!draggingPosition)
-			return;
-
-		setPositionFromMouse(event->position().x(), false);
-		event->accept();
-	}
-
-	void mouseReleaseEvent(QMouseEvent *event) override
-	{
-		if (draggingMarker) {
-			setMarkerFromMouse(event->position().x(), true);
-			draggingMarker = false;
-			update();
-			event->accept();
-			return;
-		}
-
-		if (!draggingPosition) {
-			QWidget::mouseReleaseEvent(event);
-			return;
-		}
-
-		setPositionFromMouse(event->position().x(), true);
-		draggingPosition = false;
-		if (commitSeekRequested)
-			commitSeekRequested(positionMs);
-		update();
-		event->accept();
-	}
-
-private:
-	qint64 durationMs = 0;
-	qint64 positionMs = 0;
-	QList<qint64> markers;
-	QVector<ClipDuration> clipRanges;
-	bool draggingPosition = false;
-	bool draggingMarker = false;
-	int selectedMarkerIndex = -1;
-	QElapsedTimer seekThrottle;
-
-	QRectF trackRect() const { return QRectF(12.0, height() / 2.0 - 3.5, std::max(1, width() - 24), 7.0); }
-
-	qint64 clampPosition(qint64 value) const
-	{
-		return std::clamp(value, qint64(0), std::max<qint64>(0, durationMs));
-	}
-
-	qreal xForPosition(qint64 value) const
-	{
-		const QRectF track = trackRect();
-		if (durationMs <= 0)
-			return track.left();
-
-		const qreal ratio = qreal(clampPosition(value)) / qreal(durationMs);
-		return track.left() + ratio * track.width();
-	}
-
-	qint64 positionForX(qreal x) const
-	{
-		const QRectF track = trackRect();
-		const qreal clampedX = std::clamp(x, track.left(), track.right());
-		const qreal ratio = (clampedX - track.left()) / std::max<qreal>(1.0, track.width());
-		return clampPosition(static_cast<qint64>(ratio * qreal(durationMs)));
-	}
-
-	int markerIndexAt(qreal x, qreal y) const
-	{
-		if (durationMs <= 0 || markers.isEmpty())
-			return -1;
-
-		const QRectF track = trackRect();
-		const QRectF hitBand(track.left() - 8.0, track.top() - 22.0, track.width() + 16.0,
-				     track.height() + 34.0);
-		if (!hitBand.contains(QPointF(x, y)))
-			return -1;
-
-		int bestIndex = -1;
-		qreal bestDistance = 10.0;
-		for (int i = 0; i < markers.size(); ++i) {
-			const qint64 marker = markers[i];
-			if (marker < 0 || marker > durationMs)
-				continue;
-
-			const qreal distance = std::abs(xForPosition(marker) - x);
-			if (distance <= bestDistance) {
-				bestDistance = distance;
-				bestIndex = i;
-			}
-		}
-
-		return bestIndex;
-	}
-
-	void setPositionFromMouse(qreal x, bool forceSeek)
-	{
-		positionMs = positionForX(x);
-		update();
-
-		if (!previewSeekRequested)
-			return;
-
-		const bool shouldSeek = forceSeek || !seekThrottle.isValid() || seekThrottle.elapsed() >= 80;
-		if (!shouldSeek)
-			return;
-
-		seekThrottle.restart();
-		previewSeekRequested(positionMs);
-	}
-
-	void setMarkerFromMouse(qreal x, bool commit)
-	{
-		if (selectedMarkerIndex < 0 || selectedMarkerIndex >= markers.size())
-			return;
-
-		const qint64 markerPosition = positionForX(x);
-		markers[selectedMarkerIndex] = markerPosition;
-		positionMs = markerPosition;
-		update();
-
-		if (commit) {
-			if (markerMoveCommitted)
-				markerMoveCommitted(selectedMarkerIndex, markerPosition);
-			return;
-		}
-
-		if (!markerMovePreviewRequested)
-			return;
-
-		const bool shouldSeek = !seekThrottle.isValid() || seekThrottle.elapsed() >= 80;
-		if (!shouldSeek)
-			return;
-
-		seekThrottle.restart();
-		markerMovePreviewRequested(selectedMarkerIndex, markerPosition);
-	}
-};
-
-class PlaybackIconButton final : public QWidget {
-public:
-	explicit PlaybackIconButton(QWidget *parent = nullptr) : QWidget(parent)
-	{
-		setFixedSize(28, 28);
-		setCursor(Qt::PointingHandCursor);
-		setToolTip(obsText("Tooltip.Play"));
-		setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-	}
-
-	void setPlaying(bool value)
-	{
-		playing = value;
-		setToolTip(playing ? obsText("Tooltip.Pause") : obsText("Tooltip.Play"));
-		update();
-	}
-
-	std::function<void()> clicked;
-
-protected:
-	void paintEvent(QPaintEvent *) override
-	{
-		QPainter painter(this);
-		painter.setRenderHint(QPainter::Antialiasing);
-		painter.setPen(Qt::NoPen);
-		painter.setBrush(QColor(230, 230, 230));
-
-		if (playing) {
-			painter.drawRoundedRect(QRectF(8, 6, 4, 16), 1.5, 1.5);
-			painter.drawRoundedRect(QRectF(16, 6, 4, 16), 1.5, 1.5);
-		} else {
-			QPolygonF triangle;
-			triangle << QPointF(10, 6) << QPointF(22, 14) << QPointF(10, 22);
-			painter.drawPolygon(triangle);
-		}
-	}
-
-	void mousePressEvent(QMouseEvent *event) override { event->accept(); }
-
-	void mouseReleaseEvent(QMouseEvent *event) override
-	{
-		if (rect().contains(event->position().toPoint()) && clicked)
-			clicked();
-		event->accept();
-	}
-
-private:
-	bool playing = false;
-};
 
 VideoMarkerEditor::VideoMarkerEditor(const QString &videoPath, QWidget *parent) : QWidget(parent), videoPath(videoPath)
 {
@@ -447,33 +105,45 @@ VideoMarkerEditor::VideoMarkerEditor(const QString &videoPath, QWidget *parent) 
 	player->setVideoOutput(videoWidget);
 	player->setSource(QUrl::fromLocalFile(videoPath));
 
+	const QPointer<VideoMarkerEditor> self(this);
 	playPauseControl = new PlaybackIconButton(editorSurface);
-	playPauseControl->clicked = [this]() {
-		togglePlayback();
+	playPauseControl->clicked = [self]() {
+		if (self)
+			self->togglePlayback();
 	};
 
 	timeline = new TimelineWidget(editorSurface);
-	timeline->previewSeekRequested = [this](qint64 positionMs) {
-		seekToMilliseconds(positionMs);
+	timeline->previewSeekRequested = [self](qint64 positionMs) {
+		if (self)
+			self->seekToMilliseconds(positionMs);
 	};
-	timeline->commitSeekRequested = [this](qint64 positionMs) {
-		seekToMilliseconds(positionMs);
+	timeline->commitSeekRequested = [self](qint64 positionMs) {
+		if (self)
+			self->seekToMilliseconds(positionMs);
 	};
-	timeline->markerSelected = [this](int index) {
-		selectMarker(index);
+	timeline->markerSelected = [self](int index) {
+		if (self)
+			self->selectMarker(index);
 	};
-	timeline->markerMovePreviewRequested = [this](int index, qint64 positionMs) {
-		updateMarkerAtIndex(index, positionMs / 1000.0, false);
-		seekToMilliseconds(positionMs);
+	timeline->markerMovePreviewRequested = [self](int index, qint64 positionMs) {
+		if (!self)
+			return;
+		self->updateMarkerAtIndex(index, positionMs / 1000.0, false);
+		self->seekToMilliseconds(positionMs);
 	};
-	timeline->markerMoveCommitted = [this](int index, qint64 positionMs) {
-		updateMarkerAtIndex(index, positionMs / 1000.0, true);
-		seekToMilliseconds(positionMs);
+	timeline->markerMoveCommitted = [self](int index, qint64 positionMs) {
+		if (!self)
+			return;
+		self->updateMarkerAtIndex(index, positionMs / 1000.0, true);
+		self->seekToMilliseconds(positionMs);
 	};
 
 	currentTimeLabel = new QLabel("00:00:00", editorSurface);
 	durationTimeLabel = new QLabel("00:00:00", editorSurface);
 	selectedClipLabel = new QLabel(obsText("Label.SelectedClipInitial"), editorSurface);
+	seekStatusLabel = new QLabel(QStringLiteral("Seeking…"), editorSurface);
+	seekStatusLabel->setVisible(false);
+	seekStatusLabel->setStyleSheet(QStringLiteral("QLabel { color: palette(mid); font-size: 11px; }"));
 	auto *shortcutHelpLabel = new QLabel(obsText("Shortcut.Help"), editorSurface);
 	shortcutHelpLabel->setWordWrap(true);
 	shortcutHelpLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -514,6 +184,7 @@ VideoMarkerEditor::VideoMarkerEditor(const QString &videoPath, QWidget *parent) 
 	surfaceLayout->addWidget(videoContainer, 1);
 	surfaceLayout->addLayout(timelineLayout);
 	surfaceLayout->addWidget(selectedClipLabel);
+	surfaceLayout->addWidget(seekStatusLabel);
 	surfaceLayout->addWidget(shortcutHelpLabel);
 	surfaceLayout->addLayout(controlsLayout);
 
@@ -522,7 +193,10 @@ VideoMarkerEditor::VideoMarkerEditor(const QString &videoPath, QWidget *parent) 
 	loadSavedMarkers();
 	setupShortcuts();
 
-	QTimer::singleShot(0, this, [this]() { positionOverlayControls(); });
+	QTimer::singleShot(0, this, [guard = QPointer<VideoMarkerEditor>(this)]() {
+		if (guard)
+			guard->positionOverlayControls();
+	});
 }
 
 QVector<ClipDuration> VideoMarkerEditor::clipRanges() const
@@ -604,7 +278,8 @@ void VideoMarkerEditor::setReviewActionVisible(bool visible)
 
 void VideoMarkerEditor::setupShortcuts()
 {
-	auto addShortcut = [this](const QKeySequence &sequence, auto slot, Qt::ShortcutContext context = Qt::WindowShortcut) {
+	auto addShortcut = [this](const QKeySequence &sequence, auto slot,
+				  Qt::ShortcutContext context = Qt::WindowShortcut) {
 		auto *shortcut = new QShortcut(sequence, this);
 		shortcut->setContext(context);
 		connect(shortcut, &QShortcut::activated, this, [this, sequence, slot]() {
@@ -621,8 +296,10 @@ void VideoMarkerEditor::setupShortcuts()
 	addShortcut(QKeySequence(Qt::Key_Period), &VideoMarkerEditor::seekForwardFrame);
 	addShortcut(QKeySequence(Qt::Key_Comma), &VideoMarkerEditor::seekBackwardFrame);
 	addShortcut(QKeySequence(Qt::Key_M), &VideoMarkerEditor::addMarkerAtCurrentPosition);
-	addShortcut(QKeySequence(Qt::Key_Delete), &VideoMarkerEditor::deleteSelectedMarkerOrRange, Qt::WidgetWithChildrenShortcut);
-	addShortcut(QKeySequence(Qt::Key_Backspace), &VideoMarkerEditor::deleteSelectedMarkerOrRange, Qt::WidgetWithChildrenShortcut);
+	addShortcut(QKeySequence(Qt::Key_Delete), &VideoMarkerEditor::deleteSelectedMarkerOrRange,
+		    Qt::WidgetWithChildrenShortcut);
+	addShortcut(QKeySequence(Qt::Key_Backspace), &VideoMarkerEditor::deleteSelectedMarkerOrRange,
+		    Qt::WidgetWithChildrenShortcut);
 	addShortcut(QKeySequence(Qt::Key_F), &VideoMarkerEditor::toggleFullScreen);
 	addShortcut(QKeySequence(Qt::Key_Escape), &VideoMarkerEditor::exitFullScreen);
 }
@@ -667,7 +344,10 @@ bool VideoMarkerEditor::eventFilter(QObject *watched, QEvent *event)
 	if ((watched == videoContainer || watched == videoWidget || watched == editorSurface) &&
 	    (event->type() == QEvent::Resize || event->type() == QEvent::Show ||
 	     event->type() == QEvent::LayoutRequest || event->type() == QEvent::Move)) {
-		QTimer::singleShot(0, this, [this]() { positionOverlayControls(); });
+		QTimer::singleShot(0, this, [guard = QPointer<VideoMarkerEditor>(this)]() {
+			if (guard)
+				guard->positionOverlayControls();
+		});
 	}
 
 	if ((watched == videoContainer || watched == videoWidget || watched == editorSurface) &&
@@ -770,10 +450,12 @@ void VideoMarkerEditor::toggleFullScreen()
 	setFocus(Qt::OtherFocusReason);
 	editorSurface->setFocus(Qt::OtherFocusReason);
 
-	QTimer::singleShot(0, this, [this]() {
-		positionOverlayControls();
-		if (fullscreenControl)
-			fullscreenControl->raise();
+	QTimer::singleShot(0, this, [guard = QPointer<VideoMarkerEditor>(this)]() {
+		if (!guard)
+			return;
+		guard->positionOverlayControls();
+		if (guard->fullscreenControl)
+			guard->fullscreenControl->raise();
 	});
 }
 
@@ -805,10 +487,12 @@ void VideoMarkerEditor::exitFullScreen()
 		windowToRestore->activateWindow();
 	}
 
-	QTimer::singleShot(0, this, [this]() {
-		positionOverlayControls();
-		if (fullscreenControl)
-			fullscreenControl->raise();
+	QTimer::singleShot(0, this, [guard = QPointer<VideoMarkerEditor>(this)]() {
+		if (!guard)
+			return;
+		guard->positionOverlayControls();
+		if (guard->fullscreenControl)
+			guard->fullscreenControl->raise();
 	});
 }
 
@@ -921,6 +605,8 @@ void VideoMarkerEditor::updateTimelinePosition(qint64 positionMs)
 
 	const double startSec = positionMs / 1000.0;
 	currentTimeLabel->setText(formatTimecode(startSec));
+	if (seekStatusLabel && seekStatusLabel->isVisible())
+		seekStatusLabel->hide();
 	updateSelectedClipPreview(startSec);
 	emit positionChanged(positionMs);
 }
@@ -994,6 +680,10 @@ void VideoMarkerEditor::seekToMilliseconds(qint64 positionMs)
 		positionMs = std::max<qint64>(0, positionMs);
 
 	const bool wasPlaying = player->playbackState() == QMediaPlayer::PlayingState;
+	if (seekStatusLabel) {
+		seekStatusLabel->setText(QStringLiteral("Seeking…"));
+		seekStatusLabel->show();
+	}
 
 	updatingTimelineFromPlayer = true;
 	player->setPosition(positionMs);
@@ -1005,6 +695,11 @@ void VideoMarkerEditor::seekToMilliseconds(qint64 positionMs)
 	const double seconds = positionMs / 1000.0;
 	currentTimeLabel->setText(formatTimecode(seconds));
 	updateSelectedClipPreview(seconds);
+	QPointer<QLabel> seekLabel(seekStatusLabel);
+	QTimer::singleShot(450, this, [seekLabel]() {
+		if (seekLabel)
+			seekLabel->hide();
+	});
 }
 
 void VideoMarkerEditor::handleMediaStatusChanged(QMediaPlayer::MediaStatus status)
@@ -1042,13 +737,14 @@ void VideoMarkerEditor::warmUpVideoFrameAfterSeek(bool wasPlaying)
 	pauseAfterSeekWarmup = true;
 	player->play();
 
-	QTimer::singleShot(90, this, [this]() {
-		if (!player || !pauseAfterSeekWarmup)
+	QPointer<VideoMarkerEditor> guard(this);
+	QTimer::singleShot(90, this, [guard]() {
+		if (!guard || !guard->player || !guard->pauseAfterSeekWarmup)
 			return;
 
-		pauseAfterSeekWarmup = false;
-		if (player->playbackState() == QMediaPlayer::PlayingState)
-			player->pause();
+		guard->pauseAfterSeekWarmup = false;
+		if (guard->player->playbackState() == QMediaPlayer::PlayingState)
+			guard->player->pause();
 	});
 }
 

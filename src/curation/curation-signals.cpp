@@ -44,29 +44,28 @@ double emotionalScoreForText(const QString &text, QStringList *matchedCues)
 	QStringList localCues;
 	QStringList *cues = matchedCues ? matchedCues : &localCues;
 
-	const int griefHits = phraseHitCount(lower,
-					     {QStringLiteral("perdi meu pai"), QStringLiteral("perdi minha mãe"),
-					      QStringLiteral("perdi minha mae"), QStringLiteral("perdeu o pai"),
-					      QStringLiteral("perdeu a mãe"), QStringLiteral("perdeu a mae"),
-					      QStringLiteral("meu pai morreu"), QStringLiteral("minha mãe morreu"),
-					      QStringLiteral("minha mae morreu"), QStringLiteral("faleceu"),
-					      QStringLiteral("luto"), QStringLiteral("grief"), QStringLiteral("lost my father"),
-					      QStringLiteral("lost my mother")},
-					     cues);
-	const int highStakesHits = phraseHitCount(lower,
-						 {QStringLiteral("aposta"), QStringLiteral("apostas"), QStringLiteral("vício"),
-						  QStringLiteral("vicio"), QStringLiteral("gambling"), QStringLiteral("betting"),
-						  QStringLiteral("addiction"), QStringLiteral("depress"), QStringLiteral("ansiedade"),
-						  QStringLiteral("trauma"), QStringLiteral("sorry for your loss")},
-						 cues);
-	const int vulnerableHits = phraseHitCount(lower,
-						{QStringLiteral("nunca falei"), QStringLiteral("nunca pedi"),
-						 QStringLiteral("não sei como"), QStringLiteral("nao sei como"),
-						 QStringLiteral("tenho medo"), QStringLiteral("me sinto"),
-						 QStringLiteral("sinto muita falta"), QStringLiteral("sinto falta"),
-						 QStringLiteral("não consigo"), QStringLiteral("nao consigo"),
-						 QStringLiteral("i don't know"), QStringLiteral("i feel")},
-						cues);
+	const int griefHits = phraseHitCount(
+		lower,
+		{QStringLiteral("perdi meu pai"), QStringLiteral("perdi minha mãe"), QStringLiteral("perdi minha mae"),
+		 QStringLiteral("perdeu o pai"), QStringLiteral("perdeu a mãe"), QStringLiteral("perdeu a mae"),
+		 QStringLiteral("meu pai morreu"), QStringLiteral("minha mãe morreu"),
+		 QStringLiteral("minha mae morreu"), QStringLiteral("faleceu"), QStringLiteral("luto"),
+		 QStringLiteral("grief"), QStringLiteral("lost my father"), QStringLiteral("lost my mother")},
+		cues);
+	const int highStakesHits =
+		phraseHitCount(lower,
+			       {QStringLiteral("aposta"), QStringLiteral("apostas"), QStringLiteral("vício"),
+				QStringLiteral("vicio"), QStringLiteral("gambling"), QStringLiteral("betting"),
+				QStringLiteral("addiction"), QStringLiteral("depress"), QStringLiteral("ansiedade"),
+				QStringLiteral("trauma"), QStringLiteral("sorry for your loss")},
+			       cues);
+	const int vulnerableHits = phraseHitCount(
+		lower,
+		{QStringLiteral("nunca falei"), QStringLiteral("nunca pedi"), QStringLiteral("não sei como"),
+		 QStringLiteral("nao sei como"), QStringLiteral("tenho medo"), QStringLiteral("me sinto"),
+		 QStringLiteral("sinto muita falta"), QStringLiteral("sinto falta"), QStringLiteral("não consigo"),
+		 QStringLiteral("nao consigo"), QStringLiteral("i don't know"), QStringLiteral("i feel")},
+		cues);
 
 	const double griefWeight = griefHits > 0 ? 0.58 : 0.0;
 	const double highStakesWeight = std::min(0.32, highStakesHits * 0.12);
@@ -78,55 +77,54 @@ double emotionalScoreForText(const QString &text, QStringList *matchedCues)
 double adviceScoreForText(const QString &text)
 {
 	const QString lower = text.toLower();
-	const int hits = phraseHitCount(lower,
-					 {QStringLiteral("conselho"), QStringLiteral("advice"), QStringLiteral("como eu posso"),
-					  QStringLiteral("como posso"), QStringLiteral("o que eu faço"),
-					  QStringLiteral("o que eu faco"), QStringLiteral("devo"), QStringLiteral("should i"),
-					  QStringLiteral("how can i"), QStringLiteral("relacionamento"),
-					  QStringLiteral("relationship")});
+	const int hits = phraseHitCount(
+		lower, {QStringLiteral("conselho"), QStringLiteral("advice"), QStringLiteral("como eu posso"),
+			QStringLiteral("como posso"), QStringLiteral("o que eu faço"), QStringLiteral("o que eu faco"),
+			QStringLiteral("devo"), QStringLiteral("should i"), QStringLiteral("how can i"),
+			QStringLiteral("relacionamento"), QStringLiteral("relationship")});
 	return boundedScore(static_cast<double>(hits) / 4.0);
 }
 
 double explanationScoreForText(const QString &text)
 {
 	const QString lower = text.toLower();
-	const int hits = phraseHitCount(lower,
-					 {QStringLiteral("explica"), QStringLiteral("explicar"), QStringLiteral("por que"),
-					  QStringLiteral("porque"), QStringLiteral("conceito"), QStringLiteral("funciona"),
-					  QStringLiteral("método"), QStringLiteral("metodo"), QStringLiteral("method"),
-					  QStringLiteral("explains"), QStringLiteral("because"), QStringLiteral("means that")});
+	const int hits = phraseHitCount(
+		lower, {QStringLiteral("explica"), QStringLiteral("explicar"), QStringLiteral("por que"),
+			QStringLiteral("porque"), QStringLiteral("conceito"), QStringLiteral("funciona"),
+			QStringLiteral("método"), QStringLiteral("metodo"), QStringLiteral("method"),
+			QStringLiteral("explains"), QStringLiteral("because"), QStringLiteral("means that")});
 	return boundedScore(static_cast<double>(hits) / 5.0);
 }
 
 double storyScoreForText(const QString &text)
 {
 	const QString lower = text.toLower();
-	const int hits = phraseHitCount(lower,
-					 {QStringLiteral("uma vez"), QStringLiteral("aconteceu"), QStringLiteral("quando eu"),
-					  QStringLiteral("na época"), QStringLiteral("na epoca"), QStringLiteral("lembro"),
-					  QStringLiteral("história"), QStringLiteral("historia"), QStringLiteral("story"),
-					  QStringLiteral("when i was")});
+	const int hits = phraseHitCount(lower, {QStringLiteral("uma vez"), QStringLiteral("aconteceu"),
+						QStringLiteral("quando eu"), QStringLiteral("na época"),
+						QStringLiteral("na epoca"), QStringLiteral("lembro"),
+						QStringLiteral("história"), QStringLiteral("historia"),
+						QStringLiteral("story"), QStringLiteral("when i was")});
 	return boundedScore(static_cast<double>(hits) / 4.0);
 }
 
 double opinionScoreForText(const QString &text)
 {
 	const QString lower = text.toLower();
-	const int hits = phraseHitCount(lower,
-					 {QStringLiteral("eu acho"), QStringLiteral("minha opinião"), QStringLiteral("minha opiniao"),
-					  QStringLiteral("na minha visão"), QStringLiteral("na minha visao"),
-					  QStringLiteral("i think"), QStringLiteral("my take"), QStringLiteral("opinion")});
+	const int hits = phraseHitCount(lower, {QStringLiteral("eu acho"), QStringLiteral("minha opinião"),
+						QStringLiteral("minha opiniao"), QStringLiteral("na minha visão"),
+						QStringLiteral("na minha visao"), QStringLiteral("i think"),
+						QStringLiteral("my take"), QStringLiteral("opinion")});
 	return boundedScore(static_cast<double>(hits) / 3.0);
 }
 
 double tutorialScoreForText(const QString &text)
 {
 	const QString lower = text.toLower();
-	const int hits = phraseHitCount(lower,
-					 {QStringLiteral("passo"), QStringLiteral("primeiro"), QStringLiteral("depois"),
-					  QStringLiteral("tutorial"), QStringLiteral("como fazer"), QStringLiteral("faça"),
-					  QStringLiteral("faca"), QStringLiteral("step"), QStringLiteral("walk through"),
-					  QStringLiteral("do this")});
+	const int hits =
+		phraseHitCount(lower, {QStringLiteral("passo"), QStringLiteral("primeiro"), QStringLiteral("depois"),
+				       QStringLiteral("tutorial"), QStringLiteral("como fazer"), QStringLiteral("faça"),
+				       QStringLiteral("faca"), QStringLiteral("step"), QStringLiteral("walk through"),
+				       QStringLiteral("do this")});
 	return boundedScore(static_cast<double>(hits) / 4.0);
 }
 

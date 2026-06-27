@@ -27,7 +27,6 @@ private:
 	bool closeCancelEnabled_ = true;
 };
 
-
 QString obsText(const char *key);
 const QString &clipCropperTitle();
 

@@ -608,7 +608,8 @@ static QJsonArray stringListToJson(const QStringList &items, int maxItems = 48)
 QJsonArray diagnosticsFromScoring(const ClipScoringResult &scoring)
 {
 	QJsonArray array;
-	const auto appendCandidateDiagnostics = [&array](const QVector<ClipCandidate> &candidates, const QString &kind) {
+	const auto appendCandidateDiagnostics = [&array](const QVector<ClipCandidate> &candidates,
+							 const QString &kind) {
 		for (int i = 0; i < candidates.size(); ++i) {
 			const ClipCandidate &candidate = candidates.at(i);
 			if (candidate.range.endSec <= candidate.range.startSec)
@@ -618,11 +619,13 @@ QJsonArray diagnosticsFromScoring(const ClipScoringResult &scoring)
 			object.insert(QStringLiteral("diagnostic_kind"), kind);
 			object.insert(QStringLiteral("start_sec"), candidate.range.startSec);
 			object.insert(QStringLiteral("end_sec"), candidate.range.endSec);
-			object.insert(QStringLiteral("duration_sec"), candidate.range.endSec - candidate.range.startSec);
+			object.insert(QStringLiteral("duration_sec"),
+				      candidate.range.endSec - candidate.range.startSec);
 			object.insert(QStringLiteral("source"), candidate.source);
 			object.insert(QStringLiteral("final_score"), candidate.scores.final);
 			object.insert(QStringLiteral("selected_rank"), candidate.selectedRank);
-			object.insert(QStringLiteral("rejected"), candidate.rejectedByQualityGate || candidate.rejectedAsNoise);
+			object.insert(QStringLiteral("rejected"),
+				      candidate.rejectedByQualityGate || candidate.rejectedAsNoise);
 			object.insert(QStringLiteral("rejection_reason"), candidate.rejectionReason);
 			if (!candidate.text.trimmed().isEmpty())
 				object.insert(QStringLiteral("text_preview"), candidate.text.left(2200));
@@ -676,7 +679,8 @@ void prepare_review_scoring_async(QWidget *parent, const QString &videoPath, con
 
 	ensure_transcript_for_curation_async(
 		parent, videoPath, transcriptSettings, true,
-		[parent, videoPath, transcriptSettings, existingReviewRanges = std::move(existingReviewRanges), startedResult = std::move(startedResult), progressCallback,
+		[parent, videoPath, transcriptSettings, existingReviewRanges = std::move(existingReviewRanges),
+		 startedResult = std::move(startedResult), progressCallback,
 		 finishedCallback = std::move(finishedCallback)](RecordingTranscript transcript,
 								 bool canceled) mutable {
 			ReviewScoringPreparationResult result = std::move(startedResult);
@@ -740,7 +744,8 @@ void prepare_review_scoring_async(QWidget *parent, const QString &videoPath, con
 							      result = std::move(result), progressCallback,
 							      llamaOptions = std::move(llamaOptions),
 							      rerankerOptions = std::move(rerankerOptions),
-							      nativeEmbeddingOptions = std::move(nativeEmbeddingOptions),
+							      nativeEmbeddingOptions =
+								      std::move(nativeEmbeddingOptions),
 							      nativeRerankerOptions = std::move(nativeRerankerOptions),
 							      cancelRequested,
 							      finishedCallback =
@@ -775,7 +780,8 @@ void prepare_review_scoring_async(QWidget *parent, const QString &videoPath, con
 					     "Native llama.cpp embedding backend selected for semantic review scoring. model=%s maxTextChars=%d",
 					     nativeEmbeddingOptions.modelPathOrId.toUtf8().constData(),
 					     nativeEmbeddingOptions.maxTextChars);
-					embeddingProvider = std::make_unique<LlamaCppEmbeddingProvider>(nativeEmbeddingOptions);
+					embeddingProvider =
+						std::make_unique<LlamaCppEmbeddingProvider>(nativeEmbeddingOptions);
 				} else if (llamaOptions.enabled) {
 					llamaOptions.cancellationCallback = [cancelRequested]() {
 						return cancelRequested && cancelRequested->load();
@@ -789,7 +795,8 @@ void prepare_review_scoring_async(QWidget *parent, const QString &videoPath, con
 					     "Local embedding backend enabled for semantic review scoring. endpoint=%s model=%s maxTextChars=%d",
 					     llamaOptions.endpoint.toUtf8().constData(),
 					     llamaOptions.modelId.toUtf8().constData(), llamaOptions.maxTextChars);
-					embeddingProvider = std::make_unique<LlamaServerEmbeddingProvider>(llamaOptions);
+					embeddingProvider =
+						std::make_unique<LlamaServerEmbeddingProvider>(llamaOptions);
 				}
 
 				if (nativeRerankerOptions.enabled) {
@@ -802,7 +809,8 @@ void prepare_review_scoring_async(QWidget *parent, const QString &videoPath, con
 					     "Native llama.cpp reranker backend selected for semantic review scoring. model=%s maxTextChars=%d",
 					     nativeRerankerOptions.modelPathOrId.toUtf8().constData(),
 					     nativeRerankerOptions.maxTextChars);
-					semanticReranker = std::make_unique<LlamaCppRerankerProvider>(nativeRerankerOptions);
+					semanticReranker =
+						std::make_unique<LlamaCppRerankerProvider>(nativeRerankerOptions);
 				} else if (rerankerOptions.enabled) {
 					rerankerOptions.cancellationCallback = [cancelRequested]() {
 						return cancelRequested && cancelRequested->load();
@@ -814,8 +822,10 @@ void prepare_review_scoring_async(QWidget *parent, const QString &videoPath, con
 					blog(LOG_INFO,
 					     "Local Qwen3 reranker backend enabled for semantic review scoring. endpoint=%s model=%s maxTextChars=%d",
 					     rerankerOptions.endpoint.toUtf8().constData(),
-					     rerankerOptions.modelId.toUtf8().constData(), rerankerOptions.maxTextChars);
-					semanticReranker = std::make_unique<LlamaServerRerankerProvider>(rerankerOptions);
+					     rerankerOptions.modelId.toUtf8().constData(),
+					     rerankerOptions.maxTextChars);
+					semanticReranker =
+						std::make_unique<LlamaServerRerankerProvider>(rerankerOptions);
 				} else {
 					blog(LOG_INFO,
 					     "Local Qwen3 reranker backend disabled. Semantic scoring will rely on embeddings without cross-encoder reranking.");
@@ -905,7 +915,8 @@ void prepare_review_scoring_async(QWidget *parent, const QString &videoPath, con
 				blog(result.applied ? LOG_INFO : LOG_WARNING,
 				     "Semantic review suggestions finished. video=%s applied=%s ranges=%d diagnostics=%d backend=%s summary=%s",
 				     videoPath.toUtf8().constData(), result.applied ? "true" : "false",
-				     static_cast<int>(result.settings.clipDurations.size()), static_cast<int>(result.candidateDiagnostics.size()),
+				     static_cast<int>(result.settings.clipDurations.size()),
+				     static_cast<int>(result.candidateDiagnostics.size()),
 				     embeddingProvider ? embeddingProvider->modelId().toUtf8().constData() : "disabled",
 				     result.summary.toUtf8().constData());
 

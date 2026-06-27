@@ -28,8 +28,10 @@ static BoundaryCalibrationProfile fromObject(const QJsonObject &object)
 	profile.lookaheadSec = numericValue(object, QStringLiteral("lookahead_sec"), -1.0);
 	profile.contextWeight = std::clamp(numericValue(object, QStringLiteral("context_weight"), 1.0), 0.25, 3.0);
 	profile.hookWeight = std::clamp(numericValue(object, QStringLiteral("hook_weight"), 1.0), 0.25, 3.0);
-	profile.developmentWeight = std::clamp(numericValue(object, QStringLiteral("development_weight"), 1.0), 0.25, 3.0);
-	profile.resolutionWeight = std::clamp(numericValue(object, QStringLiteral("resolution_weight"), 1.0), 0.25, 3.0);
+	profile.developmentWeight =
+		std::clamp(numericValue(object, QStringLiteral("development_weight"), 1.0), 0.25, 3.0);
+	profile.resolutionWeight =
+		std::clamp(numericValue(object, QStringLiteral("resolution_weight"), 1.0), 0.25, 3.0);
 	profile.targetWeight = std::clamp(numericValue(object, QStringLiteral("target_weight"), 1.0), 0.25, 3.0);
 	profile.defectPenalty = std::clamp(numericValue(object, QStringLiteral("defect_penalty"), 1.0), 0.25, 4.0);
 	profile.minArcConfidence = numericValue(object, QStringLiteral("min_arc_confidence"), -1.0);

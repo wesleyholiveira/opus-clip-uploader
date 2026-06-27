@@ -64,10 +64,11 @@ public:
 	static bool hasUsefulSuggestion(const FeedbackSuggestionSnapshot &snapshot);
 
 	static bool appendReviewFeedback(const QString &videoPath, const CurationSettings &settings,
-		const FeedbackSuggestionSnapshot &suggestion, const QVector<ClipDuration> &userRanges,
-		const QString &eventName, const QString &humanReason = {},
-		const QMap<int, QString> &explicitDecisionsBySuggestedIndex = {},
-		const QMap<int, QJsonObject> &explicitFeedbackBySuggestedIndex = {});
+					 const FeedbackSuggestionSnapshot &suggestion,
+					 const QVector<ClipDuration> &userRanges, const QString &eventName,
+					 const QString &humanReason = {},
+					 const QMap<int, QString> &explicitDecisionsBySuggestedIndex = {},
+					 const QMap<int, QJsonObject> &explicitFeedbackBySuggestedIndex = {});
 
 	static QString feedbackDirectoryPath();
 	static QString feedbackJsonlPath();
@@ -76,7 +77,7 @@ public:
 	static QString transcriptContentId(const RecordingTranscript &transcript);
 	static QString fileContentId(const QString &videoPath);
 	static FeedbackRangeMemory loadRangeMemoryForVideo(const QString &videoPath, const QString &presetId,
-		const QStringList &contentIds = QStringList{});
+							   const QStringList &contentIds = QStringList{});
 };
 
 } // namespace Curation::Feedback

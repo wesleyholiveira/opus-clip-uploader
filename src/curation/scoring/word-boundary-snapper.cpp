@@ -1,7 +1,6 @@
 #include "curation/scoring/word-boundary-snapper.hpp"
 
 #include <algorithm>
-#include <cmath>
 
 namespace Curation::Scoring {
 
@@ -26,7 +25,7 @@ static ClipDuration clampRange(const ClipDuration &range, const ClipDuration &bo
 } // namespace
 
 ClipDuration WordBoundarySnapper::snap(const ClipDuration &range, const ClipDuration &bounds,
-	const QVector<WordTiming> &words) const
+				       const QVector<WordTiming> &words) const
 {
 	if (words.isEmpty())
 		return clampRange(range, bounds);

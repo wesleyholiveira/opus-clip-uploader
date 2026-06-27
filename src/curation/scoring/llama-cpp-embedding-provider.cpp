@@ -1,6 +1,7 @@
 #include "curation/scoring/llama-cpp-embedding-provider.hpp"
 
 #include "curation/scoring/llama-cpp-model-resolver.hpp"
+#include "curation/scoring/llama-cpp-batch-wrapper.hpp"
 
 #include <obs-module.h>
 
@@ -367,21 +368,21 @@ QVector<SemanticEmbedding> LlamaCppEmbeddingProvider::embedBatch(const QVector<Q
 		return result;
 
 	QVector<SemanticEmbedding> computed;
-	computed.resize(pendingTexts.size());
 	QString error;
 	{
 		QMutexLocker locker(&mutex_);
 		if (!engine_)
 			return result;
-		for (int i = 0; i < static_cast<int>(pendingTexts.size()); ++i) {
-			if (options_.cancellationCallback && options_.cancellationCallback())
-				break;
-			computed[i] = engine_->embedPrepared(pendingTexts.at(i), options_, &error);
-			if (!error.isEmpty()) {
-				lastError_ = error;
-				break;
-			}
-		}
+		computed = runSafeLlamaCppBatch<QString, SemanticEmbedding>(
+			pendingTexts, options_.maxBatchSize, options_.cancellationCallback,
+			[this, &error](const QString &input, int) {
+				if (!error.isEmpty())
+					return SemanticEmbedding{};
+				SemanticEmbedding embedding = engine_->embedPrepared(input, options_, &error);
+				if (!error.isEmpty())
+					lastError_ = error;
+				return embedding;
+			});
 	}
 
 	for (int i = 0; i < static_cast<int>(computed.size()) && i < static_cast<int>(pendingIndexes.size()); ++i) {

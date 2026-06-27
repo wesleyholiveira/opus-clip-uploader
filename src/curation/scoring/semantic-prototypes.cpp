@@ -16,8 +16,8 @@ static QString normalizedLanguageToken(const QString &value)
 static bool isPortugueseToken(const QString &language)
 {
 	return language == QStringLiteral("pt") || language.startsWith(QStringLiteral("pt-")) ||
-		language == QStringLiteral("portuguese") || language == QStringLiteral("portugues") ||
-		language == QStringLiteral("português");
+	       language == QStringLiteral("portuguese") || language == QStringLiteral("portugues") ||
+	       language == QStringLiteral("português");
 }
 
 static QStringList uniqueTexts(QStringList values)
@@ -31,17 +31,18 @@ static QStringList uniqueTexts(QStringList values)
 	return result;
 }
 
-
 static bool looksLikeGenericClipInstruction(const QString &target)
 {
 	const QString value = target.toLower().simplified();
 	if (value.isEmpty())
 		return false;
-	const bool instructionShape = value.contains(QStringLiteral("find one")) ||
-		value.contains(QStringLiteral("continuous")) || value.contains(QStringLiteral("unbroken")) ||
-		value.contains(QStringLiteral("single viewer message")) || value.contains(QStringLiteral("complete response")) ||
+	const bool instructionShape =
+		value.contains(QStringLiteral("find one")) || value.contains(QStringLiteral("continuous")) ||
+		value.contains(QStringLiteral("unbroken")) || value.contains(QStringLiteral("single viewer message")) ||
+		value.contains(QStringLiteral("complete response")) ||
 		value.contains(QStringLiteral("prefer the clearest")) || value.contains(QStringLiteral("clip built"));
-	const bool realTopic = value.contains(QStringLiteral("mental")) || value.contains(QStringLiteral("saude")) ||
+	const bool realTopic =
+		value.contains(QStringLiteral("mental")) || value.contains(QStringLiteral("saude")) ||
 		value.contains(QStringLiteral("saúde")) || value.contains(QStringLiteral("empathy")) ||
 		value.contains(QStringLiteral("empatia")) || value.contains(QStringLiteral("therapy")) ||
 		value.contains(QStringLiteral("terapia")) || value.contains(QStringLiteral("anxiety")) ||
@@ -59,7 +60,8 @@ static QStringList localizedTargetHints(const QString &target, bool portuguese)
 		if (lower.contains(QStringLiteral("mental")) || lower.contains(QStringLiteral("saude")) ||
 		    lower.contains(QStringLiteral("saúde")))
 			hints << QStringLiteral("saúde mental") << QStringLiteral("bem-estar emocional")
-			      << QStringLiteral("cuidar da mente") << QStringLiteral("ansiedade depressão terapia autocuidado");
+			      << QStringLiteral("cuidar da mente")
+			      << QStringLiteral("ansiedade depressão terapia autocuidado");
 		if (lower.contains(QStringLiteral("empathy")) || lower.contains(QStringLiteral("empatia")))
 			hints << QStringLiteral("empatia") << QStringLiteral("acolhimento emocional")
 			      << QStringLiteral("entender o sentimento da pessoa");
@@ -92,7 +94,7 @@ static QStringList localizedTargetHints(const QString &target, bool portuguese)
 } // namespace
 
 QString Curation::Scoring::normalizedSemanticLanguageCode(const QString &transcriptionLanguage,
-	const QString &sourceLanguage)
+							  const QString &sourceLanguage)
 {
 	const QString transcription = normalizedLanguageToken(transcriptionLanguage);
 	if (!transcription.isEmpty()) {
@@ -189,19 +191,27 @@ const SemanticPrototypeSet &Curation::Scoring::defaultSemanticPrototypes()
 			QStringLiteral("the speaker manages stream logistics"),
 			QStringLiteral("the speaker talks about invites, lobby, queue, donations or subscriptions"),
 			QStringLiteral("chat backlog or stream management without a meaningful answer"),
-			QStringLiteral("the speaker looks for, checks, or reads chat before the actual useful topic starts"),
+			QStringLiteral(
+				"the speaker looks for, checks, or reads chat before the actual useful topic starts"),
 			QStringLiteral("the speaker says they are checking a message before the real answer begins"),
-			QStringLiteral("technical troubleshooting about a viewer connection, stream setup, audio, video, lag or internet before useful content"),
-			QStringLiteral("the speaker helps someone adjust connection settings or live technical setup instead of answering the main topic"),
+			QStringLiteral(
+				"technical troubleshooting about a viewer connection, stream setup, audio, video, lag or internet before useful content"),
+			QStringLiteral(
+				"the speaker helps someone adjust connection settings or live technical setup instead of answering the main topic"),
 			QStringLiteral("the speaker talks about moderators, spam, bans or live rules"),
-			QStringLiteral("the speaker is setting up the stream, background game, overlay, live start, or stream context without a useful answer"),
-			QStringLiteral("the speaker scolds chat about greetings, good night messages, or asking the background game name instead of giving a useful answer"),
-			QStringLiteral("light social check-in, small talk, body status, or casual availability question before any useful topic"),
+			QStringLiteral(
+				"the speaker is setting up the stream, background game, overlay, live start, or stream context without a useful answer"),
+			QStringLiteral(
+				"the speaker scolds chat about greetings, good night messages, or asking the background game name instead of giving a useful answer"),
+			QStringLiteral(
+				"light social check-in, small talk, body status, or casual availability question before any useful topic"),
 			QStringLiteral("brief trivia answer followed by a topic change without a complete arc"),
 			QStringLiteral("o streamer organiza convite lobby fila ou operação da live"),
 			QStringLiteral("o streamer agradece apoio do chat, inscrições, doações ou itens virtuais"),
-			QStringLiteral("o streamer agradece apoio do chat, itens virtuais, inscrições, doações ou elogios"),
-			QStringLiteral("the speaker thanks gifts compliments donations subs virtual gifts coins badges or follower messages"),
+			QStringLiteral(
+				"o streamer agradece apoio do chat, itens virtuais, inscrições, doações ou elogios"),
+			QStringLiteral(
+				"the speaker thanks gifts compliments donations subs virtual gifts coins badges or follower messages"),
 			QStringLiteral("the opening is only a virtual gift thank you before the real subject starts"),
 			QStringLiteral("o streamer fala sobre moderação spam castigo banimento ou regras da live"),
 		},
@@ -214,11 +224,15 @@ const SemanticPrototypeSet &Curation::Scoring::defaultSemanticPrototypes()
 			QStringLiteral("começa outro comentário de espectador depois da conclusão"),
 		},
 		{
-			QStringLiteral("a strong short-form clip with a concrete problem, useful insight, and clear takeaway"),
-			QStringLiteral("one focused answer that teaches, advises, or emotionally resolves a real viewer problem"),
-			QStringLiteral("a meaningful personal reflection that builds to a practical lesson and conclusion"),
+			QStringLiteral(
+				"a strong short-form clip with a concrete problem, useful insight, and clear takeaway"),
+			QStringLiteral(
+				"one focused answer that teaches, advises, or emotionally resolves a real viewer problem"),
+			QStringLiteral(
+				"a meaningful personal reflection that builds to a practical lesson and conclusion"),
 			QStringLiteral("a curiosity-driven standalone moment with setup, development, and payoff"),
-			QStringLiteral("an interesting story, opinion, or reflection that creates curiosity and resolves locally"),
+			QStringLiteral(
+				"an interesting story, opinion, or reflection that creates curiosity and resolves locally"),
 			QStringLiteral("practical advice that helps the viewer decide what to do and why"),
 			QStringLiteral("mental health advice with careful reasoning and a responsible conclusion"),
 			QStringLiteral("a viewer shares a real dilemma and the speaker gives a complete helpful answer"),
@@ -229,18 +243,27 @@ const SemanticPrototypeSet &Curation::Scoring::defaultSemanticPrototypes()
 			QStringLiteral("um papo filosófico ou emocional com gancho e conclusão forte"),
 		},
 		{
-			QStringLiteral("a viewer asks for relationship advice after a breakup, blame, rejection, or romantic conflict"),
-			QStringLiteral("a viewer shares vulnerability, trauma, depression, treatment, recovery, or a difficult personal situation"),
-			QStringLiteral("an empathetic response to someone describing mental health, therapy, a clinic, isolation, grief, or life struggle"),
-			QStringLiteral("the speaker gives careful emotional support or responsible advice to a vulnerable viewer"),
-			QStringLiteral("context about a viewer spending time in a clinic, struggling emotionally, or asking for mental health advice"),
+			QStringLiteral(
+				"a viewer asks for relationship advice after a breakup, blame, rejection, or romantic conflict"),
+			QStringLiteral(
+				"a viewer shares vulnerability, trauma, depression, treatment, recovery, or a difficult personal situation"),
+			QStringLiteral(
+				"an empathetic response to someone describing mental health, therapy, a clinic, isolation, grief, or life struggle"),
+			QStringLiteral(
+				"the speaker gives careful emotional support or responsible advice to a vulnerable viewer"),
+			QStringLiteral(
+				"context about a viewer spending time in a clinic, struggling emotionally, or asking for mental health advice"),
 			QStringLiteral("viewer vulnerability creates empathy and the answer develops a helpful point"),
-			QStringLiteral("um viewer compartilha vulnerabilidade, depressão, terapia, clínica, sofrimento ou dificuldade pessoal"),
-			QStringLiteral("resposta empática a uma pessoa em sofrimento emocional ou problema de saúde mental"),
-			QStringLiteral("conselho cuidadoso sobre saúde mental com contexto humano e fechamento responsável"),
+			QStringLiteral(
+				"um viewer compartilha vulnerabilidade, depressão, terapia, clínica, sofrimento ou dificuldade pessoal"),
+			QStringLiteral(
+				"resposta empática a uma pessoa em sofrimento emocional ou problema de saúde mental"),
+			QStringLiteral(
+				"conselho cuidadoso sobre saúde mental com contexto humano e fechamento responsável"),
 		},
 		{
-			QStringLiteral("the clip opens immediately with a compelling question, conflict, or emotional tension"),
+			QStringLiteral(
+				"the clip opens immediately with a compelling question, conflict, or emotional tension"),
 			QStringLiteral("the first sentence creates curiosity before any greeting or setup"),
 			QStringLiteral("the opening creates curiosity even without an explicit question"),
 			QStringLiteral("the opening line makes the viewer want to know the answer"),
@@ -259,30 +282,37 @@ const SemanticPrototypeSet &Curation::Scoring::defaultSemanticPrototypes()
 		{
 			QStringLiteral("only greeting viewers without useful content"),
 			QStringLiteral("a clip starts with a donation thank you follower goal or chat greeting"),
-			QStringLiteral("a clip starts with thanks for chat support, virtual items, gifts, subscriptions, donations or compliments"),
-			QStringLiteral("a clip begins with a virtual gift name or gift thank you before the actual topic"),
+			QStringLiteral(
+				"a clip starts with thanks for chat support, virtual items, gifts, subscriptions, donations or compliments"),
+			QStringLiteral(
+				"a clip begins with a virtual gift name or gift thank you before the actual topic"),
 			QStringLiteral("a transcript excerpt mixes several unrelated chat interactions"),
 			QStringLiteral("thanking donations followers subscribers or coins"),
 			QStringLiteral("live moderation instructions about spam bans timeouts or rules"),
 			QStringLiteral("stream status updates follower goals chat backlog or reading chat"),
-			QStringLiteral("procedural prelude where the speaker looks for a chat message before the real hook"),
+			QStringLiteral(
+				"procedural prelude where the speaker looks for a chat message before the real hook"),
 			QStringLiteral("technical support or connection troubleshooting before the actual clip topic"),
 			QStringLiteral("uninteresting setup about checking or reading chat before the answer"),
 			QStringLiteral("casual banter with several unrelated viewers"),
 			QStringLiteral("a clip that ends one chat topic and starts another unrelated video moment"),
-			QStringLiteral("a casual check-in or trivia reply with no actionable takeaway, no emotional payoff, and no conclusion"),
-			QStringLiteral("stream setup or background game naming discussion with no advice, empathy, curiosity arc, or conclusion"),
-			QStringLiteral("ranting or scolding chat for not greeting or for asking the game name before any useful topic"),
-			QStringLiteral("asking what someone is doing, whether they are online, or mentioning body status before the real hook"),
+			QStringLiteral(
+				"a casual check-in or trivia reply with no actionable takeaway, no emotional payoff, and no conclusion"),
+			QStringLiteral(
+				"stream setup or background game naming discussion with no advice, empathy, curiosity arc, or conclusion"),
+			QStringLiteral(
+				"ranting or scolding chat for not greeting or for asking the game name before any useful topic"),
+			QStringLiteral(
+				"asking what someone is doing, whether they are online, or mentioning body status before the real hook"),
 			QStringLiteral("a response with no actionable takeaway, no emotional payoff, and no conclusion"),
 			QStringLiteral("apenas cumprimentos agradecimentos ou metas da live"),
-			QStringLiteral("agradecimento por apoio do chat, item virtual, doação, inscrição, seguidor ou elogio"),
+			QStringLiteral(
+				"agradecimento por apoio do chat, item virtual, doação, inscrição, seguidor ou elogio"),
 			QStringLiteral("agradecimento por apoio do chat, doações, inscrições ou itens virtuais"),
 			QStringLiteral("instruções de moderação spam castigo banimento ou regras da live"),
 			QStringLiteral("conversa casual com várias pessoas sem conselho nem conclusão"),
 			QStringLiteral("um corte que termina um assunto e começa outro assunto sem relação"),
-		}
-	};
+		}};
 	return prototypes;
 }
 
@@ -297,7 +327,8 @@ const SemanticPrototypeSet &Curation::Scoring::semanticPrototypesForLanguage(con
 			QStringLiteral("mensagem do chat pedindo opinião, conselho ou explicação"),
 			QStringLiteral("espectador faz uma pergunta direta para o streamer responder"),
 			QStringLiteral("o streamer lê uma pergunta do espectador antes de responder"),
-			QStringLiteral("mensagem do viewer com pergunta específica, dilema pessoal ou pedido de opinião"),
+			QStringLiteral(
+				"mensagem do viewer com pergunta específica, dilema pessoal ou pedido de opinião"),
 			QStringLiteral("mensagem do viewer com problema real e pedido de resposta"),
 		},
 		{
@@ -313,19 +344,31 @@ const SemanticPrototypeSet &Curation::Scoring::semanticPrototypesForLanguage(con
 			QStringLiteral("o streamer dá oi, saúda alguém ou agradece presença"),
 		},
 		{
-			QStringLiteral("agradecimento por apoio do chat, item virtual, presente, inscrição, seguidor ou doação"),
-			QStringLiteral("o início é apenas agradecimento por presente ou item virtual antes do assunto útil"),
-			QStringLiteral("agradecimento curto por apoio, item virtual, pagamento, inscrição ou participação"),
-			QStringLiteral("elogio casual sobre aparência, voz, desempenho ou estilo antes da pergunta principal"),
-			QStringLiteral("meta da live, fila, lobby, convite, moderador, spam, banimento ou regra do chat"),
+			QStringLiteral(
+				"agradecimento por apoio do chat, item virtual, presente, inscrição, seguidor ou doação"),
+			QStringLiteral(
+				"o início é apenas agradecimento por presente ou item virtual antes do assunto útil"),
+			QStringLiteral(
+				"agradecimento curto por apoio, item virtual, pagamento, inscrição ou participação"),
+			QStringLiteral(
+				"elogio casual sobre aparência, voz, desempenho ou estilo antes da pergunta principal"),
+			QStringLiteral(
+				"meta da live, fila, lobby, convite, moderador, spam, banimento ou regra do chat"),
 			QStringLiteral("comentário operacional da live que não faz parte da resposta principal"),
-			QStringLiteral("conversa casual perguntando o que alguém tem feito, se está online, disponibilidade ou estado físico antes do tema útil"),
-			QStringLiteral("resposta curta de curiosidade trivial seguida de troca de assunto sem arco completo"),
-			QStringLiteral("setup da live, começo da transmissão, jogo de fundo, overlay ou preparação da live sem resposta útil"),
-			QStringLiteral("sermão no chat por não dar boa noite ou por perguntar só o nome do jogo de fundo"),
-			QStringLiteral("suporte técnico da live ou do viewer sobre internet, conexão, áudio, vídeo, delay ou configuração antes do conteúdo útil"),
-			QStringLiteral("o streamer ajuda alguém a ajustar conexão, internet ou configuração técnica em vez de entrar no assunto principal"),
-			QStringLiteral("o streamer procura ou confere uma mensagem do chat antes do assunto útil começar"),
+			QStringLiteral(
+				"conversa casual perguntando o que alguém tem feito, se está online, disponibilidade ou estado físico antes do tema útil"),
+			QStringLiteral(
+				"resposta curta de curiosidade trivial seguida de troca de assunto sem arco completo"),
+			QStringLiteral(
+				"setup da live, começo da transmissão, jogo de fundo, overlay ou preparação da live sem resposta útil"),
+			QStringLiteral(
+				"sermão no chat por não dar boa noite ou por perguntar só o nome do jogo de fundo"),
+			QStringLiteral(
+				"suporte técnico da live ou do viewer sobre internet, conexão, áudio, vídeo, delay ou configuração antes do conteúdo útil"),
+			QStringLiteral(
+				"o streamer ajuda alguém a ajustar conexão, internet ou configuração técnica em vez de entrar no assunto principal"),
+			QStringLiteral(
+				"o streamer procura ou confere uma mensagem do chat antes do assunto útil começar"),
 			QStringLiteral("preparação operacional para ler mensagem do chat antes da resposta principal"),
 		},
 		{
@@ -333,7 +376,8 @@ const SemanticPrototypeSet &Curation::Scoring::semanticPrototypesForLanguage(con
 			QStringLiteral("novo comentário do chat muda o assunto da resposta"),
 			QStringLiteral("depois do fechamento aparece elogio, pergunta ou observação sem relação"),
 			QStringLiteral("o streamer deixa a pergunta original e passa para outro tema"),
-			QStringLiteral("novo comentário elogioso, observação ou pergunta de outro viewer depois da conclusão"),
+			QStringLiteral(
+				"novo comentário elogioso, observação ou pergunta de outro viewer depois da conclusão"),
 		},
 		{
 			QStringLiteral("corte forte com problema claro, desenvolvimento e conclusão útil"),
@@ -342,13 +386,17 @@ const SemanticPrototypeSet &Curation::Scoring::semanticPrototypesForLanguage(con
 			QStringLiteral("resposta sobre o tema perguntado com desenvolvimento e fechamento natural"),
 			QStringLiteral("dilema real do espectador com resposta empática e conclusão"),
 			QStringLiteral("trecho que ensina, aconselha ou resolve um ponto sem trocar de assunto"),
-			QStringLiteral("momento interessante que gera curiosidade, desenvolve a ideia e fecha localmente"),
+			QStringLiteral(
+				"momento interessante que gera curiosidade, desenvolve a ideia e fecha localmente"),
 			QStringLiteral("história, opinião ou reflexão autossuficiente com começo, meio e fim"),
 		},
 		{
-			QStringLiteral("viewer pede conselho amoroso depois de término, culpa, rejeição ou conflito de relacionamento"),
-			QStringLiteral("viewer compartilha que está desenvolvendo traços de depressão e recebe orientação cuidadosa"),
-			QStringLiteral("mensagem vulnerável sobre depressão, saúde mental, terapia, clínica ou sofrimento emocional"),
+			QStringLiteral(
+				"viewer pede conselho amoroso depois de término, culpa, rejeição ou conflito de relacionamento"),
+			QStringLiteral(
+				"viewer compartilha que está desenvolvendo traços de depressão e recebe orientação cuidadosa"),
+			QStringLiteral(
+				"mensagem vulnerável sobre depressão, saúde mental, terapia, clínica ou sofrimento emocional"),
 			QStringLiteral("alguém conta que ficou ou morou em clínica e o streamer responde com empatia"),
 			QStringLiteral("relato humano que gera empatia antes de um conselho ou reflexão útil"),
 			QStringLiteral("resposta empática com conselho responsável para uma pessoa em sofrimento"),
@@ -359,7 +407,8 @@ const SemanticPrototypeSet &Curation::Scoring::semanticPrototypesForLanguage(con
 			QStringLiteral("gancho inicial com pergunta interessante antes de agradecimento ou saudação"),
 			QStringLiteral("primeira frase autossuficiente que explica o tema da resposta"),
 			QStringLiteral("começo que gera curiosidade mesmo sem ser uma pergunta explícita"),
-			QStringLiteral("abertura de história, opinião ou reflexão que prende atenção sem social/meta antes"),
+			QStringLiteral(
+				"abertura de história, opinião ou reflexão que prende atenção sem social/meta antes"),
 			QStringLiteral("começo no momento em que o viewer pergunta o que ele acha do assunto"),
 		},
 		{
@@ -367,28 +416,38 @@ const SemanticPrototypeSet &Curation::Scoring::semanticPrototypesForLanguage(con
 			QStringLiteral("o raciocínio fecha sem puxar outra pergunta do chat"),
 			QStringLiteral("conclusão natural com takeaway antes de saudação, elogio ou assunto novo"),
 			QStringLiteral("termina quando a resposta sobre o mesmo tema já está completa"),
-			QStringLiteral("o momento de curiosidade ou história chega ao payoff local e para antes da próxima interação"),
+			QStringLiteral(
+				"o momento de curiosidade ou história chega ao payoff local e para antes da próxima interação"),
 		},
 		{
-			QStringLiteral("agradecimento por apoio do chat, item virtual, presente, doação, inscrição ou seguidor"),
-			QStringLiteral("corte começa com agradecimento por presente ou item virtual antes do gancho real"),
-			QStringLiteral("elogio casual sobre aparência, voz, desempenho ou estilo, ou agradecimento pelo elogio"),
+			QStringLiteral(
+				"agradecimento por apoio do chat, item virtual, presente, doação, inscrição ou seguidor"),
+			QStringLiteral(
+				"corte começa com agradecimento por presente ou item virtual antes do gancho real"),
+			QStringLiteral(
+				"elogio casual sobre aparência, voz, desempenho ou estilo, ou agradecimento pelo elogio"),
 			QStringLiteral("cumprimentos, salves, boa noite, obrigado, tamo junto sem conteúdo principal"),
 			QStringLiteral("trecho mistura várias mensagens de espectadores sem um único assunto"),
 			QStringLiteral("o corte começa antes da pergunta real ou termina depois com outro assunto"),
 			QStringLiteral("começa com social da live e só depois entra no tema importante"),
-			QStringLiteral("começa com o streamer procurando ou conferindo uma mensagem antes do gancho real"),
+			QStringLiteral(
+				"começa com o streamer procurando ou conferindo uma mensagem antes do gancho real"),
 			QStringLiteral("começa com preparação para ler o chat e só depois entra na resposta útil"),
-			QStringLiteral("começa com suporte técnico sobre internet conexão áudio vídeo delay ou configuração antes do gancho real"),
-			QStringLiteral("começa com conversa casual perguntando o que a pessoa fez ou se está online antes do tema principal"),
-			QStringLiteral("comentário sobre nariz voz corpo sono horário ou estado físico antes do gancho real"),
-			QStringLiteral("resposta muito curta sobre faculdade nome do jogo ou curiosidade trivial seguida de troca de assunto"),
-			QStringLiteral("setup da live ou conversa sobre nome do jogo de fundo sem conselho empatia curiosidade real ou conclusão"),
-			QStringLiteral("sermão sobre etiqueta do chat, boa noite, salve, ou pessoas perguntando o jogo de fundo"),
+			QStringLiteral(
+				"começa com suporte técnico sobre internet conexão áudio vídeo delay ou configuração antes do gancho real"),
+			QStringLiteral(
+				"começa com conversa casual perguntando o que a pessoa fez ou se está online antes do tema principal"),
+			QStringLiteral(
+				"comentário sobre nariz voz corpo sono horário ou estado físico antes do gancho real"),
+			QStringLiteral(
+				"resposta muito curta sobre faculdade nome do jogo ou curiosidade trivial seguida de troca de assunto"),
+			QStringLiteral(
+				"setup da live ou conversa sobre nome do jogo de fundo sem conselho empatia curiosidade real ou conclusão"),
+			QStringLiteral(
+				"sermão sobre etiqueta do chat, boa noite, salve, ou pessoas perguntando o jogo de fundo"),
 			QStringLiteral("termina a resposta e continua para comentário novo do chat"),
 			QStringLiteral("fala sobre moderação, spam, castigo, banimento, regras, fila ou lobby"),
-		}
-	};
+		}};
 	return portuguesePrototypes;
 }
 
@@ -398,7 +457,7 @@ QStringList Curation::Scoring::targetPrototypesForPreset(const QString &presetId
 }
 
 QStringList Curation::Scoring::targetPrototypesForPreset(const QString &presetId, const QString &mainTarget,
-	const QString &languageCode)
+							 const QString &languageCode)
 {
 	QStringList prototypes;
 	QString target = mainTarget.trimmed();
@@ -415,10 +474,14 @@ QStringList Curation::Scoring::targetPrototypesForPreset(const QString &presetId
 				   << QStringLiteral("uma resposta completa sobre %1").arg(target)
 				   << QStringLiteral("o início, meio e fim tratam apenas de %1").arg(target);
 			if (!localizedHints.isEmpty()) {
-				prototypes << QStringLiteral("um corte autossuficiente especificamente sobre %1").arg(localizedTarget)
-					   << QStringLiteral("uma resposta completa e útil sobre %1").arg(localizedTarget)
-					   << QStringLiteral("conselho ou acolhimento relacionado a %1").arg(localizedTarget)
-					   << QStringLiteral("pergunta do viewer respondida dentro do tema %1").arg(localizedTarget);
+				prototypes
+					<< QStringLiteral("um corte autossuficiente especificamente sobre %1")
+						   .arg(localizedTarget)
+					<< QStringLiteral("uma resposta completa e útil sobre %1").arg(localizedTarget)
+					<< QStringLiteral("conselho ou acolhimento relacionado a %1")
+						   .arg(localizedTarget)
+					<< QStringLiteral("pergunta do viewer respondida dentro do tema %1")
+						   .arg(localizedTarget);
 			}
 		} else {
 			prototypes << QStringLiteral("a self-contained clip specifically about %1").arg(target)
@@ -426,8 +489,10 @@ QStringList Curation::Scoring::targetPrototypesForPreset(const QString &presetId
 				   << QStringLiteral("a complete answer about %1").arg(target);
 			if (!localizedHints.isEmpty()) {
 				prototypes << QStringLiteral("a complete useful answer about %1").arg(localizedTarget)
-					   << QStringLiteral("advice or emotional support related to %1").arg(localizedTarget)
-					   << QStringLiteral("a viewer question answered within the topic %1").arg(localizedTarget);
+					   << QStringLiteral("advice or emotional support related to %1")
+						      .arg(localizedTarget)
+					   << QStringLiteral("a viewer question answered within the topic %1")
+						      .arg(localizedTarget);
 			}
 		}
 
@@ -440,36 +505,44 @@ QStringList Curation::Scoring::targetPrototypesForPreset(const QString &presetId
 
 	if (presetId == QStringLiteral("viewer_message_response")) {
 		if (portuguese) {
-			prototypes << QStringLiteral("uma mensagem de espectador seguida por resposta direta")
-				   << QStringLiteral("uma resposta completa para uma única pergunta do chat")
-				   << QStringLiteral("um conselho ou opinião útil com começo, desenvolvimento e conclusão")
-				   << QStringLiteral("um momento interessante que gera curiosidade e fecha localmente")
-				   << QStringLiteral("um conselho amoroso ou emocional com contexto completo, desenvolvimento e conclusão")
-				   << QStringLiteral("uma história opinião ou reflexão autossuficiente com começo meio e fim")
-				   << QStringLiteral("um corte contínuo sem agradecimento, saudação ou troca de assunto");
+			prototypes
+				<< QStringLiteral("uma mensagem de espectador seguida por resposta direta")
+				<< QStringLiteral("uma resposta completa para uma única pergunta do chat")
+				<< QStringLiteral("um conselho ou opinião útil com começo, desenvolvimento e conclusão")
+				<< QStringLiteral("um momento interessante que gera curiosidade e fecha localmente")
+				<< QStringLiteral(
+					   "um conselho amoroso ou emocional com contexto completo, desenvolvimento e conclusão")
+				<< QStringLiteral(
+					   "uma história opinião ou reflexão autossuficiente com começo meio e fim")
+				<< QStringLiteral("um corte contínuo sem agradecimento, saudação ou troca de assunto");
 		} else {
-			prototypes << QStringLiteral("a viewer message followed by the speaker's direct response")
-				   << QStringLiteral("one complete answer to a single viewer question")
-				   << QStringLiteral("one useful response to one viewer problem with clear payoff")
-				   << QStringLiteral("a curiosity-driven standalone story or opinion with a local payoff")
-				   << QStringLiteral("uma mensagem de espectador seguida por resposta direta")
-				   << QStringLiteral("um conselho útil para uma única pergunta do chat");
+			prototypes
+				<< QStringLiteral("a viewer message followed by the speaker's direct response")
+				<< QStringLiteral("one complete answer to a single viewer question")
+				<< QStringLiteral("one useful response to one viewer problem with clear payoff")
+				<< QStringLiteral("a curiosity-driven standalone story or opinion with a local payoff")
+				<< QStringLiteral("uma mensagem de espectador seguida por resposta direta")
+				<< QStringLiteral("um conselho útil para uma única pergunta do chat");
 		}
 	} else if (presetId == QStringLiteral("advice_answer")) {
 		prototypes << (portuguese ? QStringLiteral("conselho prático com recomendação clara")
-				      : QStringLiteral("practical advice with a clear recommendation"))
+					  : QStringLiteral("practical advice with a clear recommendation"))
 			   << (portuguese ? QStringLiteral("resposta útil explicando o que alguém deveria fazer")
-				      : QStringLiteral("a useful answer explaining what someone should do"));
+					  : QStringLiteral("a useful answer explaining what someone should do"));
 	} else if (presetId == QStringLiteral("emotional_reaction")) {
-		prototypes << (portuguese ? QStringLiteral("reação emocional forte com fechamento claro")
-				      : QStringLiteral("a strong emotional reaction with a clear payoff"))
-			   << (portuguese ? QStringLiteral("o streamer reage com surpresa, humor, raiva, tristeza ou empolgação")
-				      : QStringLiteral("the speaker reacts with surprise, humor, anger, sadness or excitement"));
+		prototypes
+			<< (portuguese ? QStringLiteral("reação emocional forte com fechamento claro")
+				       : QStringLiteral("a strong emotional reaction with a clear payoff"))
+			<< (portuguese
+				    ? QStringLiteral(
+					      "o streamer reage com surpresa, humor, raiva, tristeza ou empolgação")
+				    : QStringLiteral(
+					      "the speaker reacts with surprise, humor, anger, sadness or excitement"));
 	} else if (presetId == QStringLiteral("explanation")) {
 		prototypes << (portuguese ? QStringLiteral("explicação clara de uma ideia")
-				      : QStringLiteral("a clear explanation of one idea"))
+					  : QStringLiteral("a clear explanation of one idea"))
 			   << (portuguese ? QStringLiteral("o streamer explica um conceito do começo até a resolução")
-				      : QStringLiteral("the speaker explains a concept from setup to resolution"));
+					  : QStringLiteral("the speaker explains a concept from setup to resolution"));
 	}
 
 	return uniqueTexts(prototypes);

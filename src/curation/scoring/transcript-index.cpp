@@ -161,7 +161,8 @@ QString TranscriptIndex::timedTextForSegmentWindow(int firstIndex, int lastIndex
 			continue;
 
 		if (previousNonEmpty >= 0) {
-			const double pauseSec = std::max(0.0, segment.startSec - transcript.segments.at(previousNonEmpty).endSec);
+			const double pauseSec =
+				std::max(0.0, segment.startSec - transcript.segments.at(previousNonEmpty).endSec);
 			if (pauseSec >= pauseMarkerThresholdSec) {
 				if (!text.isEmpty())
 					text += QLatin1Char(' ');
@@ -172,7 +173,8 @@ QString TranscriptIndex::timedTextForSegmentWindow(int firstIndex, int lastIndex
 		if (!text.isEmpty())
 			text += QLatin1Char(' ');
 		text += QStringLiteral("[%1-%2] %3")
-			.arg(QString::number(segment.startSec, 'f', 2), QString::number(segment.endSec, 'f', 2), segmentText);
+				.arg(QString::number(segment.startSec, 'f', 2), QString::number(segment.endSec, 'f', 2),
+				     segmentText);
 		previousNonEmpty = i;
 	}
 	return text.simplified();
@@ -196,9 +198,8 @@ QVector<WordTiming> TranscriptIndex::wordsForRange(const ClipDuration &range) co
 				words.append(word);
 		}
 	}
-	std::sort(words.begin(), words.end(), [](const WordTiming &left, const WordTiming &right) {
-		return left.startSec < right.startSec;
-	});
+	std::sort(words.begin(), words.end(),
+		  [](const WordTiming &left, const WordTiming &right) { return left.startSec < right.startSec; });
 	return words;
 }
 
@@ -208,12 +209,11 @@ ClipDuration TranscriptIndex::snapRangeToWordBoundaries(const ClipDuration &rang
 		return clampRange(range, bounds);
 
 	const ClipDuration search{std::max(bounds.startSec, range.startSec - 0.55),
-		std::min(bounds.endSec, range.endSec + 0.80)};
+				  std::min(bounds.endSec, range.endSec + 0.80)};
 	const QVector<WordTiming> words = wordsForRange(search);
 	WordBoundarySnapper snapper;
 	return snapper.snap(range, bounds, words);
 }
-
 
 double TranscriptIndex::silenceBeforeSegment(int index) const
 {
@@ -242,7 +242,6 @@ double TranscriptIndex::silenceAfterRange(const ClipDuration &range) const
 	const int last = lastSegmentIndexOverlapping(range);
 	return last >= 0 ? silenceAfterSegment(last) : 0.0;
 }
-
 
 double TranscriptIndex::maxInternalSilenceInRange(const ClipDuration &range) const
 {

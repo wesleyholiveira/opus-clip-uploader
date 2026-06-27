@@ -54,10 +54,11 @@ static Curation::ExchangeArcPolicy emotionalArcPolicy()
 	return policy;
 }
 
-static Curation::CurationPresetProfile makeProfile(QString id, QString label,
-	Curation::PresetArchetype archetype, Curation::PresetContentKind contentKind,
-	Curation::PresetClipLengthPolicy clipPolicy, double minSec, double maxSec, QString clipLengthSource,
-	Curation::ExchangeArcPolicy arcPolicy, QStringList focusHints = {})
+static Curation::CurationPresetProfile makeProfile(QString id, QString label, Curation::PresetArchetype archetype,
+						   Curation::PresetContentKind contentKind,
+						   Curation::PresetClipLengthPolicy clipPolicy, double minSec,
+						   double maxSec, QString clipLengthSource,
+						   Curation::ExchangeArcPolicy arcPolicy, QStringList focusHints = {})
 {
 	Curation::CurationPresetProfile profile;
 	profile.id = std::move(id);
@@ -129,40 +130,41 @@ QVector<CurationPresetProfile> presetProfiles()
 	const ExchangeArcPolicy viewer = singleViewerExchangeArcPolicy();
 	return {
 		makeProfile(autoPresetProfileId(), QStringLiteral("Auto"), PresetArchetype::Auto,
-			PresetContentKind::Unknown, PresetClipLengthPolicy::None, 0.0, 0.0,
-			QStringLiteral("auto"), generic),
+			    PresetContentKind::Unknown, PresetClipLengthPolicy::None, 0.0, 0.0, QStringLiteral("auto"),
+			    generic),
 		makeProfile(viewerMessageResponsePresetProfileId(), QStringLiteral("Viewer message response"),
-			PresetArchetype::ViewerMessageResponse, PresetContentKind::LiveChat,
-			PresetClipLengthPolicy::Always, 12.0, 180.0,
-			QStringLiteral("preset:viewer-message-response-complete-arc"), viewer,
-			{QStringLiteral("single viewer exchange"), QStringLiteral("direct answer to one chat message"),
-			 QStringLiteral("self-contained curiosity story or opinion arc"),
-			 QStringLiteral("clean opening and first local resolution")}),
+			    PresetArchetype::ViewerMessageResponse, PresetContentKind::LiveChat,
+			    PresetClipLengthPolicy::Always, 12.0, 180.0,
+			    QStringLiteral("preset:viewer-message-response-complete-arc"), viewer,
+			    {QStringLiteral("single viewer exchange"),
+			     QStringLiteral("direct answer to one chat message"),
+			     QStringLiteral("self-contained curiosity story or opinion arc"),
+			     QStringLiteral("clean opening and first local resolution")}),
 		makeProfile(QStringLiteral("advice_answer"), QStringLiteral("Advice answer"),
-			PresetArchetype::AdviceAnswer, PresetContentKind::Advice, PresetClipLengthPolicy::AutoOnly,
-			12.0, 45.0, QStringLiteral("preset:advice-answer"), viewer,
-			{QStringLiteral("practical advice"), QStringLiteral("recommendation with reason and conclusion")}),
+			    PresetArchetype::AdviceAnswer, PresetContentKind::Advice, PresetClipLengthPolicy::AutoOnly,
+			    12.0, 45.0, QStringLiteral("preset:advice-answer"), viewer,
+			    {QStringLiteral("practical advice"),
+			     QStringLiteral("recommendation with reason and conclusion")}),
 		makeProfile(QStringLiteral("emotional_reaction"), QStringLiteral("Emotional reaction"),
-			PresetArchetype::EmotionalReaction, PresetContentKind::EmotionalReaction,
-			PresetClipLengthPolicy::UnlessLong, 6.0, 30.0,
-			QStringLiteral("preset:emotional-reaction"), emotionalArcPolicy(),
-			{QStringLiteral("emotional reaction"), QStringLiteral("strong payoff")}),
-		makeProfile(QStringLiteral("explanation"), QStringLiteral("Explanation"),
-			PresetArchetype::Explanation, PresetContentKind::Explanation, PresetClipLengthPolicy::None,
-			0.0, 0.0, QStringLiteral("auto"), generic,
-			{QStringLiteral("clear explanation"), QStringLiteral("one idea from setup to resolution")}),
-		makeProfile(QStringLiteral("story_arc"), QStringLiteral("Story arc"),
-			PresetArchetype::StoryArc, PresetContentKind::Story, PresetClipLengthPolicy::None,
-			0.0, 0.0, QStringLiteral("auto"), generic,
-			{QStringLiteral("story with setup conflict and payoff")}),
-		makeProfile(QStringLiteral("opinion"), QStringLiteral("Opinion / hot take"),
-			PresetArchetype::Opinion, PresetContentKind::Opinion, PresetClipLengthPolicy::None,
-			0.0, 0.0, QStringLiteral("auto"), generic,
-			{QStringLiteral("focused opinion"), QStringLiteral("claim with reasoning and resolution")}),
+			    PresetArchetype::EmotionalReaction, PresetContentKind::EmotionalReaction,
+			    PresetClipLengthPolicy::UnlessLong, 6.0, 30.0, QStringLiteral("preset:emotional-reaction"),
+			    emotionalArcPolicy(),
+			    {QStringLiteral("emotional reaction"), QStringLiteral("strong payoff")}),
+		makeProfile(QStringLiteral("explanation"), QStringLiteral("Explanation"), PresetArchetype::Explanation,
+			    PresetContentKind::Explanation, PresetClipLengthPolicy::None, 0.0, 0.0,
+			    QStringLiteral("auto"), generic,
+			    {QStringLiteral("clear explanation"), QStringLiteral("one idea from setup to resolution")}),
+		makeProfile(QStringLiteral("story_arc"), QStringLiteral("Story arc"), PresetArchetype::StoryArc,
+			    PresetContentKind::Story, PresetClipLengthPolicy::None, 0.0, 0.0, QStringLiteral("auto"),
+			    generic, {QStringLiteral("story with setup conflict and payoff")}),
+		makeProfile(QStringLiteral("opinion"), QStringLiteral("Opinion / hot take"), PresetArchetype::Opinion,
+			    PresetContentKind::Opinion, PresetClipLengthPolicy::None, 0.0, 0.0, QStringLiteral("auto"),
+			    generic,
+			    {QStringLiteral("focused opinion"), QStringLiteral("claim with reasoning and resolution")}),
 		makeProfile(QStringLiteral("tutorial_step"), QStringLiteral("Tutorial step"),
-			PresetArchetype::TutorialStep, PresetContentKind::Tutorial, PresetClipLengthPolicy::None,
-			0.0, 0.0, QStringLiteral("auto"), generic,
-			{QStringLiteral("tutorial step"), QStringLiteral("action with completion")}),
+			    PresetArchetype::TutorialStep, PresetContentKind::Tutorial, PresetClipLengthPolicy::None,
+			    0.0, 0.0, QStringLiteral("auto"), generic,
+			    {QStringLiteral("tutorial step"), QStringLiteral("action with completion")}),
 	};
 }
 
@@ -193,7 +195,7 @@ bool isViewerMessageResponsePrompt(const QString &prompt)
 {
 	return promptContainsAll(prompt, {QStringLiteral("viewer message"), QStringLiteral("same message")}) ||
 	       promptContainsAll(prompt,
-			       {QStringLiteral("viewer message"), QStringLiteral("first resolved response")}) ||
+				 {QStringLiteral("viewer message"), QStringLiteral("first resolved response")}) ||
 	       promptContainsAll(prompt, {QStringLiteral("viewer message"), QStringLiteral("next viewer message")}) ||
 	       promptContainsAll(prompt, {QStringLiteral("mensagem"), QStringLiteral("espectador")}) ||
 	       promptContainsAll(prompt, {QStringLiteral("pergunta"), QStringLiteral("chat")});

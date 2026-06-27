@@ -13,7 +13,8 @@ namespace Curation::Scoring {
 class FeedbackAwareIntervalSelector {
 public:
 	QVector<ClipCandidate> select(QVector<ClipCandidate> candidates, const TranscriptIndex &index,
-		const Curation::Feedback::FeedbackRangeMemory &memory, const ClipRankerOptions &options) const;
+				      const Curation::Feedback::FeedbackRangeMemory &memory,
+				      const ClipRankerOptions &options) const;
 
 private:
 	double selectionScore(const ClipCandidate &candidate, const FeedbackSimilarityFeatures &features) const;

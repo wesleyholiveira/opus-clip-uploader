@@ -41,25 +41,29 @@ static bool hasEvidence(const ClipCandidate &candidate, const QString &needle)
 static bool isPositiveGroundTruthCandidate(const ClipCandidate &candidate)
 {
 	return candidate.source.contains(QStringLiteral("feedback_positive_exact_seed")) ||
-		hasEvidence(candidate, QStringLiteral("feedback_positive_exact_seed_preserved")) ||
-		hasEvidence(candidate, QStringLiteral("complete_viewer_arc_gate_passed_by_user_feedback"));
+	       hasEvidence(candidate, QStringLiteral("feedback_positive_exact_seed_preserved")) ||
+	       hasEvidence(candidate, QStringLiteral("complete_viewer_arc_gate_passed_by_user_feedback"));
 }
 
 static bool isLearnedFeedbackAcceptedCandidate(const ClipCandidate &candidate)
 {
 	return hasEvidence(candidate, QStringLiteral("complete_viewer_arc_gate_passed_by_feedback_trained_ranker")) ||
-		hasEvidence(candidate, QStringLiteral("feedback_trained_ranker_strong_accept")) ||
-		hasEvidence(candidate, QStringLiteral("feedback_trained_ranker_accept"));
+	       hasEvidence(candidate, QStringLiteral("feedback_trained_ranker_strong_accept")) ||
+	       hasEvidence(candidate, QStringLiteral("feedback_trained_ranker_accept"));
 }
 
 static void removeUnusableCandidates(QVector<ClipCandidate> &candidates, const ClipRankerOptions &options)
 {
-	candidates.erase(std::remove_if(candidates.begin(), candidates.end(), [&options](const ClipCandidate &candidate) {
-		return candidate.range.endSec <= candidate.range.startSec || candidate.text.trimmed().isEmpty() ||
-		       candidate.rejectedAsNoise || candidate.rejectedByQualityGate ||
-		       (!isPositiveGroundTruthCandidate(candidate) && !isLearnedFeedbackAcceptedCandidate(candidate) &&
-		        candidate.scores.final < options.minFinalScore);
-	}), candidates.end());
+	candidates.erase(std::remove_if(candidates.begin(), candidates.end(),
+					[&options](const ClipCandidate &candidate) {
+						return candidate.range.endSec <= candidate.range.startSec ||
+						       candidate.text.trimmed().isEmpty() ||
+						       candidate.rejectedAsNoise || candidate.rejectedByQualityGate ||
+						       (!isPositiveGroundTruthCandidate(candidate) &&
+							!isLearnedFeedbackAcceptedCandidate(candidate) &&
+							candidate.scores.final < options.minFinalScore);
+					}),
+			 candidates.end());
 }
 
 static QSet<QString> tokenSetForText(const QString &text)
@@ -90,8 +94,7 @@ QVector<ClipCandidate> ClipRanker::rank(QVector<ClipCandidate> candidates, const
 	return rankWithMmr(std::move(candidates), options);
 }
 
-QVector<ClipCandidate> ClipRanker::rankGreedy(QVector<ClipCandidate> candidates,
-	const ClipRankerOptions &options) const
+QVector<ClipCandidate> ClipRanker::rankGreedy(QVector<ClipCandidate> candidates, const ClipRankerOptions &options) const
 {
 	QVector<WeightedIntervalCandidate> intervals;
 	intervals.reserve(candidates.size());
@@ -111,14 +114,16 @@ QVector<ClipCandidate> ClipRanker::rankGreedy(QVector<ClipCandidate> candidates,
 	const QVector<int> selectedIndexes = selector.select(intervals, selectionOptions);
 
 	QVector<ClipCandidate> selected;
-	selected.reserve(std::min(static_cast<long long>(options.maxCandidates), static_cast<long long>(selectedIndexes.size())));
+	selected.reserve(std::min(static_cast<long long>(options.maxCandidates),
+				  static_cast<long long>(selectedIndexes.size())));
 	for (const int index : selectedIndexes) {
 		if (index < 0 || index >= static_cast<int>(candidates.size()))
 			continue;
 		ClipCandidate selectedCandidate = candidates.at(index);
 		selectedCandidate.selectedRank = static_cast<int>(selected.size()) + 1;
 		selectedCandidate.evidence.append(QStringLiteral("optimal_interval_dp_selected"));
-		selectedCandidate.evidence.append(QStringLiteral("selected_rank:%1").arg(selectedCandidate.selectedRank));
+		selectedCandidate.evidence.append(
+			QStringLiteral("selected_rank:%1").arg(selectedCandidate.selectedRank));
 		selectedCandidate.evidence.removeDuplicates();
 		selected.append(selectedCandidate);
 	}
@@ -130,10 +135,11 @@ QVector<ClipCandidate> ClipRanker::rankGreedy(QVector<ClipCandidate> candidates,
 }
 
 QVector<ClipCandidate> ClipRanker::rankWithMmr(QVector<ClipCandidate> candidates,
-	const ClipRankerOptions &options) const
+					       const ClipRankerOptions &options) const
 {
 	QVector<ClipCandidate> selected;
-	selected.reserve(std::min(static_cast<long long>(options.maxCandidates), static_cast<long long>(candidates.size())));
+	selected.reserve(
+		std::min(static_cast<long long>(options.maxCandidates), static_cast<long long>(candidates.size())));
 
 	while (!candidates.isEmpty() && static_cast<int>(selected.size()) < options.maxCandidates) {
 		int bestIndex = -1;
@@ -163,11 +169,12 @@ QVector<ClipCandidate> ClipRanker::rankWithMmr(QVector<ClipCandidate> candidates
 		selectedCandidate.selectedMmrScore = bestMmrScore;
 		selectedCandidate.selectedMmrSimilarity = bestSimilarity;
 		selectedCandidate.evidence.append(QStringLiteral("mmr_diversity_selected"));
-		selectedCandidate.evidence.append(QStringLiteral("selected_rank:%1").arg(selectedCandidate.selectedRank));
+		selectedCandidate.evidence.append(
+			QStringLiteral("selected_rank:%1").arg(selectedCandidate.selectedRank));
 		selectedCandidate.evidence.append(QStringLiteral("mmr:%1").arg(QString::number(bestMmrScore, 'f', 2)));
 		if (!selected.isEmpty())
-			selectedCandidate.evidence.append(QStringLiteral("mmr_similarity:%1")
-							.arg(QString::number(bestSimilarity, 'f', 2)));
+			selectedCandidate.evidence.append(
+				QStringLiteral("mmr_similarity:%1").arg(QString::number(bestSimilarity, 'f', 2)));
 		selectedCandidate.evidence.removeDuplicates();
 		selected.append(selectedCandidate);
 	}
@@ -179,7 +186,7 @@ QVector<ClipCandidate> ClipRanker::rankWithMmr(QVector<ClipCandidate> candidates
 }
 
 bool ClipRanker::rangesOverlapTooMuch(const ClipDuration &left, const ClipDuration &right,
-					      double overlapToleranceSec) const
+				      double overlapToleranceSec) const
 {
 	const double overlap = std::min(left.endSec, right.endSec) - std::max(left.startSec, right.startSec);
 	if (overlap <= overlapToleranceSec)
@@ -201,8 +208,8 @@ bool ClipRanker::rangesAreTooClose(const ClipDuration &left, const ClipDuration 
 	return std::fabs(leftCenter - rightCenter) < minSpacingSec;
 }
 
-bool ClipRanker::candidateConflictsWithSelected(const ClipCandidate &candidate,
-	const QVector<ClipCandidate> &selected, const ClipRankerOptions &options) const
+bool ClipRanker::candidateConflictsWithSelected(const ClipCandidate &candidate, const QVector<ClipCandidate> &selected,
+						const ClipRankerOptions &options) const
 {
 	for (const ClipCandidate &selectedCandidate : selected) {
 		if (rangesOverlapTooMuch(candidate.range, selectedCandidate.range, options.overlapToleranceSec) ||
@@ -220,7 +227,7 @@ double ClipRanker::relevanceScore(const ClipCandidate &candidate) const
 }
 
 double ClipRanker::mmrScore(const ClipCandidate &candidate, const QVector<ClipCandidate> &selected,
-	const ClipRankerOptions &options, double *maxSimilarity) const
+			    const ClipRankerOptions &options, double *maxSimilarity) const
 {
 	const double relevanceWeight = std::clamp(options.mmrRelevanceWeight, 0.05, 0.95);
 	const double relevance = relevanceScore(candidate);
@@ -234,7 +241,7 @@ double ClipRanker::mmrScore(const ClipCandidate &candidate, const QVector<ClipCa
 }
 
 double ClipRanker::candidateSimilarity(const ClipCandidate &left, const ClipCandidate &right,
-	const ClipRankerOptions &options) const
+				       const ClipRankerOptions &options) const
 {
 	const double temporalWeight = std::clamp(options.mmrTemporalSimilarityWeight, 0.0, 1.0);
 	const double textWeight = std::clamp(options.mmrTextSimilarityWeight, 0.0, 1.0);
@@ -245,12 +252,13 @@ double ClipRanker::candidateSimilarity(const ClipCandidate &left, const ClipCand
 }
 
 double ClipRanker::temporalSimilarity(const ClipDuration &left, const ClipDuration &right,
-	const ClipRankerOptions &options) const
+				      const ClipRankerOptions &options) const
 {
 	const double leftDuration = std::max(0.0, left.endSec - left.startSec);
 	const double rightDuration = std::max(0.0, right.endSec - right.startSec);
 	const double shorter = std::min(leftDuration, rightDuration);
-	const double overlap = std::max(0.0, std::min(left.endSec, right.endSec) - std::max(left.startSec, right.startSec));
+	const double overlap =
+		std::max(0.0, std::min(left.endSec, right.endSec) - std::max(left.startSec, right.startSec));
 	double overlapSimilarity = 0.0;
 	if (shorter > 0.0)
 		overlapSimilarity = boundedScore(overlap / shorter);
@@ -258,8 +266,9 @@ double ClipRanker::temporalSimilarity(const ClipDuration &left, const ClipDurati
 	const double leftCenter = left.startSec + (leftDuration * 0.5);
 	const double rightCenter = right.startSec + (rightDuration * 0.5);
 	const double centerDistance = std::fabs(leftCenter - rightCenter);
-	const double spacingReference = options.minSpacingSec > 0.0 ? options.minSpacingSec :
-		std::max(30.0, (leftDuration + rightDuration) * 0.75);
+	const double spacingReference = options.minSpacingSec > 0.0
+						? options.minSpacingSec
+						: std::max(30.0, (leftDuration + rightDuration) * 0.75);
 	const double proximitySimilarity = boundedScore(1.0 - (centerDistance / spacingReference));
 	return std::max(overlapSimilarity, proximitySimilarity * 0.65);
 }

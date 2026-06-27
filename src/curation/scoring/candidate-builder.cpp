@@ -14,11 +14,10 @@ double boundedScore(double value)
 } // namespace
 
 ClipCandidate CandidateBuilder::buildForRange(const TranscriptIndex &index,
-	const CandidateGenerationOptions &generation,
-	const CheapScoringContext &scoring,
-	const CandidateQualityGateOptions &qualityGate,
-	const ClipDuration &range,
-	const SemanticCoarseRegion &region)
+					      const CandidateGenerationOptions &generation,
+					      const CheapScoringContext &scoring,
+					      const CandidateQualityGateOptions &qualityGate, const ClipDuration &range,
+					      const SemanticCoarseRegion &region)
 {
 	ClipCandidate candidate;
 	candidate.range = index.clampRange(range, generation.searchRange);
@@ -37,27 +36,25 @@ ClipCandidate CandidateBuilder::buildForRange(const TranscriptIndex &index,
 }
 
 ClipCandidate CandidateBuilder::buildForSegmentWindow(const TranscriptIndex &index,
-	const CandidateGenerationOptions &generation,
-	const CheapScoringContext &scoring,
-	const CandidateQualityGateOptions &qualityGate,
-	int firstIndex,
-	int lastIndex,
-	const SemanticCoarseRegion &region)
+						      const CandidateGenerationOptions &generation,
+						      const CheapScoringContext &scoring,
+						      const CandidateQualityGateOptions &qualityGate, int firstIndex,
+						      int lastIndex, const SemanticCoarseRegion &region)
 {
 	const TranscriptSegment *firstSegment = index.segmentAt(firstIndex);
 	const TranscriptSegment *lastSegment = index.segmentAt(lastIndex);
 	if (!firstSegment || !lastSegment || lastIndex < firstIndex)
 		return {};
-	return buildForRange(index, generation, scoring, qualityGate, {firstSegment->startSec, lastSegment->endSec}, region);
+	return buildForRange(index, generation, scoring, qualityGate, {firstSegment->startSec, lastSegment->endSec},
+			     region);
 }
 
 ClipCandidate CandidateBuilder::buildVariantFromSeed(const TranscriptIndex &index,
-	const CandidateGenerationOptions &generation,
-	const CheapScoringContext &scoring,
-	const CandidateQualityGateOptions &qualityGate,
-	const ClipCandidate &seed,
-	const ClipDuration &range,
-	const QString &variantEvidence)
+						     const CandidateGenerationOptions &generation,
+						     const CheapScoringContext &scoring,
+						     const CandidateQualityGateOptions &qualityGate,
+						     const ClipCandidate &seed, const ClipDuration &range,
+						     const QString &variantEvidence)
 {
 	ClipCandidate candidate;
 	candidate.range = index.clampRange(range, generation.searchRange);
@@ -67,7 +64,7 @@ ClipCandidate CandidateBuilder::buildVariantFromSeed(const TranscriptIndex &inde
 	candidate.timedText = index.timedTextForRange(candidate.range);
 	candidate.anchorText = candidate.text.left(220);
 	candidate.source = seed.source.trimmed().isEmpty() ? QStringLiteral("semantic_beam_variant")
-		: seed.source + QStringLiteral("_beam");
+							   : seed.source + QStringLiteral("_beam");
 	candidate.startsNearViewerCue = seed.startsNearViewerCue;
 	candidate.endsBeforeNextCue = seed.endsBeforeNextCue;
 	candidate.hasReliableMainTarget = seed.hasReliableMainTarget;
@@ -76,10 +73,10 @@ ClipCandidate CandidateBuilder::buildVariantFromSeed(const TranscriptIndex &inde
 	candidate.evidence.append(QStringLiteral("candidate_beam_variant"));
 	candidate.evidence.append(variantEvidence);
 	const bool seedWasPositiveExact = seed.source == QStringLiteral("feedback_positive_exact_seed") ||
-		seed.evidence.contains(QStringLiteral("feedback_positive_exact_seed"));
+					  seed.evidence.contains(QStringLiteral("feedback_positive_exact_seed"));
 	if (seedWasPositiveExact) {
 		const bool sameRange = std::fabs(seed.range.startSec - candidate.range.startSec) <= 0.75 &&
-			std::fabs(seed.range.endSec - candidate.range.endSec) <= 0.75;
+				       std::fabs(seed.range.endSec - candidate.range.endSec) <= 0.75;
 		if (sameRange) {
 			candidate.source = QStringLiteral("feedback_positive_exact_seed");
 			candidate.evidence.append(QStringLiteral("feedback_positive_exact_seed_preserved"));
@@ -105,29 +102,32 @@ ClipCandidate CandidateBuilder::scoreStructurally(const TranscriptIndex &index, 
 	scored.scores.pauseAfterSec = index.silenceAfterRange(scored.range);
 	scored.scores.maxInternalPauseSec = index.maxInternalSilenceInRange(scored.range);
 	scored.scores.pauseBoundary = boundedScore((std::min(scored.scores.pauseBeforeSec, 4.0) * 0.12) +
-		(std::min(scored.scores.pauseAfterSec, 4.0) * 0.18));
+						   (std::min(scored.scores.pauseAfterSec, 4.0) * 0.18));
 	scored.scores.boundary = boundedScore(boundaryScore(index, scored) + (scored.scores.pauseBoundary * 0.18));
 	const double coarseScore = scored.scores.coarseSemantic;
-	const double charsPerSecond = durationSec > 0.0 ? static_cast<double>(scored.text.trimmed().size()) / durationSec : 0.0;
+	const double charsPerSecond =
+		durationSec > 0.0 ? static_cast<double>(scored.text.trimmed().size()) / durationSec : 0.0;
 	const double textDensityScore = boundedScore(charsPerSecond / 8.0);
 	scored.scores.final = boundedScore((coarseScore * 0.34) + (scored.scores.boundary * 0.26) +
-		(scored.scores.duration * 0.22) + (textDensityScore * 0.18));
+					   (scored.scores.duration * 0.22) + (textDensityScore * 0.18));
 	if (textDensityScore >= 0.55)
 		scored.evidence.append(QStringLiteral("speech_density_ok"));
 	if (scored.scores.boundary >= 0.7)
 		scored.evidence.append(QStringLiteral("clean_boundary"));
 	if (scored.scores.pauseAfterSec >= 3.0)
-		scored.evidence.append(QStringLiteral("pause_after:%1").arg(QString::number(scored.scores.pauseAfterSec, 'f', 1)));
+		scored.evidence.append(
+			QStringLiteral("pause_after:%1").arg(QString::number(scored.scores.pauseAfterSec, 'f', 1)));
 	if (scored.scores.maxInternalPauseSec >= 2.0)
-		scored.evidence.append(QStringLiteral("internal_pause:%1").arg(QString::number(scored.scores.maxInternalPauseSec, 'f', 1)));
+		scored.evidence.append(QStringLiteral("internal_pause:%1")
+					       .arg(QString::number(scored.scores.maxInternalPauseSec, 'f', 1)));
 	scored.evidence.append(QStringLiteral("structural_score_only"));
 	scored.evidence.removeDuplicates();
 	return scored;
 }
 
 bool CandidateBuilder::isStructurallyViable(const ClipCandidate &candidate,
-	const CandidateGenerationOptions &generation,
-	const CandidateQualityGateOptions &qualityGate)
+					    const CandidateGenerationOptions &generation,
+					    const CandidateQualityGateOptions &qualityGate)
 {
 	const double durationSec = candidate.range.endSec - candidate.range.startSec;
 	if (durationSec < generation.minDurationSec || durationSec > generation.maxDurationSec + 3.0)
@@ -144,8 +144,8 @@ bool CandidateBuilder::isStructurallyViable(const ClipCandidate &candidate,
 }
 
 QVector<ClipCandidate> CandidateBuilder::enforceSemanticAvailability(QVector<ClipCandidate> candidates,
-	bool requireSemanticScoring,
-	bool embeddingProviderConfigured)
+								     bool requireSemanticScoring,
+								     bool embeddingProviderConfigured)
 {
 	if (!requireSemanticScoring || !embeddingProviderConfigured)
 		return candidates;

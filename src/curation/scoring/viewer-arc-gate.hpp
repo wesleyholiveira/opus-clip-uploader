@@ -21,13 +21,13 @@ struct ViewerArcGateOptions {
 class ViewerArcGate {
 public:
 	void recoverMissingOpenings(const TranscriptIndex &index, QVector<ClipCandidate> &candidates,
-		const ViewerArcGateOptions &options) const;
+				    const ViewerArcGateOptions &options) const;
 	QVector<ClipCandidate> apply(QVector<ClipCandidate> candidates, const ViewerArcGateOptions &options) const;
 	bool hasCompleteArc(const ClipCandidate &candidate, const ViewerArcGateOptions &options) const;
 
 private:
 	bool recoverMissingOpening(const TranscriptIndex &index, ClipCandidate &candidate,
-		const ViewerArcGateOptions &options) const;
+				   const ViewerArcGateOptions &options) const;
 	bool shouldAttemptOpeningRecovery(const ClipCandidate &candidate, const ViewerArcGateOptions &options) const;
 	bool looksLikeViewerOriginText(const QString &rawText) const;
 	bool isUserAcceptedFeedbackSeed(const ClipCandidate &candidate) const;
@@ -37,7 +37,8 @@ private:
 	bool hasExplicitViewerOrigin(const ClipCandidate &candidate) const;
 	bool hasLearnedFeedbackArcSupport(const ClipCandidate &candidate) const;
 	bool hasDirectPositiveFeedbackArcSupport(const ClipCandidate &candidate) const;
-	bool hasSelfContainedAdviceArcSupport(const ClipCandidate &candidate, const ViewerArcGateOptions &options) const;
+	bool hasSelfContainedAdviceArcSupport(const ClipCandidate &candidate,
+					      const ViewerArcGateOptions &options) const;
 	QString invalidReason(const ClipCandidate &candidate) const;
 	double calibratedMinArcConfidence(const ViewerArcGateOptions &options) const;
 };

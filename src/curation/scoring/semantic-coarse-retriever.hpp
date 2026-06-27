@@ -52,22 +52,21 @@ struct SemanticCoarseRegion {
 class SemanticCoarseRetriever {
 public:
 	QVector<SemanticCoarseRegion> retrieve(const TranscriptIndex &index,
-						 const SemanticCoarseRetrievalContext &context,
-						 const SemanticCoarseRetrievalOptions &options,
-						 const SemanticEmbeddingProvider *provider) const;
+					       const SemanticCoarseRetrievalContext &context,
+					       const SemanticCoarseRetrievalOptions &options,
+					       const SemanticEmbeddingProvider *provider) const;
 
 private:
 	QVector<ClipDuration> buildWindows(const TranscriptIndex &index,
-					      const SemanticCoarseRetrievalOptions &options) const;
+					   const SemanticCoarseRetrievalOptions &options) const;
 	QStringList prototypesForContext(const SemanticCoarseRetrievalContext &context,
-					       const SemanticPrototypeSet &prototypes,
-					       int maxPrototypeTexts) const;
-	double maxSimilarity(const SemanticEmbedding &embedding,
-				     const QVector<SemanticEmbedding> &prototypes) const;
+					 const SemanticPrototypeSet &prototypes, int maxPrototypeTexts) const;
+	double maxSimilarity(const SemanticEmbedding &embedding, const QVector<SemanticEmbedding> &prototypes) const;
 	double scoreForWindow(double targetScore, double viewerScore, double directAnswerScore, double clipValueScore,
-			      double noiseScore, double metaNoiseScore, const SemanticCoarseRetrievalContext &context) const;
+			      double noiseScore, double metaNoiseScore,
+			      const SemanticCoarseRetrievalContext &context) const;
 	ClipDuration paddedRegion(const ClipDuration &window, const TranscriptIndex &index,
-				       const SemanticCoarseRetrievalOptions &options) const;
+				  const SemanticCoarseRetrievalOptions &options) const;
 };
 
 } // namespace Curation::Scoring

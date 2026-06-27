@@ -255,7 +255,8 @@ static void clip_cropper_vertical_recording_stopped(void *data, calldata_t *cd)
 	UNUSED_PARAMETER(data);
 	UNUSED_PARAMETER(cd);
 
-	blog(LOG_INFO, "[clip-cropper] Vertical recording stopped. Ignoring dialog open to avoid duplicate upload review dialog.");
+	blog(LOG_INFO,
+	     "[clip-cropper] Vertical recording stopped. Ignoring dialog open to avoid duplicate upload review dialog.");
 }
 
 static QString obs_text(const char *key)

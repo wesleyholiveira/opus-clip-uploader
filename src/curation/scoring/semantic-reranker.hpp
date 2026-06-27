@@ -34,7 +34,7 @@ public:
 class SemanticRerankerStage {
 public:
 	QVector<ClipCandidate> apply(QVector<ClipCandidate> candidates, const SemanticRerankerContext &context,
-				       const SemanticRerankerOptions &options, const SemanticReranker *reranker) const;
+				     const SemanticRerankerOptions &options, const SemanticReranker *reranker) const;
 
 private:
 	QString queryForContext(const SemanticRerankerContext &context) const;

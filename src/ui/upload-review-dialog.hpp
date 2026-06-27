@@ -116,7 +116,8 @@ private:
 	bool collectStructuredFeedback(int row, const QString &decision, QJsonObject *outFeedback);
 	void setClipReviewDecision(int row, const QString &decision);
 	void setDiagnosticReviewDecision(int row, const QString &decision);
-	int ensureDiagnosticFeedbackSuggestion(int diagnosticIndex, const ClipDuration &range, const QJsonObject &diagnostic);
+	int ensureDiagnosticFeedbackSuggestion(int diagnosticIndex, const ClipDuration &range,
+					       const QJsonObject &diagnostic);
 	int suggestedIndexForRange(const ClipDuration &range) const;
 	int ensureFeedbackSuggestionForRange(const ClipDuration &range, const QString &source);
 	bool loadFeedbackTranscriptIfAvailable();

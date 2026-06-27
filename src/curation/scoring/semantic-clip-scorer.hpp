@@ -31,18 +31,19 @@ public:
 			    const SemanticScoringContext &context, const SemanticClipScoringOptions &options,
 			    const SemanticEmbeddingProvider *provider) const;
 	QVector<ClipCandidate> scoreBatch(const TranscriptIndex &index, const QVector<ClipCandidate> &candidates,
-					    const SemanticScoringContext &context, const SemanticClipScoringOptions &options,
-					    const SemanticEmbeddingProvider *provider) const;
+					  const SemanticScoringContext &context,
+					  const SemanticClipScoringOptions &options,
+					  const SemanticEmbeddingProvider *provider) const;
 
 private:
 	double maxPrototypeSimilarity(const SemanticEmbeddingProvider &provider, const SemanticEmbedding &textEmbedding,
 				      const QStringList &prototypes) const;
 	double topicContinuityByEmbedding(const TranscriptIndex &index, const ClipCandidate &candidate,
-				       const SemanticEmbeddingProvider &provider) const;
+					  const SemanticEmbeddingProvider &provider) const;
 	void scoreOpeningAndEnding(const TranscriptIndex &index, ClipCandidate &candidate,
-				       const SemanticEmbeddingProvider &provider, const QStringList &hookPrototypes,
-				       const QStringList &resolutionPrototypes, const QStringList &metaNoisePrototypes,
-				       const QStringList &topicShiftPrototypes) const;
+				   const SemanticEmbeddingProvider &provider, const QStringList &hookPrototypes,
+				   const QStringList &resolutionPrototypes, const QStringList &metaNoisePrototypes,
+				   const QStringList &topicShiftPrototypes) const;
 	double combineFinalScore(const ClipCandidate &candidate, const SemanticScoringContext &context) const;
 	QString firstHalfText(const TranscriptIndex &index, const ClipCandidate &candidate) const;
 	QString secondHalfText(const TranscriptIndex &index, const ClipCandidate &candidate) const;

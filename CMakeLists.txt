@@ -192,6 +192,14 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 	src/ui/advanced-settings-tree.hpp
 	src/ui/video-marker-editor.cpp
 	src/ui/video-marker-editor.hpp
+	src/ui/review/playback-icon-button.cpp
+	src/ui/review/playback-icon-button.hpp
+	src/ui/review/timeline-widget.cpp
+	src/ui/review/timeline-widget.hpp
+	src/ui/review/review-clip-table-widget.cpp
+	src/ui/review/review-clip-table-widget.hpp
+	src/ui/review/diagnostics-dialogs.cpp
+	src/ui/review/diagnostics-dialogs.hpp
 	src/ui/upload-review-dialog.cpp
 	src/ui/upload-review-dialog.hpp
 
@@ -200,6 +208,10 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 
 	src/curation/feedback/curation-feedback-store.cpp
 	src/curation/feedback/curation-feedback-store.hpp
+	src/curation/feedback/curation-feedback-detail.hpp
+	src/curation/feedback/curation-feedback-records.cpp
+	src/curation/feedback/curation-feedback-memory-rules.cpp
+	src/curation/feedback/curation-feedback-memory-conflicts.cpp
 	src/curation/feedback/boundary-calibration.cpp
 	src/curation/feedback/boundary-calibration.hpp
 	src/curation/scoring/text-analysis.cpp
@@ -223,6 +235,9 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 	src/curation/scoring/candidate-builder.hpp
 	src/curation/scoring/candidate-range-utils.cpp
 	src/curation/scoring/candidate-range-utils.hpp
+	src/curation/scoring/candidate-dedupe.hpp
+	src/curation/scoring/evidence-view.hpp
+	src/curation/scoring/parallel-chunk-map.hpp
 	src/curation/scoring/candidate-source-builder.cpp
 	src/curation/scoring/candidate-source-builder.hpp
 	src/curation/scoring/candidate-beam-expander.cpp
@@ -255,6 +270,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 	src/curation/scoring/embedding-cache.hpp
 	src/curation/scoring/llama-cpp-model-resolver.cpp
 	src/curation/scoring/llama-cpp-model-resolver.hpp
+	src/curation/scoring/llama-cpp-batch-wrapper.hpp
 	src/curation/scoring/llama-cpp-embedding-provider.cpp
 	src/curation/scoring/llama-cpp-embedding-provider.hpp
 	src/curation/scoring/llama-cpp-reranker-provider.cpp
@@ -273,12 +289,27 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 	src/curation/scoring/semantic-clip-scorer.hpp
 	src/curation/scoring/semantic-reranker.cpp
 	src/curation/scoring/semantic-reranker.hpp
+	src/curation/scoring/candidate-quality-rules.cpp
+	src/curation/scoring/candidate-quality-rules.hpp
 	src/curation/scoring/candidate-quality-gate.cpp
 	src/curation/scoring/candidate-quality-gate.hpp
+	src/curation/scoring/candidate-quality-gate-recovery.cpp
+	src/curation/scoring/candidate-quality-gate-support.cpp
+	src/curation/scoring/candidate-quality-gate-shape.cpp
 	src/curation/scoring/arc-dp-boundary-refiner.cpp
 	src/curation/scoring/arc-dp-boundary-refiner.hpp
 	src/curation/scoring/exchange-arc-boundary-refiner.cpp
 	src/curation/scoring/exchange-arc-boundary-refiner.hpp
+	src/curation/scoring/internal/exchange-arc-boundary-refiner-viewer-cues.inc
+	src/curation/scoring/internal/exchange-arc-boundary-refiner-role-scoring.inc
+	src/curation/scoring/internal/exchange-arc-boundary-refiner-span-rules.inc
+	src/curation/scoring/internal/exchange-arc-boundary-refiner-recovery.inc
+	src/curation/scoring/internal/exchange-arc-boundary-refiner-evidence.inc
+	src/curation/scoring/clip-scoring-pipeline-detail.hpp
+	src/curation/scoring/clip-scoring-pipeline-diagnostics.cpp
+	src/curation/scoring/clip-scoring-pipeline-feedback-replay.cpp
+	src/curation/scoring/clip-scoring-pipeline-novelty-exploration.cpp
+	src/curation/scoring/clip-scoring-pipeline-option-mappers.cpp
 	src/curation/scoring/clip-scoring-pipeline.cpp
 	src/curation/scoring/clip-scoring-pipeline.hpp
 	src/curation/curation-preset.cpp
@@ -724,16 +755,10 @@ if (WIN32)
 		DESTINATION "data/obs-plugins/${OBS_PLUGIN_NAME}"
 		PATTERN "models" EXCLUDE
 	)
-	install(DIRECTORY tools/
-		DESTINATION "data/obs-plugins/${OBS_PLUGIN_NAME}/tools"
-	)
 elseif (NOT APPLE)
 	install(DIRECTORY data/
 		DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/obs/obs-plugins/${OBS_PLUGIN_NAME}"
 		PATTERN "models" EXCLUDE
-	)
-	install(DIRECTORY tools/
-		DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/obs/obs-plugins/${OBS_PLUGIN_NAME}/tools"
 	)
 endif ()
 

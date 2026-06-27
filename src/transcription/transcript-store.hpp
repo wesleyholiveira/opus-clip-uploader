@@ -20,8 +20,9 @@ public:
 	static RecordingTranscript loadForVideoPath(const QString &videoPath);
 	static RecordingTranscript loadForVideoPath(const QString &videoPath, const QString &transcriptionLanguage);
 	static void saveAlignedForVideoPath(const QString &videoPath, const QString &transcriptionLanguage,
-					     const RecordingTranscript &transcript);
-	static RecordingTranscript loadAlignedForVideoPath(const QString &videoPath, const QString &transcriptionLanguage);
+					    const RecordingTranscript &transcript);
+	static RecordingTranscript loadAlignedForVideoPath(const QString &videoPath,
+							   const QString &transcriptionLanguage);
 	static void saveForVideoRanges(const QString &videoPath, const QString &transcriptionLanguage,
 				       const QVector<ClipDuration> &ranges, const RecordingTranscript &transcript);
 	static RecordingTranscript loadForVideoRanges(const QString &videoPath, const QString &transcriptionLanguage,

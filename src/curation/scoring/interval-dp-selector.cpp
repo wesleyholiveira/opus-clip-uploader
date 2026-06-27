@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <limits>
 #include <iterator>
 
 namespace Curation::Scoring {
@@ -21,40 +20,45 @@ static bool betterScore(double left, double right)
 
 } // namespace
 
-bool IntervalDpSelector::compatible(const WeightedIntervalCandidate &left,
-	const WeightedIntervalCandidate &right, const WeightedIntervalSelectionOptions &options) const
+bool IntervalDpSelector::compatible(const WeightedIntervalCandidate &left, const WeightedIntervalCandidate &right,
+				    const WeightedIntervalSelectionOptions &options) const
 {
-	const double overlap = std::min(left.range.endSec, right.range.endSec) -
-		std::max(left.range.startSec, right.range.startSec);
+	const double overlap =
+		std::min(left.range.endSec, right.range.endSec) - std::max(left.range.startSec, right.range.startSec);
 	if (overlap > options.overlapToleranceSec)
 		return false;
-	if (options.minSpacingSec > 0.0 && std::fabs(centerSec(left.range) - centerSec(right.range)) < options.minSpacingSec)
+	if (options.minSpacingSec > 0.0 &&
+	    std::fabs(centerSec(left.range) - centerSec(right.range)) < options.minSpacingSec)
 		return false;
 	return true;
 }
 
 QVector<int> IntervalDpSelector::select(const QVector<WeightedIntervalCandidate> &intervals,
-	const WeightedIntervalSelectionOptions &options) const
+					const WeightedIntervalSelectionOptions &options) const
 {
 	QVector<int> result;
 	if (intervals.isEmpty() || options.maxItems <= 0)
 		return result;
 
 	QVector<WeightedIntervalCandidate> sorted = intervals;
-	sorted.erase(std::remove_if(sorted.begin(), sorted.end(), [](const WeightedIntervalCandidate &candidate) {
-		return candidate.sourceIndex < 0 || candidate.range.endSec <= candidate.range.startSec || !std::isfinite(candidate.score);
-	}), sorted.end());
+	sorted.erase(std::remove_if(sorted.begin(), sorted.end(),
+				    [](const WeightedIntervalCandidate &candidate) {
+					    return candidate.sourceIndex < 0 ||
+						   candidate.range.endSec <= candidate.range.startSec ||
+						   !std::isfinite(candidate.score);
+				    }),
+		     sorted.end());
 	if (sorted.isEmpty())
 		return result;
 
-	std::sort(sorted.begin(), sorted.end(), [](const WeightedIntervalCandidate &left,
-		const WeightedIntervalCandidate &right) {
-		if (std::fabs(left.range.endSec - right.range.endSec) > 0.0001)
-			return left.range.endSec < right.range.endSec;
-		if (std::fabs(left.range.startSec - right.range.startSec) > 0.0001)
-			return left.range.startSec < right.range.startSec;
-		return left.score > right.score;
-	});
+	std::sort(sorted.begin(), sorted.end(),
+		  [](const WeightedIntervalCandidate &left, const WeightedIntervalCandidate &right) {
+			  if (std::fabs(left.range.endSec - right.range.endSec) > 0.0001)
+				  return left.range.endSec < right.range.endSec;
+			  if (std::fabs(left.range.startSec - right.range.startSec) > 0.0001)
+				  return left.range.startSec < right.range.startSec;
+			  return left.score > right.score;
+		  });
 
 	const int n = static_cast<int>(sorted.size());
 	const int limit = std::min(std::max(1, options.maxItems), n);

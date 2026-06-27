@@ -13,7 +13,6 @@ extern "C" {
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
-#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>

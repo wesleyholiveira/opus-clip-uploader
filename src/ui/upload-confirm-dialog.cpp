@@ -4,7 +4,6 @@
 #include "ui/upload-flow.hpp"
 #include "ui/upload-review-dialog.hpp"
 
-
 #include <obs-frontend-api.h>
 #include <obs-module.h>
 #include <plugin-support.h>
@@ -80,28 +79,26 @@ static void start_reviewed_upload(QWidget *parent, const QStringList &paths, con
 }
 
 static void upload_after_review(QWidget *parent, const QStringList &paths, const QString &apiKey,
-                                const CurationSettings &curationSettings)
+				const CurationSettings &curationSettings)
 {
 	if (paths.isEmpty()) {
 		clear_pending_recording_paths();
 		return;
 	}
 
-	blog(LOG_INFO, "Opening Opus upload progress dialog after review: %s",
-	     paths.first().toUtf8().constData());
+	blog(LOG_INFO, "Opening Opus upload progress dialog after review: %s", paths.first().toUtf8().constData());
 	start_reviewed_upload(parent, paths, apiKey, curationSettings);
 }
 
 static void open_review_and_upload_with_settings(QWidget *parent, const QStringList &paths, const QString &apiKey,
-							  const CurationSettings &initialSettings)
+						 const CurationSettings &initialSettings)
 {
 	if (paths.isEmpty()) {
 		clear_pending_recording_paths();
 		return;
 	}
 
-	blog(LOG_INFO, "Opening upload review dialog before Opus upload flow: %s",
-	     paths.first().toUtf8().constData());
+	blog(LOG_INFO, "Opening upload review dialog before Opus upload flow: %s", paths.first().toUtf8().constData());
 
 	UploadReviewDialog reviewDialog(paths.first(), initialSettings, false, parent);
 
@@ -130,75 +127,21 @@ static void open_review_and_upload(QWidget *parent, const QStringList &paths, co
 
 void open_confirm_dialog_impl(void *private_data)
 {
-
 	UNUSED_PARAMETER(private_data);
 
 	if (confirmDialogActive) {
-		blog(LOG_INFO, "Upload confirm dialog is already open. Ignoring duplicate request.");
+		blog(LOG_INFO, "Upload review dialog is already open. Ignoring duplicate request.");
 		return;
 	}
 
 	const QStringList paths = get_recording_paths_for_upload();
-
 	if (paths.isEmpty()) {
-		blog(LOG_INFO, "No pending recording paths. Upload confirm dialog will not be shown.");
+		blog(LOG_INFO, "No pending recording paths. Review dialog will not be shown.");
 		return;
 	}
-
-	confirmDialogActive = true;
-	struct ConfirmDialogGuard {
-		~ConfirmDialogGuard() { confirmDialogActive = false; }
-	} guard;
 
 	QWidget *parent = reinterpret_cast<QWidget *>(obs_frontend_get_main_window());
-
-	QDialog confirmDialog(parent);
-	confirmDialog.setWindowTitle(title + " - " + obsText("Dialog.ConfirmUploadTitle"));
-
-	QVBoxLayout *mainLayout = new QVBoxLayout(&confirmDialog);
-	mainLayout->setContentsMargins(22, 16, 22, 16);
-	mainLayout->setSpacing(8);
-
-	QLabel *label = new QLabel(obsText("Dialog.ConfirmUploadQuestion"), &confirmDialog);
-	label->setWordWrap(true);
-	mainLayout->addWidget(label);
-
-	QPushButton *btnUpload = new QPushButton(obsText("Button.Yes"), &confirmDialog);
-	QPushButton *btnCancel = new QPushButton(obsText("Button.No"), &confirmDialog);
-
-	btnUpload->setMinimumHeight(32);
-	btnCancel->setMinimumHeight(32);
-
-	QHBoxLayout *btnLayout = new QHBoxLayout();
-	btnLayout->setSpacing(12);
-	btnLayout->addWidget(btnUpload);
-	btnLayout->addWidget(btnCancel);
-
-	mainLayout->addLayout(btnLayout);
-
-	confirmDialog.setMinimumWidth(520);
-	confirmDialog.adjustSize();
-	confirmDialog.resize(confirmDialog.sizeHint());
-
-	bool uploadRequested = false;
-
-	QObject::connect(btnCancel, &QPushButton::clicked, &confirmDialog, [&confirmDialog]() {
-		blog(LOG_INFO, "Fechando Dialog de Upload");
-		confirmDialog.reject();
-	});
-
-	QObject::connect(btnUpload, &QPushButton::clicked, &confirmDialog, [&confirmDialog, &uploadRequested]() {
-		uploadRequested = true;
-		confirmDialog.accept();
-	});
-
-	if (confirmDialog.exec() != QDialog::Accepted || !uploadRequested) {
-		clear_pending_recording_paths();
-		return;
-	}
-
 	const QString apiKey = get_opus_api_key();
-
 	if (apiKey.trimmed().isEmpty()) {
 		clear_pending_recording_paths();
 		QMessageBox::warning(parent, title, obsText("Message.ConfigureApiKeyInSettings"));
@@ -206,5 +149,11 @@ void open_confirm_dialog_impl(void *private_data)
 		return;
 	}
 
+	confirmDialogActive = true;
+	struct ReviewDialogGuard {
+		~ReviewDialogGuard() { confirmDialogActive = false; }
+	} guard;
+
+	blog(LOG_INFO, "Opening review dialog directly. Skipping legacy upload confirmation dialog.");
 	open_review_and_upload(parent, paths, apiKey);
 }

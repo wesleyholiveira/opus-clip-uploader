@@ -90,6 +90,7 @@ private:
 	QLabel *currentTimeLabel = nullptr;
 	QLabel *durationTimeLabel = nullptr;
 	QLabel *selectedClipLabel = nullptr;
+	QLabel *seekStatusLabel = nullptr;
 
 	QVector<double> clipMarkersSec;
 

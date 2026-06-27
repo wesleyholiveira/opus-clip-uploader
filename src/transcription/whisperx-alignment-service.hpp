@@ -11,13 +11,15 @@ namespace Transcription {
 class WhisperXAlignmentService {
 public:
 	RecordingTranscript transcribeVideo(const QString &videoPath, const QString &language,
-		const WhisperXSettings &settings, const TranscriptionProgressCallback &progressCallback = {},
-		const TranscriptionCancelCallback &cancelCallback = {}) const;
+					    const WhisperXSettings &settings,
+					    const TranscriptionProgressCallback &progressCallback = {},
+					    const TranscriptionCancelCallback &cancelCallback = {}) const;
 
 	RecordingTranscript alignVideoTranscript(const QString &videoPath, const QString &language,
-		const RecordingTranscript &baseTranscript, const WhisperXSettings &settings,
-		const TranscriptionProgressCallback &progressCallback = {},
-		const TranscriptionCancelCallback &cancelCallback = {}) const;
+						 const RecordingTranscript &baseTranscript,
+						 const WhisperXSettings &settings,
+						 const TranscriptionProgressCallback &progressCallback = {},
+						 const TranscriptionCancelCallback &cancelCallback = {}) const;
 };
 
 } // namespace Transcription

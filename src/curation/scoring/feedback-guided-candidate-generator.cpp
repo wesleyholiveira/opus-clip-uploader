@@ -30,7 +30,7 @@ static double durationSec(const ClipDuration &range)
 }
 
 static ClipDuration clampToGeneration(const TranscriptIndex &index, const CandidateGenerationOptions &options,
-	ClipDuration range)
+				      ClipDuration range)
 {
 	range = index.clampRange(range, options.searchRange);
 	const double duration = durationSec(range);
@@ -65,12 +65,13 @@ static double rangeOverlapSec(const ClipDuration &a, const ClipDuration &b)
 
 static bool isIgnoredOrWeakDiagnosticSignal(const Curation::Feedback::FeedbackRangeSignal &signal)
 {
-	return signal.ignoreForTraining || signal.weakNegative || signal.decision == QStringLiteral("ignored_diagnostic") ||
+	return signal.ignoreForTraining || signal.weakNegative ||
+	       signal.decision == QStringLiteral("ignored_diagnostic") ||
 	       signal.reason.contains(QStringLiteral("ignore"), Qt::CaseInsensitive);
 }
 
 static bool overlapsIgnoredDiagnosticNeighborhood(const ClipDuration &range,
-	const Curation::Feedback::FeedbackRangeMemory &memory)
+						  const Curation::Feedback::FeedbackRangeMemory &memory)
 {
 	if (memory.ignoredDiagnosticSignals <= 0)
 		return false;
@@ -90,7 +91,7 @@ static bool overlapsIgnoredDiagnosticNeighborhood(const ClipDuration &range,
 }
 
 static bool rangeMatchesReviewedFeedbackNeighborhood(const ClipDuration &range,
-	const Curation::Feedback::FeedbackRangeSignal &signal)
+						     const Curation::Feedback::FeedbackRangeSignal &signal)
 {
 	if (!validRange(range) || !validRange(signal.range))
 		return false;
@@ -99,14 +100,14 @@ static bool rangeMatchesReviewedFeedbackNeighborhood(const ClipDuration &range,
 	if (rangeDistance(range, signal.range) <= 24.0)
 		return true;
 	const double centerDistance = std::fabs(((range.startSec + range.endSec) * 0.5) -
-		((signal.range.startSec + signal.range.endSec) * 0.5));
+						((signal.range.startSec + signal.range.endSec) * 0.5));
 	const double minDuration = std::min(durationSec(range), durationSec(signal.range));
 	return centerDistance <= 30.0 && minDuration > 0.0 &&
 	       rangeOverlapSec(range, signal.range) >= std::max(8.0, minDuration * 0.55);
 }
 
 static bool overlapsReviewedFeedbackNeighborhood(const ClipDuration &range,
-	const Curation::Feedback::FeedbackRangeMemory &memory)
+						 const Curation::Feedback::FeedbackRangeMemory &memory)
 {
 	if (!memory.loaded)
 		return false;
@@ -131,7 +132,7 @@ static ClipDuration rangeForSegmentWindow(const TranscriptIndex &index, int firs
 }
 
 static bool similarSemanticPrototypePositiveRange(const Curation::Feedback::FeedbackRangeSignal &left,
-	const Curation::Feedback::FeedbackRangeSignal &right)
+						  const Curation::Feedback::FeedbackRangeSignal &right)
 {
 	if (!validRange(left.range) || !validRange(right.range))
 		return false;
@@ -140,7 +141,7 @@ static bool similarSemanticPrototypePositiveRange(const Curation::Feedback::Feed
 }
 
 static bool betterSemanticPrototypeRepresentative(const Curation::Feedback::FeedbackRangeSignal &candidate,
-	const Curation::Feedback::FeedbackRangeSignal &current)
+						  const Curation::Feedback::FeedbackRangeSignal &current)
 {
 	if (candidate.sequence != current.sequence)
 		return candidate.sequence > current.sequence;
@@ -149,8 +150,8 @@ static bool betterSemanticPrototypeRepresentative(const Curation::Feedback::Feed
 	return durationSec(candidate.range) > durationSec(current.range);
 }
 
-static QVector<Curation::Feedback::FeedbackRangeSignal> semanticPrototypeEligiblePositiveRanges(
-	const Curation::Feedback::FeedbackRangeMemory &memory)
+static QVector<Curation::Feedback::FeedbackRangeSignal>
+semanticPrototypeEligiblePositiveRanges(const Curation::Feedback::FeedbackRangeMemory &memory)
 {
 	QVector<Curation::Feedback::FeedbackRangeSignal> representatives;
 	representatives.reserve(memory.positiveRanges.size());
@@ -179,7 +180,8 @@ static QVector<Curation::Feedback::FeedbackRangeSignal> semanticPrototypeEligibl
 	return representatives;
 }
 
-static int effectiveSemanticPrototypeSeedLimit(const FeedbackGuidedCandidateGenerationOptions &options, int clusterCount)
+static int effectiveSemanticPrototypeSeedLimit(const FeedbackGuidedCandidateGenerationOptions &options,
+					       int clusterCount)
 {
 	if (clusterCount <= 0)
 		return 0;
@@ -209,7 +211,6 @@ static int effectivePatternSeedLimit(const FeedbackGuidedCandidateGenerationOpti
 	return std::min(options.maxPatternSeeds, 40);
 }
 
-
 static int feedbackScanStride(const TranscriptIndex &index)
 {
 	if (index.size() >= 2200)
@@ -222,7 +223,7 @@ static int feedbackScanStride(const TranscriptIndex &index)
 }
 
 static bool cheaplyOverlapsHardNegative(const ClipDuration &range,
-	const Curation::Feedback::FeedbackRangeMemory &memory)
+					const Curation::Feedback::FeedbackRangeMemory &memory)
 {
 	for (const Curation::Feedback::FeedbackRangeSignal &negative : memory.negativeRanges) {
 		if (!validRange(negative.range))
@@ -246,19 +247,21 @@ static double cheapViewerTargetSignal(const QString &text)
 } // namespace
 
 bool FeedbackGuidedCandidateGenerator::similarSeedExists(const QVector<FeedbackGuidedCandidateSeed> &seeds,
-	const ClipDuration &range) const
+							 const ClipDuration &range) const
 {
 	for (const FeedbackGuidedCandidateSeed &seed : seeds) {
-		if (FeedbackSimilarityScorer::rangeSimilarity(seed.range, range) >= 0.72 || rangeDistance(seed.range, range) <= 5.0)
+		if (FeedbackSimilarityScorer::rangeSimilarity(seed.range, range) >= 0.72 ||
+		    rangeDistance(seed.range, range) <= 5.0)
 			return true;
 	}
 	return false;
 }
 
 bool FeedbackGuidedCandidateGenerator::appendSeed(QVector<FeedbackGuidedCandidateSeed> &seeds,
-	const TranscriptIndex &index, const Curation::Feedback::FeedbackRangeMemory &memory,
-	const FeedbackGuidedCandidateGenerationOptions &options,
-	FeedbackGuidedCandidateSeed seed) const
+						  const TranscriptIndex &index,
+						  const Curation::Feedback::FeedbackRangeMemory &memory,
+						  const FeedbackGuidedCandidateGenerationOptions &options,
+						  FeedbackGuidedCandidateSeed seed) const
 {
 	seed.range = clampToGeneration(index, options.generation, seed.range);
 	if (!validRange(seed.range) || !rangeFitsGeneration(seed.range, options.generation))
@@ -271,10 +274,12 @@ bool FeedbackGuidedCandidateGenerator::appendSeed(QVector<FeedbackGuidedCandidat
 		return false;
 
 	FeedbackSimilarityScorer scorer;
-	const FeedbackSimilarityFeatures features = scorer.scoreRange(seed.range, index.textForRange(seed.range), index, memory);
+	const FeedbackSimilarityFeatures features =
+		scorer.scoreRange(seed.range, index.textForRange(seed.range), index, memory);
 	if (features.negativeRangeContamination && features.negativeScore >= 0.68 && features.margin <= 0.08)
 		return false;
-	if (features.negativeRangeContamination && !features.explainedByPositiveRange && features.negativeScore >= features.positiveScore + 0.14)
+	if (features.negativeRangeContamination && !features.explainedByPositiveRange &&
+	    features.negativeScore >= features.positiveScore + 0.14)
 		return false;
 	if (features.negativeScore >= 0.62 && features.margin < -0.10)
 		return false;
@@ -287,8 +292,9 @@ bool FeedbackGuidedCandidateGenerator::appendSeed(QVector<FeedbackGuidedCandidat
 	return true;
 }
 
-void FeedbackGuidedCandidateGenerator::appendPositiveRangeSeeds(QVector<FeedbackGuidedCandidateSeed> &seeds,
-	const TranscriptIndex &index, const Curation::Feedback::FeedbackRangeMemory &memory,
+void FeedbackGuidedCandidateGenerator::appendPositiveRangeSeeds(
+	QVector<FeedbackGuidedCandidateSeed> &seeds, const TranscriptIndex &index,
+	const Curation::Feedback::FeedbackRangeMemory &memory,
 	const FeedbackGuidedCandidateGenerationOptions &options) const
 {
 	const QVector<Curation::Feedback::FeedbackRangeSignal> semanticPositives =
@@ -310,8 +316,10 @@ void FeedbackGuidedCandidateGenerator::appendPositiveRangeSeeds(QVector<Feedback
 			exact.priorScore = 0.86 + std::min(0.10, positive.weight * 0.04);
 			exact.evidence.append(QStringLiteral("feedback_positive_exact_seed"));
 			exact.evidence.append(QStringLiteral("feedback_positive_direct_replay_capped"));
-			exact.evidence.append(QStringLiteral("feedback_positive_decision:%1").arg(positive.decision.left(32)));
-			exact.evidence.append(QStringLiteral("feedback_positive_reason:%1").arg(positive.reason.left(96)));
+			exact.evidence.append(
+				QStringLiteral("feedback_positive_decision:%1").arg(positive.decision.left(32)));
+			exact.evidence.append(
+				QStringLiteral("feedback_positive_reason:%1").arg(positive.reason.left(96)));
 			if (appendSeed(seeds, index, memory, options, exact))
 				++exactAdded;
 		}
@@ -319,23 +327,24 @@ void FeedbackGuidedCandidateGenerator::appendPositiveRangeSeeds(QVector<Feedback
 		if (boundaryAdded >= options.maxBoundaryVariantSeeds)
 			continue;
 		const double duration = durationSec(positive.range);
-		const QVector<QPair<double, double>> variants = {
-			{ -3.0, 3.0 }, { -6.0, 4.0 }, { -4.0, 8.0 }, { 0.0, 6.0 }
-		};
+		const QVector<QPair<double, double>> variants = {{-3.0, 3.0}, {-6.0, 4.0}, {-4.0, 8.0}, {0.0, 6.0}};
 		int variantsAdded = 0;
 		for (const auto &variant : variants) {
-			if (variantsAdded >= maxBoundaryVariantsPerPositive || boundaryAdded >= options.maxBoundaryVariantSeeds)
+			if (variantsAdded >= maxBoundaryVariantsPerPositive ||
+			    boundaryAdded >= options.maxBoundaryVariantSeeds)
 				break;
 			if (duration < 12.0 && variant.first < -4.0)
 				continue;
 			FeedbackGuidedCandidateSeed seed;
-			seed.range = ClipDuration{positive.range.startSec + variant.first, positive.range.endSec + variant.second};
+			seed.range = ClipDuration{positive.range.startSec + variant.first,
+						  positive.range.endSec + variant.second};
 			seed.source = QStringLiteral("feedback_positive_boundary_variant");
 			seed.priorScore = 0.72;
 			seed.evidence.append(QStringLiteral("feedback_positive_boundary_variant"));
 			seed.evidence.append(QStringLiteral("feedback_positive_boundary_variant_capped"));
 			seed.evidence.append(QStringLiteral("feedback_boundary_variant_delta:%1/%2")
-				.arg(QString::number(variant.first, 'f', 1), QString::number(variant.second, 'f', 1)));
+						     .arg(QString::number(variant.first, 'f', 1),
+							  QString::number(variant.second, 'f', 1)));
 			if (appendSeed(seeds, index, memory, options, seed)) {
 				++variantsAdded;
 				++boundaryAdded;
@@ -344,8 +353,9 @@ void FeedbackGuidedCandidateGenerator::appendPositiveRangeSeeds(QVector<Feedback
 	}
 }
 
-void FeedbackGuidedCandidateGenerator::appendPrototypeSimilaritySeeds(QVector<FeedbackGuidedCandidateSeed> &seeds,
-	const TranscriptIndex &index, const Curation::Feedback::FeedbackRangeMemory &memory,
+void FeedbackGuidedCandidateGenerator::appendPrototypeSimilaritySeeds(
+	QVector<FeedbackGuidedCandidateSeed> &seeds, const TranscriptIndex &index,
+	const Curation::Feedback::FeedbackRangeMemory &memory,
 	const FeedbackGuidedCandidateGenerationOptions &options) const
 {
 	if (memory.positiveRanges.isEmpty() || index.isEmpty())
@@ -396,7 +406,8 @@ void FeedbackGuidedCandidateGenerator::appendPrototypeSimilaritySeeds(QVector<Fe
 			double bestPositive = 0.0;
 			QString bestReason;
 			for (const auto &prototype : prototypes) {
-				const double score = FeedbackSimilarityScorer::lexicalSimilarity(text, prototype.first) *
+				const double score =
+					FeedbackSimilarityScorer::lexicalSimilarity(text, prototype.first) *
 					std::max(0.05, prototype.second.weight);
 				if (score > bestPositive) {
 					bestPositive = score;
@@ -411,38 +422,42 @@ void FeedbackGuidedCandidateGenerator::appendPrototypeSimilaritySeeds(QVector<Fe
 			seed.source = QStringLiteral("feedback_positive_semantic_prototype");
 			seed.priorScore = 0.58 + std::min(0.24, std::max(0.0, bestPositive) * 0.42);
 			seed.evidence.append(QStringLiteral("feedback_positive_semantic_prototype"));
-			seed.evidence.append(QStringLiteral("feedback_prototype_similarity:%1").arg(QString::number(bestPositive, 'f', 2)));
+			seed.evidence.append(QStringLiteral("feedback_prototype_similarity:%1")
+						     .arg(QString::number(bestPositive, 'f', 2)));
 			seed.evidence.append(QStringLiteral("feedback_prototype_reason:%1").arg(bestReason.left(96)));
 			lexicalCandidates.append(ScoredSeed{seed, bestPositive});
 		}
 	}
 
-	std::sort(lexicalCandidates.begin(), lexicalCandidates.end(), [](const ScoredSeed &left, const ScoredSeed &right) {
-		return left.score > right.score;
-	});
+	std::sort(lexicalCandidates.begin(), lexicalCandidates.end(),
+		  [](const ScoredSeed &left, const ScoredSeed &right) { return left.score > right.score; });
 
-	const int semanticPrototypeLimit = effectiveSemanticPrototypeSeedLimit(options, static_cast<int>(semanticPositives.size()));
-	const int maxVerified = std::min(static_cast<int>(lexicalCandidates.size()), std::max(semanticPrototypeLimit * 4, 24));
+	const int semanticPrototypeLimit =
+		effectiveSemanticPrototypeSeedLimit(options, static_cast<int>(semanticPositives.size()));
+	const int maxVerified =
+		std::min(static_cast<int>(lexicalCandidates.size()), std::max(semanticPrototypeLimit * 4, 24));
 	QVector<ScoredSeed> verified;
 	verified.reserve(maxVerified);
 	FeedbackSimilarityScorer scorer;
 	for (int i = 0; i < maxVerified; ++i) {
 		ScoredSeed candidate = lexicalCandidates.at(i);
 		const QString text = index.textForRange(candidate.seed.range).left(1800);
-		const FeedbackSimilarityFeatures features = scorer.scoreRange(candidate.seed.range, text, index, memory);
-		const double score = std::max(candidate.score, features.positiveScore) - (features.negativeScore * 0.68);
+		const FeedbackSimilarityFeatures features =
+			scorer.scoreRange(candidate.seed.range, text, index, memory);
+		const double score =
+			std::max(candidate.score, features.positiveScore) - (features.negativeScore * 0.68);
 		if (score < 0.24 || features.negativeRangeContamination)
 			continue;
 		candidate.score = score;
-		candidate.seed.priorScore = std::max(candidate.seed.priorScore, 0.58 + std::min(0.24, std::max(0.0, score) * 0.42));
+		candidate.seed.priorScore =
+			std::max(candidate.seed.priorScore, 0.58 + std::min(0.24, std::max(0.0, score) * 0.42));
 		candidate.seed.evidence.append(features.evidence);
 		candidate.seed.evidence.removeDuplicates();
 		verified.append(candidate);
 	}
 
-	std::sort(verified.begin(), verified.end(), [](const ScoredSeed &left, const ScoredSeed &right) {
-		return left.score > right.score;
-	});
+	std::sort(verified.begin(), verified.end(),
+		  [](const ScoredSeed &left, const ScoredSeed &right) { return left.score > right.score; });
 	int added = 0;
 	for (const ScoredSeed &candidate : verified) {
 		if (static_cast<int>(seeds.size()) >= options.maxSeeds || added >= semanticPrototypeLimit)
@@ -456,9 +471,9 @@ void FeedbackGuidedCandidateGenerator::appendPrototypeSimilaritySeeds(QVector<Fe
 	     static_cast<long long>(timer.elapsed()));
 }
 
-
-void FeedbackGuidedCandidateGenerator::appendPatternSearchSeeds(QVector<FeedbackGuidedCandidateSeed> &seeds,
-	const TranscriptIndex &index, const Curation::Feedback::FeedbackRangeMemory &memory,
+void FeedbackGuidedCandidateGenerator::appendPatternSearchSeeds(
+	QVector<FeedbackGuidedCandidateSeed> &seeds, const TranscriptIndex &index,
+	const Curation::Feedback::FeedbackRangeMemory &memory,
 	const FeedbackGuidedCandidateGenerationOptions &options) const
 {
 	if (memory.positiveRanges.isEmpty() || index.isEmpty())
@@ -482,19 +497,17 @@ void FeedbackGuidedCandidateGenerator::appendPatternSearchSeeds(QVector<Feedback
 		return;
 	std::sort(durations.begin(), durations.end());
 	const double medianDuration = durations.at(durations.size() / 2);
-	QVector<double> templateDurations = {
-		medianDuration,
-		std::max(options.generation.minDurationSec, medianDuration * 0.75),
-		std::min(options.generation.maxDurationSec, medianDuration * 1.25)
-	};
+	QVector<double> templateDurations = {medianDuration,
+					     std::max(options.generation.minDurationSec, medianDuration * 0.75),
+					     std::min(options.generation.maxDurationSec, medianDuration * 1.25)};
 	if (durations.size() <= 3) {
 		templateDurations.append(durations.front());
 		templateDurations.append(durations.back());
 	}
 	std::sort(templateDurations.begin(), templateDurations.end());
-	templateDurations.erase(std::unique(templateDurations.begin(), templateDurations.end(), [](double a, double b) {
-		return std::fabs(a - b) < 2.0;
-	}), templateDurations.end());
+	templateDurations.erase(std::unique(templateDurations.begin(), templateDurations.end(),
+					    [](double a, double b) { return std::fabs(a - b) < 2.0; }),
+				templateDurations.end());
 
 	struct ScoredPatternSeed {
 		FeedbackGuidedCandidateSeed seed;
@@ -529,15 +542,18 @@ void FeedbackGuidedCandidateGenerator::appendPatternSearchSeeds(QVector<Feedback
 			seed.source = QStringLiteral("feedback_positive_pattern_search");
 			seed.priorScore = 0.54 + std::min(0.20, cheap * 0.25);
 			seed.evidence.append(QStringLiteral("feedback_positive_pattern_search"));
-			seed.evidence.append(QStringLiteral("feedback_pattern_cheap_score:%1").arg(QString::number(cheap, 'f', 2)));
-			seed.evidence.append(QStringLiteral("feedback_pattern_template_duration:%1").arg(QString::number(templateDuration, 'f', 1)));
+			seed.evidence.append(
+				QStringLiteral("feedback_pattern_cheap_score:%1").arg(QString::number(cheap, 'f', 2)));
+			seed.evidence.append(QStringLiteral("feedback_pattern_template_duration:%1")
+						     .arg(QString::number(templateDuration, 'f', 1)));
 			cheapCandidates.append(ScoredPatternSeed{seed, cheap, text.left(1800)});
 		}
 	}
 
-	std::sort(cheapCandidates.begin(), cheapCandidates.end(), [](const ScoredPatternSeed &left, const ScoredPatternSeed &right) {
-		return left.score > right.score;
-	});
+	std::sort(cheapCandidates.begin(), cheapCandidates.end(),
+		  [](const ScoredPatternSeed &left, const ScoredPatternSeed &right) {
+			  return left.score > right.score;
+		  });
 
 	const int patternLimit = effectivePatternSeedLimit(options, static_cast<int>(semanticPositives.size()));
 	const int maxVerified = std::min(static_cast<int>(cheapCandidates.size()), std::max(patternLimit * 5, 32));
@@ -546,7 +562,8 @@ void FeedbackGuidedCandidateGenerator::appendPatternSearchSeeds(QVector<Feedback
 	FeedbackSimilarityScorer scorer;
 	for (int i = 0; i < maxVerified; ++i) {
 		ScoredPatternSeed candidate = cheapCandidates.at(i);
-		const FeedbackSimilarityFeatures features = scorer.scoreRange(candidate.seed.range, candidate.text, index, memory);
+		const FeedbackSimilarityFeatures features =
+			scorer.scoreRange(candidate.seed.range, candidate.text, index, memory);
 		if (features.negativeRangeContamination || (features.negativeScore >= 0.55 && features.margin <= 0.02))
 			continue;
 
@@ -563,11 +580,13 @@ void FeedbackGuidedCandidateGenerator::appendPatternSearchSeeds(QVector<Feedback
 
 		candidate.score = score;
 		candidate.seed.priorScore = 0.54 + std::min(0.28, score * 0.34);
-		candidate.seed.evidence.append(QStringLiteral("feedback_pattern_score:%1").arg(QString::number(score, 'f', 2)));
+		candidate.seed.evidence.append(
+			QStringLiteral("feedback_pattern_score:%1").arg(QString::number(score, 'f', 2)));
 		if (exchange > 0.0)
 			candidate.seed.evidence.append(QStringLiteral("feedback_pattern_viewer_exchange_signal"));
 		if (features.positiveScore > 0.0)
-			candidate.seed.evidence.append(QStringLiteral("feedback_pattern_positive_similarity:%1").arg(QString::number(features.positiveScore, 'f', 2)));
+			candidate.seed.evidence.append(QStringLiteral("feedback_pattern_positive_similarity:%1")
+							       .arg(QString::number(features.positiveScore, 'f', 2)));
 		candidate.seed.evidence.append(features.evidence);
 		candidate.seed.evidence.removeDuplicates();
 		verified.append(candidate);
@@ -589,10 +608,10 @@ void FeedbackGuidedCandidateGenerator::appendPatternSearchSeeds(QVector<Feedback
 	     static_cast<int>(templateDurations.size()), static_cast<long long>(timer.elapsed()));
 }
 
-
-QVector<FeedbackGuidedCandidateSeed> FeedbackGuidedCandidateGenerator::generate(const TranscriptIndex &index,
-	const Curation::Feedback::FeedbackRangeMemory &memory,
-	const FeedbackGuidedCandidateGenerationOptions &options) const
+QVector<FeedbackGuidedCandidateSeed>
+FeedbackGuidedCandidateGenerator::generate(const TranscriptIndex &index,
+					   const Curation::Feedback::FeedbackRangeMemory &memory,
+					   const FeedbackGuidedCandidateGenerationOptions &options) const
 {
 	QElapsedTimer timer;
 	timer.start();

@@ -16,10 +16,10 @@ struct CandidateSourceBuilderOptions {
 class CandidateSourceBuilder {
 public:
 	QVector<ClipCandidate> fromSemanticCoarseRegions(const TranscriptIndex &index,
-		const QVector<SemanticCoarseRegion> &regions,
-		const CandidateSourceBuilderOptions &options) const;
+							 const QVector<SemanticCoarseRegion> &regions,
+							 const CandidateSourceBuilderOptions &options) const;
 	QVector<ClipCandidate> fromLocalHeuristics(const TranscriptIndex &index,
-		const CandidateSourceBuilderOptions &options) const;
+						   const CandidateSourceBuilderOptions &options) const;
 	static int semanticCandidateBudget(const CandidateSourceBuilderOptions &options, int requestedBeforeEmbedding);
 };
 

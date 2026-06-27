@@ -44,7 +44,6 @@ void reportProgress(const TranscriptionProgressCallback &progressCallback, int p
 		progressCallback(qBound(0, progress, 100), message);
 }
 
-
 constexpr double WhisperXPrimaryMaxAudioDurationSec = 3600.0;
 constexpr qint64 WhisperXPrimaryHardTimeoutMs = 20LL * 60LL * 1000LL;
 
@@ -79,7 +78,8 @@ void handleWhisperXWorkerLine(const QByteArray &lineBytes, const TranscriptionPr
 		if (type == QStringLiteral("metric")) {
 			const QString name = object.value(QStringLiteral("name")).toString();
 			const double value = object.value(QStringLiteral("value")).toDouble();
-			blog(LOG_INFO, "[clip-cropper] WhisperX worker metric. %s=%.0f", name.toUtf8().constData(), value);
+			blog(LOG_INFO, "[clip-cropper] WhisperX worker metric. %s=%.0f", name.toUtf8().constData(),
+			     value);
 			return;
 		}
 	}
@@ -93,7 +93,7 @@ void handleWhisperXWorkerLine(const QByteArray &lineBytes, const TranscriptionPr
 }
 
 void drainWhisperXWorkerOutput(QProcess &process, QByteArray &tail, QByteArray &lineBuffer,
-	const TranscriptionProgressCallback &progressCallback)
+			       const TranscriptionProgressCallback &progressCallback)
 {
 	const QByteArray chunk = process.readAll();
 	appendLimitedTail(tail, chunk);
@@ -145,7 +145,8 @@ QStringList ffmpegExecutableCandidates(const WhisperXSettings &settings)
 	if (workerInfo.exists()) {
 		const QDir toolsDir(workerInfo.absolutePath());
 		const QString projectDir = QDir::cleanPath(toolsDir.filePath(QStringLiteral("..")));
-		candidates.append(QDir(projectDir).filePath(QStringLiteral(".ffmpeg-runtime/%1").arg(ffmpegExecutableName())));
+		candidates.append(
+			QDir(projectDir).filePath(QStringLiteral(".ffmpeg-runtime/%1").arg(ffmpegExecutableName())));
 		candidates.append(QDir(projectDir).filePath(QStringLiteral("ffmpeg/%1").arg(ffmpegExecutableName())));
 	}
 
@@ -188,7 +189,6 @@ QString resolveFfmpegExecutableForWhisperX(const WhisperXSettings &settings)
 			if (!resolved.trimmed().isEmpty())
 				return resolved;
 		}
-
 	}
 	return {};
 }
@@ -214,8 +214,8 @@ QString cacheWorkDirectory()
 
 QString tempPath(const QString &suffix)
 {
-	return QDir(cacheWorkDirectory()).filePath(
-		QStringLiteral("whisperx-%1-%2").arg(QDateTime::currentMSecsSinceEpoch()).arg(suffix));
+	return QDir(cacheWorkDirectory())
+		.filePath(QStringLiteral("whisperx-%1-%2").arg(QDateTime::currentMSecsSinceEpoch()).arg(suffix));
 }
 
 bool writeSegmentsJsonl(const QString &path, const RecordingTranscript &transcript)
@@ -331,8 +331,9 @@ bool parseAlignedJsonl(const QString &path, RecordingTranscript &transcript)
 } // namespace
 
 RecordingTranscript WhisperXAlignmentService::transcribeVideo(const QString &videoPath, const QString &language,
-	const WhisperXSettings &settings, const TranscriptionProgressCallback &progressCallback,
-	const TranscriptionCancelCallback &cancelCallback) const
+							      const WhisperXSettings &settings,
+							      const TranscriptionProgressCallback &progressCallback,
+							      const TranscriptionCancelCallback &cancelCallback) const
 {
 	RecordingTranscript transcript;
 	transcript.videoPath = videoPath;
@@ -366,15 +367,24 @@ RecordingTranscript WhisperXAlignmentService::transcribeVideo(const QString &vid
 	const QString ffmpegPath = resolveFfmpegExecutableForWhisperX(settings);
 	QStringList args{
 		settings.workerPath,
-		QStringLiteral("--mode"), QStringLiteral("transcribe"),
-		QStringLiteral("--audio"), videoPath,
-		QStringLiteral("--output-jsonl"), outputPath,
-		QStringLiteral("--language"), language.trimmed().isEmpty() ? QStringLiteral("auto") : language,
-		QStringLiteral("--device"), settings.device,
-		QStringLiteral("--model"), settings.model,
-		QStringLiteral("--compute-type"), settings.computeType,
-		QStringLiteral("--batch-size"), QString::number(settings.batchSize),
-		QStringLiteral("--max-duration-sec"), QString::number(WhisperXPrimaryMaxAudioDurationSec, 'f', 0),
+		QStringLiteral("--mode"),
+		QStringLiteral("transcribe"),
+		QStringLiteral("--audio"),
+		videoPath,
+		QStringLiteral("--output-jsonl"),
+		outputPath,
+		QStringLiteral("--language"),
+		language.trimmed().isEmpty() ? QStringLiteral("auto") : language,
+		QStringLiteral("--device"),
+		settings.device,
+		QStringLiteral("--model"),
+		settings.model,
+		QStringLiteral("--compute-type"),
+		settings.computeType,
+		QStringLiteral("--batch-size"),
+		QString::number(settings.batchSize),
+		QStringLiteral("--max-duration-sec"),
+		QString::number(WhisperXPrimaryMaxAudioDurationSec, 'f', 0),
 	};
 	if (!ffmpegPath.trimmed().isEmpty())
 		args << QStringLiteral("--ffmpeg-path") << ffmpegPath;
@@ -412,7 +422,8 @@ RecordingTranscript WhisperXAlignmentService::transcribeVideo(const QString &vid
 	while (!process.waitForFinished(500)) {
 		drainWhisperXWorkerOutput(process, outputTail, lineBuffer, progressCallback);
 		if (transcriptionCanceled(cancelCallback)) {
-			blog(LOG_INFO, "[clip-cropper] WhisperX primary transcription canceled. Killing worker process.");
+			blog(LOG_INFO,
+			     "[clip-cropper] WhisperX primary transcription canceled. Killing worker process.");
 			process.kill();
 			process.waitForFinished(3000);
 			QFile::remove(outputPath);
@@ -428,7 +439,8 @@ RecordingTranscript WhisperXAlignmentService::transcribeVideo(const QString &vid
 			return {};
 		}
 		tick = std::min(tick + 1, 97);
-		reportProgress(progressCallback, tick, QString::fromUtf8(obs_module_text("Status.WhisperXTranscribing")));
+		reportProgress(progressCallback, tick,
+			       QString::fromUtf8(obs_module_text("Status.WhisperXTranscribing")));
 	}
 	drainWhisperXWorkerOutput(process, outputTail, lineBuffer, progressCallback);
 	if (!lineBuffer.trimmed().isEmpty())
@@ -462,9 +474,10 @@ RecordingTranscript WhisperXAlignmentService::transcribeVideo(const QString &vid
 	return transcript;
 }
 
-RecordingTranscript WhisperXAlignmentService::alignVideoTranscript(const QString &videoPath, const QString &language,
-	const RecordingTranscript &baseTranscript, const WhisperXSettings &settings,
-	const TranscriptionProgressCallback &progressCallback, const TranscriptionCancelCallback &cancelCallback) const
+RecordingTranscript WhisperXAlignmentService::alignVideoTranscript(
+	const QString &videoPath, const QString &language, const RecordingTranscript &baseTranscript,
+	const WhisperXSettings &settings, const TranscriptionProgressCallback &progressCallback,
+	const TranscriptionCancelCallback &cancelCallback) const
 {
 	RecordingTranscript transcript = baseTranscript;
 	transcript.videoPath = videoPath;
@@ -500,11 +513,16 @@ RecordingTranscript WhisperXAlignmentService::alignVideoTranscript(const QString
 	const QString ffmpegPath = resolveFfmpegExecutableForWhisperX(settings);
 	QStringList args{
 		settings.workerPath,
-		QStringLiteral("--audio"), videoPath,
-		QStringLiteral("--segments-jsonl"), segmentsPath,
-		QStringLiteral("--output-jsonl"), outputPath,
-		QStringLiteral("--language"), language.trimmed().isEmpty() ? QStringLiteral("auto") : language,
-		QStringLiteral("--device"), settings.device,
+		QStringLiteral("--audio"),
+		videoPath,
+		QStringLiteral("--segments-jsonl"),
+		segmentsPath,
+		QStringLiteral("--output-jsonl"),
+		outputPath,
+		QStringLiteral("--language"),
+		language.trimmed().isEmpty() ? QStringLiteral("auto") : language,
+		QStringLiteral("--device"),
+		settings.device,
 	};
 	if (!ffmpegPath.trimmed().isEmpty())
 		args << QStringLiteral("--ffmpeg-path") << ffmpegPath;
@@ -555,8 +573,8 @@ RecordingTranscript WhisperXAlignmentService::alignVideoTranscript(const QString
 		outputTail.remove(0, outputTail.size() - 16384);
 
 	if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
-		blog(LOG_ERROR, "[clip-cropper] WhisperX alignment failed. exitCode=%d output=%s",
-		     process.exitCode(), outputTail.constData());
+		blog(LOG_ERROR, "[clip-cropper] WhisperX alignment failed. exitCode=%d output=%s", process.exitCode(),
+		     outputTail.constData());
 		QFile::remove(segmentsPath);
 		QFile::remove(outputPath);
 		return transcript;
@@ -566,7 +584,8 @@ RecordingTranscript WhisperXAlignmentService::alignVideoTranscript(const QString
 	if (parseAlignedJsonl(outputPath, aligned)) {
 		TranscriptStore::saveAlignedForVideoPath(videoPath, language, aligned);
 		reportProgress(progressCallback, 98, QString::fromUtf8(obs_module_text("Status.SavingTranscript")));
-		blog(LOG_INFO, "[clip-cropper] WhisperX word-aligned transcript saved. video=%s segments=%d cacheKey=%s",
+		blog(LOG_INFO,
+		     "[clip-cropper] WhisperX word-aligned transcript saved. video=%s segments=%d cacheKey=%s",
 		     videoPath.toUtf8().constData(), static_cast<int>(aligned.segments.size()),
 		     TranscriptStore::keyForAlignedVideoPath(videoPath, language).toUtf8().constData());
 		QFile::remove(segmentsPath);

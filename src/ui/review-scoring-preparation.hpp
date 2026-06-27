@@ -30,9 +30,9 @@ struct ReviewScoringProgressUpdate {
 using ReviewScoringProgressCallback = std::function<void(ReviewScoringProgressUpdate)>;
 
 void prepare_review_scoring_async(QWidget *parent, const QString &videoPath, const CurationSettings &baseSettings,
-					  std::function<void(ReviewScoringPreparationResult)> finishedCallback,
-					  ReviewScoringProgressCallback progressCallback = {});
+				  std::function<void(ReviewScoringPreparationResult)> finishedCallback,
+				  ReviewScoringProgressCallback progressCallback = {});
 
 void prepare_review_scoring_async(QWidget *parent, const QString &videoPath,
-					  std::function<void(ReviewScoringPreparationResult)> finishedCallback,
-					  ReviewScoringProgressCallback progressCallback = {});
+				  std::function<void(ReviewScoringPreparationResult)> finishedCallback,
+				  ReviewScoringProgressCallback progressCallback = {});

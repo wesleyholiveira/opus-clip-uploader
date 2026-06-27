@@ -10,5 +10,5 @@
 class QWidget;
 
 void ensure_transcript_for_curation_async(QWidget *parent, const QString &videoPath,
-                                         const CurationSettings &curationSettings, bool transcribeOnDemand,
-                                         std::function<void(RecordingTranscript, bool)> finishedCallback);
+					  const CurationSettings &curationSettings, bool transcribeOnDemand,
+					  std::function<void(RecordingTranscript, bool)> finishedCallback);

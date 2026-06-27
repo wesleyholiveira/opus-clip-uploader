@@ -93,24 +93,31 @@ struct CandidateQualityGateOptions {
 
 class CandidateQualityGate {
 public:
-	QVector<ClipCandidate> apply(QVector<ClipCandidate> candidates, const CandidateQualityGateOptions &options) const;
+	QVector<ClipCandidate> apply(QVector<ClipCandidate> candidates,
+				     const CandidateQualityGateOptions &options) const;
 	ClipCandidate apply(const ClipCandidate &candidate, const CandidateQualityGateOptions &options) const;
 
 private:
 	QString rejectionReason(const ClipCandidate &candidate, const CandidateQualityGateOptions &options) const;
-	QVector<ClipCandidate> recoverFailsafeCandidates(QVector<ClipCandidate> candidates, const CandidateQualityGateOptions &options) const;
+	QVector<ClipCandidate> recoverFailsafeCandidates(QVector<ClipCandidate> candidates,
+							 const CandidateQualityGateOptions &options) const;
 	bool isFailsafeRecoverable(const ClipCandidate &candidate, const CandidateQualityGateOptions &options) const;
 	bool isLastResortRecoverable(const ClipCandidate &candidate, const CandidateQualityGateOptions &options) const;
-	bool isCollapsedRoleRecoverable(const ClipCandidate &candidate, const CandidateQualityGateOptions &options) const;
-	bool hasReliableConclusionSupport(const ClipCandidate &candidate, const CandidateQualityGateOptions &options) const;
-	bool hasWeakConclusionFailsafe(const ClipCandidate &candidate, const CandidateQualityGateOptions &options) const;
-	bool hasSemanticBackedArcSupport(const ClipCandidate &candidate, const CandidateQualityGateOptions &options) const;
+	bool isCollapsedRoleRecoverable(const ClipCandidate &candidate,
+					const CandidateQualityGateOptions &options) const;
+	bool hasReliableConclusionSupport(const ClipCandidate &candidate,
+					  const CandidateQualityGateOptions &options) const;
+	bool hasWeakConclusionFailsafe(const ClipCandidate &candidate,
+				       const CandidateQualityGateOptions &options) const;
+	bool hasSemanticBackedArcSupport(const ClipCandidate &candidate,
+					 const CandidateQualityGateOptions &options) const;
 	bool hasCuriosityArcSupport(const ClipCandidate &candidate, const CandidateQualityGateOptions &options) const;
 	bool hasUsefulExchangeArc(const ClipCandidate &candidate, const CandidateQualityGateOptions &options) const;
 	bool hasCleanOpening(const ClipCandidate &candidate, const CandidateQualityGateOptions &options) const;
 	bool hasCleanEnding(const ClipCandidate &candidate, const CandidateQualityGateOptions &options) const;
 	bool hasUntrimmedPauseTail(const ClipCandidate &candidate, const CandidateQualityGateOptions &options) const;
-	bool hasUnresolvedInternalPause(const ClipCandidate &candidate, const CandidateQualityGateOptions &options) const;
+	bool hasUnresolvedInternalPause(const ClipCandidate &candidate,
+					const CandidateQualityGateOptions &options) const;
 	bool hasDegenerateArcShape(const ClipCandidate &candidate, const CandidateQualityGateOptions &options) const;
 	bool hasWeakSocialOpening(const ClipCandidate &candidate, const CandidateQualityGateOptions &options) const;
 	bool hasOverextendedTail(const ClipCandidate &candidate, const CandidateQualityGateOptions &options) const;

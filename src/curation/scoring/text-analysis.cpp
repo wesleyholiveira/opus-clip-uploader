@@ -1,6 +1,7 @@
 #include "curation/scoring/text-analysis.hpp"
 
 #include <QRegularExpression>
+#include <QSet>
 
 #include <algorithm>
 

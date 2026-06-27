@@ -66,8 +66,8 @@ QString normalizeWhisperXDevice(QString value)
 QString normalizeWhisperXComputeType(QString value)
 {
 	value = value.trimmed().toLower();
-	if (value == QStringLiteral("float16") || value == QStringLiteral("float32") || value == QStringLiteral("int8") ||
-	    value == QStringLiteral("int8_float16"))
+	if (value == QStringLiteral("float16") || value == QStringLiteral("float32") ||
+	    value == QStringLiteral("int8") || value == QStringLiteral("int8_float16"))
 		return value;
 	return QStringLiteral("float16");
 }
@@ -78,8 +78,8 @@ QString defaultWhisperXWorkerPath()
 	if (QFileInfo::exists(bundled))
 		return bundled;
 
-	const QString appDirCandidate = QDir(QCoreApplication::applicationDirPath())
-		.filePath(QStringLiteral("tools/whisperx_align_worker.py"));
+	const QString appDirCandidate =
+		QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("tools/whisperx_align_worker.py"));
 	if (QFileInfo::exists(appDirCandidate))
 		return appDirCandidate;
 
@@ -90,7 +90,9 @@ WhisperXSettings whisperXSettingsFromConfig()
 {
 	WhisperXSettings settings;
 	settings.backend = PluginConfig::getValue(QString::fromLatin1(CONFIG_WHISPERX_BACKEND),
-		QString::fromLatin1(WHISPERX_BACKEND_DISABLED)).trimmed().toLower();
+						  QString::fromLatin1(WHISPERX_BACKEND_DISABLED))
+				   .trimmed()
+				   .toLower();
 	if (settings.backend == QString::fromLatin1(WHISPERX_BACKEND_PYTHON))
 		settings.backend = QString::fromLatin1(WHISPERX_BACKEND_ALIGNMENT);
 	if (settings.backend != QString::fromLatin1(WHISPERX_BACKEND_ALIGNMENT) &&
@@ -101,18 +103,19 @@ WhisperXSettings whisperXSettingsFromConfig()
 	settings.workerPath = configuredOrEnv(CONFIG_WHISPERX_WORKER_PATH, "CLIP_CROPPER_WHISPERX_WORKER");
 	if (settings.workerPath.trimmed().isEmpty())
 		settings.workerPath = defaultWhisperXWorkerPath();
-	settings.device = normalizeWhisperXDevice(PluginConfig::getValue(QString::fromLatin1(CONFIG_WHISPERX_DEVICE),
-		QStringLiteral("cuda")));
+	settings.device = normalizeWhisperXDevice(
+		PluginConfig::getValue(QString::fromLatin1(CONFIG_WHISPERX_DEVICE), QStringLiteral("cuda")));
 	settings.ffmpegPath = configuredOrEnv(CONFIG_WHISPERX_FFMPEG_PATH, "CLIP_CROPPER_FFMPEG_PATH");
-	settings.model = PluginConfig::getValue(QString::fromLatin1(CONFIG_WHISPERX_MODEL), QStringLiteral("large-v3"))
-		.trimmed();
+	settings.model =
+		PluginConfig::getValue(QString::fromLatin1(CONFIG_WHISPERX_MODEL), QStringLiteral("large-v3")).trimmed();
 	if (settings.model.isEmpty())
 		settings.model = QStringLiteral("large-v3");
-	settings.computeType = normalizeWhisperXComputeType(PluginConfig::getValue(
-		QString::fromLatin1(CONFIG_WHISPERX_COMPUTE_TYPE), QStringLiteral("float16")));
+	settings.computeType = normalizeWhisperXComputeType(
+		PluginConfig::getValue(QString::fromLatin1(CONFIG_WHISPERX_COMPUTE_TYPE), QStringLiteral("float16")));
 	bool batchOk = false;
-	settings.batchSize = PluginConfig::getValue(QString::fromLatin1(CONFIG_WHISPERX_BATCH_SIZE),
-		QStringLiteral("8")).toInt(&batchOk);
+	settings.batchSize =
+		PluginConfig::getValue(QString::fromLatin1(CONFIG_WHISPERX_BATCH_SIZE), QStringLiteral("8"))
+			.toInt(&batchOk);
 	if (!batchOk || settings.batchSize < 1)
 		settings.batchSize = 8;
 	settings.batchSize = std::min(settings.batchSize, 128);

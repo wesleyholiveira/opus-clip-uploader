@@ -53,7 +53,7 @@ static bool clipLengthBoundsForPreset(const QString &preset, double &minSec, dou
 }
 
 static bool shouldApplyProfileClipLength(const Curation::CurationPresetProfile &profile,
-	const QString &clipLengthPreset)
+					 const QString &clipLengthPreset)
 {
 	const QString normalized = normalizedClipLengthPreset(clipLengthPreset);
 	switch (profile.clipLengthPolicy) {

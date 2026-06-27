@@ -32,8 +32,8 @@ struct FeedbackTrainedRankerModel {
 class FeedbackTrainedRanker {
 public:
 	QVector<ClipCandidate> apply(QVector<ClipCandidate> candidates, const TranscriptIndex &index,
-		const Curation::Feedback::FeedbackRangeMemory &memory, const QString &presetId,
-		const QString &videoPath) const;
+				     const Curation::Feedback::FeedbackRangeMemory &memory, const QString &presetId,
+				     const QString &videoPath) const;
 
 	static QString defaultModelPath();
 	static FeedbackTrainedRankerModel loadDefaultModel();
@@ -41,10 +41,11 @@ public:
 private:
 	static FeedbackTrainedRankerModel loadModel(const QString &path);
 	static double scoreCandidate(const ClipCandidate &candidate, const TranscriptIndex &index,
-		const Curation::Feedback::FeedbackRangeMemory &memory, const FeedbackTrainedRankerModel &model,
-		FeedbackSimilarityFeatures *feedbackFeatures = nullptr);
+				     const Curation::Feedback::FeedbackRangeMemory &memory,
+				     const FeedbackTrainedRankerModel &model,
+				     FeedbackSimilarityFeatures *feedbackFeatures = nullptr);
 	static double featureValue(const QString &name, const ClipCandidate &candidate,
-		const FeedbackSimilarityFeatures &feedbackFeatures);
+				   const FeedbackSimilarityFeatures &feedbackFeatures);
 	static bool hasEvidence(const ClipCandidate &candidate, const QString &needle);
 	static bool isPositiveGroundTruthCandidate(const ClipCandidate &candidate);
 	static bool isNegativeContaminated(const FeedbackSimilarityFeatures &features);
