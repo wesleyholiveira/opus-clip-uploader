@@ -29,6 +29,8 @@ struct FeedbackRangeSignal {
 	double weight = 1.0;
 	int sequence = 0;
 	bool semanticPrototypeEligible = false;
+	bool weakNegative = false;
+	bool ignoreForTraining = false;
 };
 
 struct FeedbackRangeMemory {
@@ -40,6 +42,8 @@ struct FeedbackRangeMemory {
 	int crossVideoRecordsRead = 0;
 	int legacyContentRecordsRead = 0;
 	int rejectedNegativeSignals = 0;
+	int weakNegativeSignals = 0;
+	int ignoredDiagnosticSignals = 0;
 	int adjustedNegativeSignals = 0;
 	int adjustedPositiveSignals = 0;
 	int adjustedWithoutEditedRangeSignals = 0;

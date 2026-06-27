@@ -58,6 +58,69 @@ static double rangeDistance(const ClipDuration &a, const ClipDuration &b)
 	return std::fabs(a.startSec - b.startSec) + std::fabs(a.endSec - b.endSec);
 }
 
+static double rangeOverlapSec(const ClipDuration &a, const ClipDuration &b)
+{
+	return std::max(0.0, std::min(a.endSec, b.endSec) - std::max(a.startSec, b.startSec));
+}
+
+static bool isIgnoredOrWeakDiagnosticSignal(const Curation::Feedback::FeedbackRangeSignal &signal)
+{
+	return signal.ignoreForTraining || signal.weakNegative || signal.decision == QStringLiteral("ignored_diagnostic") ||
+	       signal.reason.contains(QStringLiteral("ignore"), Qt::CaseInsensitive);
+}
+
+static bool overlapsIgnoredDiagnosticNeighborhood(const ClipDuration &range,
+	const Curation::Feedback::FeedbackRangeMemory &memory)
+{
+	if (memory.ignoredDiagnosticSignals <= 0)
+		return false;
+	const double duration = durationSec(range);
+	for (const Curation::Feedback::FeedbackRangeSignal &negative : memory.negativeRanges) {
+		if (!isIgnoredOrWeakDiagnosticSignal(negative) || !validRange(negative.range))
+			continue;
+		if (FeedbackSimilarityScorer::rangeSimilarity(range, negative.range) >= 0.58)
+			return true;
+		if (rangeDistance(range, negative.range) <= 12.0)
+			return true;
+		const double overlap = rangeOverlapSec(range, negative.range);
+		if (overlap >= std::min(24.0, std::max(10.0, duration * 0.50)))
+			return true;
+	}
+	return false;
+}
+
+static bool rangeMatchesReviewedFeedbackNeighborhood(const ClipDuration &range,
+	const Curation::Feedback::FeedbackRangeSignal &signal)
+{
+	if (!validRange(range) || !validRange(signal.range))
+		return false;
+	if (FeedbackSimilarityScorer::rangeSimilarity(range, signal.range) >= 0.78)
+		return true;
+	if (rangeDistance(range, signal.range) <= 24.0)
+		return true;
+	const double centerDistance = std::fabs(((range.startSec + range.endSec) * 0.5) -
+		((signal.range.startSec + signal.range.endSec) * 0.5));
+	const double minDuration = std::min(durationSec(range), durationSec(signal.range));
+	return centerDistance <= 30.0 && minDuration > 0.0 &&
+	       rangeOverlapSec(range, signal.range) >= std::max(8.0, minDuration * 0.55);
+}
+
+static bool overlapsReviewedFeedbackNeighborhood(const ClipDuration &range,
+	const Curation::Feedback::FeedbackRangeMemory &memory)
+{
+	if (!memory.loaded)
+		return false;
+	for (const Curation::Feedback::FeedbackRangeSignal &positive : memory.positiveRanges) {
+		if (rangeMatchesReviewedFeedbackNeighborhood(range, positive))
+			return true;
+	}
+	for (const Curation::Feedback::FeedbackRangeSignal &negative : memory.negativeRanges) {
+		if (rangeMatchesReviewedFeedbackNeighborhood(range, negative))
+			return true;
+	}
+	return false;
+}
+
 static ClipDuration rangeForSegmentWindow(const TranscriptIndex &index, int first, int last)
 {
 	const TranscriptSegment *firstSegment = index.segmentAt(first);
@@ -202,6 +265,10 @@ bool FeedbackGuidedCandidateGenerator::appendSeed(QVector<FeedbackGuidedCandidat
 		return false;
 	if (similarSeedExists(seeds, seed.range))
 		return false;
+	if (memory.ignoredDiagnosticSignals >= 12 && overlapsIgnoredDiagnosticNeighborhood(seed.range, memory))
+		return false;
+	if (overlapsReviewedFeedbackNeighborhood(seed.range, memory))
+		return false;
 
 	FeedbackSimilarityScorer scorer;
 	const FeedbackSimilarityFeatures features = scorer.scoreRange(seed.range, index.textForRange(seed.range), index, memory);
@@ -227,27 +294,37 @@ void FeedbackGuidedCandidateGenerator::appendPositiveRangeSeeds(QVector<Feedback
 	const QVector<Curation::Feedback::FeedbackRangeSignal> semanticPositives =
 		semanticPrototypeEligiblePositiveRanges(memory);
 	const int clusterCount = static_cast<int>(semanticPositives.size());
-	const int maxBoundaryVariantsPerPositive = clusterCount <= 1 ? 0 : clusterCount <= 3 ? 1 : 4;
+	const int maxBoundaryVariantsPerPositive = clusterCount <= 1 ? 0 : clusterCount <= 3 ? 1 : 2;
+	int exactAdded = 0;
+	int boundaryAdded = 0;
 	for (const Curation::Feedback::FeedbackRangeSignal &positive : semanticPositives) {
 		if (static_cast<int>(seeds.size()) >= options.maxSeeds)
 			return;
 
-		FeedbackGuidedCandidateSeed exact;
-		exact.range = positive.range;
-		exact.source = QStringLiteral("feedback_positive_exact_seed");
-		exact.priorScore = 0.86 + std::min(0.10, positive.weight * 0.04);
-		exact.evidence.append(QStringLiteral("feedback_positive_exact_seed"));
-		exact.evidence.append(QStringLiteral("feedback_positive_decision:%1").arg(positive.decision.left(32)));
-		exact.evidence.append(QStringLiteral("feedback_positive_reason:%1").arg(positive.reason.left(96)));
-		appendSeed(seeds, index, memory, options, exact);
+		// Exact positive replay is intentionally capped. It is a cold-start hint,
+		// not a way to keep proposing the same already-reviewed clip forever.
+		if (exactAdded < options.maxExactPositiveSeeds) {
+			FeedbackGuidedCandidateSeed exact;
+			exact.range = positive.range;
+			exact.source = QStringLiteral("feedback_positive_exact_seed");
+			exact.priorScore = 0.86 + std::min(0.10, positive.weight * 0.04);
+			exact.evidence.append(QStringLiteral("feedback_positive_exact_seed"));
+			exact.evidence.append(QStringLiteral("feedback_positive_direct_replay_capped"));
+			exact.evidence.append(QStringLiteral("feedback_positive_decision:%1").arg(positive.decision.left(32)));
+			exact.evidence.append(QStringLiteral("feedback_positive_reason:%1").arg(positive.reason.left(96)));
+			if (appendSeed(seeds, index, memory, options, exact))
+				++exactAdded;
+		}
 
+		if (boundaryAdded >= options.maxBoundaryVariantSeeds)
+			continue;
 		const double duration = durationSec(positive.range);
 		const QVector<QPair<double, double>> variants = {
 			{ -3.0, 3.0 }, { -6.0, 4.0 }, { -4.0, 8.0 }, { 0.0, 6.0 }
 		};
 		int variantsAdded = 0;
 		for (const auto &variant : variants) {
-			if (variantsAdded >= maxBoundaryVariantsPerPositive)
+			if (variantsAdded >= maxBoundaryVariantsPerPositive || boundaryAdded >= options.maxBoundaryVariantSeeds)
 				break;
 			if (duration < 12.0 && variant.first < -4.0)
 				continue;
@@ -256,10 +333,13 @@ void FeedbackGuidedCandidateGenerator::appendPositiveRangeSeeds(QVector<Feedback
 			seed.source = QStringLiteral("feedback_positive_boundary_variant");
 			seed.priorScore = 0.72;
 			seed.evidence.append(QStringLiteral("feedback_positive_boundary_variant"));
+			seed.evidence.append(QStringLiteral("feedback_positive_boundary_variant_capped"));
 			seed.evidence.append(QStringLiteral("feedback_boundary_variant_delta:%1/%2")
 				.arg(QString::number(variant.first, 'f', 1), QString::number(variant.second, 'f', 1)));
-			if (appendSeed(seeds, index, memory, options, seed))
+			if (appendSeed(seeds, index, memory, options, seed)) {
 				++variantsAdded;
+				++boundaryAdded;
+			}
 		}
 	}
 }
@@ -520,15 +600,30 @@ QVector<FeedbackGuidedCandidateSeed> FeedbackGuidedCandidateGenerator::generate(
 	if (!memory.loaded || memory.positiveRanges.isEmpty() || options.maxSeeds <= 0)
 		return seeds;
 	seeds.reserve(std::min(options.maxSeeds, 128));
-	appendPositiveRangeSeeds(seeds, index, memory, options);
-	const int afterExact = static_cast<int>(seeds.size());
+
+	// Prefer discovery before direct replay. With a large same-video memory,
+	// exact/boundary feedback seeds otherwise fill the budget and repeatedly
+	// surface already-reviewed neighborhoods.
 	appendPrototypeSimilaritySeeds(seeds, index, memory, options);
-	const int afterPrototype = static_cast<int>(seeds.size());
 	appendPatternSearchSeeds(seeds, index, memory, options);
+	appendPositiveRangeSeeds(seeds, index, memory, options);
+
+	int exactOrBoundary = 0;
+	int prototype = 0;
+	int pattern = 0;
+	for (const FeedbackGuidedCandidateSeed &seed : seeds) {
+		if (seed.source == QStringLiteral("feedback_positive_exact_seed") ||
+		    seed.source == QStringLiteral("feedback_positive_boundary_variant"))
+			++exactOrBoundary;
+		else if (seed.source == QStringLiteral("feedback_positive_semantic_prototype"))
+			++prototype;
+		else if (seed.source == QStringLiteral("feedback_positive_pattern_search"))
+			++pattern;
+	}
+
 	blog(LOG_INFO,
 	     "[clip-cropper] Feedback-guided seed generation finished. seeds=%d exactOrBoundary=%d prototype=%d pattern=%d maxSeeds=%d elapsedMs=%lld",
-	     static_cast<int>(seeds.size()), afterExact, std::max(0, afterPrototype - afterExact),
-	     std::max(0, static_cast<int>(seeds.size()) - afterPrototype), options.maxSeeds,
+	     static_cast<int>(seeds.size()), exactOrBoundary, prototype, pattern, options.maxSeeds,
 	     static_cast<long long>(timer.elapsed()));
 	return seeds;
 }

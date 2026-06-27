@@ -94,6 +94,23 @@ QVector<ClipCandidate> FeedbackGuidedCandidateStage::appendCandidates(const Tran
 		? 24
 		: 40;
 
+	const bool saturatedSameVideoMemory = memory.recordsRead >= 80 || memory.ignoredDiagnosticSignals >= 40 ||
+		memory.approvedAdjustedPositiveSignals >= 20 || semanticPositiveClusters >= 16;
+	if (saturatedSameVideoMemory) {
+		feedbackGenerationOptions.maxExactPositiveSeeds = 0;
+		feedbackGenerationOptions.maxBoundaryVariantSeeds = 4;
+		feedbackGenerationOptions.maxSemanticPrototypeSeeds = std::max(feedbackGenerationOptions.maxSemanticPrototypeSeeds, 24);
+		feedbackGenerationOptions.maxPatternSeeds = std::max(feedbackGenerationOptions.maxPatternSeeds, 40);
+		blog(LOG_INFO,
+		     "[clip-cropper] Feedback-guided repetition guard active. video=%s records=%d ignored=%d approvedAdjusted=%d semanticClusters=%d maxExact=%d maxBoundary=%d",
+		     options.videoPath.toUtf8().constData(), memory.recordsRead, memory.ignoredDiagnosticSignals,
+		     memory.approvedAdjustedPositiveSignals, semanticPositiveClusters,
+		     feedbackGenerationOptions.maxExactPositiveSeeds, feedbackGenerationOptions.maxBoundaryVariantSeeds);
+	} else {
+		feedbackGenerationOptions.maxExactPositiveSeeds = semanticPositiveClusters <= 3 ? 4 : 2;
+		feedbackGenerationOptions.maxBoundaryVariantSeeds = semanticPositiveClusters <= 3 ? 8 : 6;
+	}
+
 	QElapsedTimer generatorTimer;
 	generatorTimer.start();
 	FeedbackGuidedCandidateGenerator feedbackGenerator;

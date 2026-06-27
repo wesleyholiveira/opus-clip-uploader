@@ -15,6 +15,35 @@ static double boundedScore(double value)
 	return std::clamp(value, 0.0, 1.0);
 }
 
+static bool isWeakNegativeSignal(const Curation::Feedback::FeedbackRangeSignal &signal)
+{
+	return signal.weakNegative || signal.ignoreForTraining ||
+	       signal.decision == QStringLiteral("ignored_diagnostic") ||
+	       signal.reason.contains(QStringLiteral("weak_negative"), Qt::CaseInsensitive) ||
+	       signal.reason.contains(QStringLiteral("ignored_diagnostic"), Qt::CaseInsensitive) ||
+	       signal.reason.contains(QStringLiteral("not_training_signal"), Qt::CaseInsensitive);
+}
+
+static bool isIgnoredDiagnosticSignal(const Curation::Feedback::FeedbackRangeSignal &signal)
+{
+	return signal.ignoreForTraining || signal.decision == QStringLiteral("ignored_diagnostic") ||
+	       signal.reason.contains(QStringLiteral("ignored_diagnostic"), Qt::CaseInsensitive) ||
+	       signal.reason.contains(QStringLiteral("not_training_signal"), Qt::CaseInsensitive);
+}
+
+static QVector<Curation::Feedback::FeedbackRangeSignal>
+negativeSignalsForScoring(const QVector<Curation::Feedback::FeedbackRangeSignal> &results)
+{
+	QVector<Curation::Feedback::FeedbackRangeSignal> filtered;
+	filtered.reserve(results.size());
+	for (const Curation::Feedback::FeedbackRangeSignal &signal : results) {
+		if (isIgnoredDiagnosticSignal(signal))
+			continue;
+		filtered.append(signal);
+	}
+	return filtered;
+}
+
 static QStringList tokenize(QString value)
 {
 	value = value.toLower().normalized(QString::NormalizationForm_KC);
@@ -210,19 +239,25 @@ FeedbackSimilarityScorer::scoreRange(const ClipDuration &range, const QString &t
 	Curation::Feedback::FeedbackRangeSignal positiveText;
 	Curation::Feedback::FeedbackRangeSignal negativeText;
 
+	const QVector<Curation::Feedback::FeedbackRangeSignal> negativeScoringRanges =
+		negativeSignalsForScoring(memory.negativeRanges);
+
 	features.positiveRangeSimilarity = bestRangeSimilarity(range, memory.positiveRanges, &positiveRange);
-	features.negativeRangeSimilarity = bestRangeSimilarity(range, memory.negativeRanges, &negativeRange);
+	features.negativeRangeSimilarity = bestRangeSimilarity(range, negativeScoringRanges, &negativeRange);
 	features.positiveOverlapSec = bestOverlapSeconds(range, memory.positiveRanges, &positiveRange);
-	features.negativeOverlapSec = bestOverlapSeconds(range, memory.negativeRanges, &negativeRange);
+	features.negativeOverlapSec = bestOverlapSeconds(range, negativeScoringRanges, &negativeRange);
 	features.positiveTextSimilarity = bestTextSimilarity(text, index, memory.positiveRanges, &positiveText);
-	features.negativeTextSimilarity = bestTextSimilarity(text, index, memory.negativeRanges, &negativeText);
+	features.negativeTextSimilarity = bestTextSimilarity(text, index, negativeScoringRanges, &negativeText);
 	features.positiveScore =
 		boundedScore(std::max(features.positiveRangeSimilarity, features.positiveTextSimilarity * 0.92));
 	features.negativeScore =
 		boundedScore(std::max(features.negativeRangeSimilarity, features.negativeTextSimilarity * 0.96));
 	features.margin = features.positiveScore - features.negativeScore;
-	features.negativeRangeContamination = !memory.negativeRanges.isEmpty() &&
+	const bool weakNegativeRange = isWeakNegativeSignal(negativeRange);
+	features.negativeRangeContamination = !negativeScoringRanges.isEmpty() && !weakNegativeRange &&
 					      negativeRangeContaminatesCandidate(range, negativeRange);
+	if (weakNegativeRange && features.negativeScore > 0.0)
+		features.evidence.append(QStringLiteral("feedback_weak_negative_match"));
 	features.explainedByPositiveRange = !memory.positiveRanges.isEmpty() &&
 					    positiveRangeExplainsCandidate(range, positiveRange);
 	features.positiveReason = positiveRange.reason.isEmpty() ? positiveText.reason : positiveRange.reason;

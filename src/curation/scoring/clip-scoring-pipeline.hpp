@@ -11,6 +11,7 @@
 
 #include <QString>
 #include <QStringList>
+#include <QVector>
 
 #include <functional>
 
@@ -43,6 +44,7 @@ struct ClipScoringPipelineOptions {
 	ClipScoringPipelineBudget budget;
 	QString videoPath;
 	QStringList contentIds;
+	QVector<ClipDuration> existingReviewRanges;
 	const SemanticEmbeddingProvider *embeddingProvider = nullptr;
 	const SemanticReranker *reranker = nullptr;
 	ClipScoringPipelineProgressCallback progressCallback = {};

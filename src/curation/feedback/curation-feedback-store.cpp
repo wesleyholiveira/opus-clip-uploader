@@ -437,6 +437,8 @@ static QJsonObject suggestionRecord(const QString &videoPath, const CurationSett
 		decision = hasFeedbackUserRange ? QStringLiteral("approved_adjusted") : QStringLiteral("accepted");
 	else if (explicitDecision == QStringLiteral("liked"))
 		decision = hasFeedbackUserRange ? matchedDecision(generatedRange, feedbackUserRange) : QStringLiteral("accepted");
+	else if (explicitDecision == QStringLiteral("ignored_diagnostic"))
+		decision = QStringLiteral("ignored_diagnostic");
 
 	QJsonObject record;
 	record.insert(QStringLiteral("schema_version"), 1);
@@ -446,7 +448,8 @@ static QJsonObject suggestionRecord(const QString &videoPath, const CurationSett
 	record.insert(QStringLiteral("decision"), decision);
 	if (!explicitDecision.isEmpty() &&
 	    (explicitDecision == QStringLiteral("disliked") || explicitDecision == QStringLiteral("adjusted") ||
-	     explicitDecision == QStringLiteral("approved_adjusted") || decision != QStringLiteral("removed_unrated")))
+	     explicitDecision == QStringLiteral("approved_adjusted") ||
+	     explicitDecision == QStringLiteral("ignored_diagnostic") || decision != QStringLiteral("removed_unrated")))
 		record.insert(QStringLiteral("explicit_review_decision"), explicitDecision);
 	record.insert(QStringLiteral("video_id"), stableVideoId(videoPath));
 	record.insert(QStringLiteral("video_file_name"), QFileInfo(videoPath).fileName());
@@ -492,7 +495,11 @@ static QJsonObject suggestionRecord(const QString &videoPath, const CurationSett
 		record.insert(QStringLiteral("end_error_type"),
 			      endErrorType(generatedRange.endSec, feedbackUserRange.endSec));
 	} else {
-		if (explicitDecision == QStringLiteral("disliked")) {
+		if (explicitDecision == QStringLiteral("ignored_diagnostic")) {
+			record.insert(QStringLiteral("ignore_reason"), QStringLiteral("user_marked_diagnostic_not_training_signal"));
+			record.insert(QStringLiteral("start_error_type"), QStringLiteral("ignored_diagnostic"));
+			record.insert(QStringLiteral("end_error_type"), QStringLiteral("ignored_diagnostic"));
+		} else if (explicitDecision == QStringLiteral("disliked")) {
 			record.insert(QStringLiteral("reject_reason"), QStringLiteral("user_disliked_marker"));
 			record.insert(QStringLiteral("start_error_type"), QStringLiteral("rejected"));
 			record.insert(QStringLiteral("end_error_type"), QStringLiteral("rejected"));
@@ -544,12 +551,41 @@ static QJsonObject suggestionRecord(const QString &videoPath, const CurationSett
 					   QStringLiteral("ends_too_early"),
 					   QStringLiteral("overextended_after_resolution"),
 					   QStringLiteral("has_meta_noise"),
+					   QStringLiteral("good_topic_bad_boundary"),
+					   QStringLiteral("bad_topic"),
+					   QStringLiteral("incomplete_but_recoverable"),
+					   QStringLiteral("boundary_recoverable"),
 					   QStringLiteral("approved_corrected_range"),
-					   QStringLiteral("semantic_positive_example")};
+					   QStringLiteral("semantic_positive_example"),
+					   QStringLiteral("ignore_for_training"),
+					   QStringLiteral("weak_negative")};
 		for (const QString &key : boolKeys) {
 			if (structuredFeedback.contains(key))
 				record.insert(QStringLiteral("feedback_%1").arg(key), structuredFeedback.value(key).toBool());
 		}
+	}
+
+	if (!structuredFeedback.isEmpty()) {
+		const bool ignoreForTraining = explicitDecision == QStringLiteral("ignored_diagnostic") ||
+			structuredFeedback.value(QStringLiteral("ignore_for_training")).toBool(false);
+		const bool weakNegative = structuredFeedback.value(QStringLiteral("weak_negative")).toBool(false);
+		const bool badTopic = !ignoreForTraining && structuredFeedback.value(QStringLiteral("bad_topic")).toBool(false);
+		const bool boundaryRecoverable = !badTopic && !ignoreForTraining &&
+			(structuredFeedback.value(QStringLiteral("boundary_recoverable")).toBool(false) ||
+			 structuredFeedback.value(QStringLiteral("good_topic_bad_boundary")).toBool(false) ||
+			 structuredFeedback.value(QStringLiteral("incomplete_but_recoverable")).toBool(false));
+		const QString diagnosticRejection = structuredFeedback.value(QStringLiteral("diagnostic_rejection_reason")).toString();
+		if (ignoreForTraining)
+			record.insert(QStringLiteral("generated_feedback_class"), QStringLiteral("ignored_diagnostic"));
+		else if (weakNegative)
+			record.insert(QStringLiteral("generated_feedback_class"), QStringLiteral("weak_negative"));
+		else if (badTopic)
+			record.insert(QStringLiteral("generated_feedback_class"), QStringLiteral("bad_topic"));
+		else if (boundaryRecoverable)
+			record.insert(QStringLiteral("generated_feedback_class"), QStringLiteral("good_topic_bad_boundary"));
+		else if (diagnosticRejection.contains(QStringLiteral("incomplete_viewer_arc"), Qt::CaseInsensitive))
+			record.insert(QStringLiteral("generated_feedback_class"),
+				      QStringLiteral("incomplete_viewer_arc_unclassified"));
 	}
 
 	if (!humanReason.trimmed().isEmpty())
@@ -720,6 +756,59 @@ static bool structuredFeedbackBool(const QJsonObject &record, const QString &key
 	return fallback;
 }
 
+static QString structuredFeedbackString(const QJsonObject &record, const QString &key)
+{
+	const QJsonObject structured = record.value(QStringLiteral("explicit_structured_feedback")).toObject();
+	if (structured.contains(key))
+		return structured.value(key).toString();
+	return record.value(key).toString();
+}
+
+static bool diagnosticReasonIsIncompleteViewerArc(const QJsonObject &record)
+{
+	return structuredFeedbackString(record, QStringLiteral("diagnostic_rejection_reason"))
+		.contains(QStringLiteral("incomplete_viewer_arc"), Qt::CaseInsensitive);
+}
+
+static bool structuredFeedbackMarksBadTopic(const QJsonObject &record)
+{
+	return record.value(QStringLiteral("generated_feedback_class")).toString() == QStringLiteral("bad_topic") ||
+	       structuredFeedbackBool(record, QStringLiteral("bad_topic"));
+}
+
+static bool structuredFeedbackMarksRecoverableBoundary(const QJsonObject &record)
+{
+	if (structuredFeedbackMarksBadTopic(record))
+		return false;
+	return record.value(QStringLiteral("generated_feedback_class")).toString() ==
+		       QStringLiteral("good_topic_bad_boundary") ||
+	       structuredFeedbackBool(record, QStringLiteral("boundary_recoverable")) ||
+	       structuredFeedbackBool(record, QStringLiteral("good_topic_bad_boundary")) ||
+	       structuredFeedbackBool(record, QStringLiteral("incomplete_but_recoverable"));
+}
+
+static bool structuredFeedbackIgnoresTraining(const QJsonObject &record)
+{
+	return record.value(QStringLiteral("generated_feedback_class")).toString() == QStringLiteral("ignored_diagnostic") ||
+	       record.value(QStringLiteral("decision")).toString().trimmed().toLower() == QStringLiteral("ignored_diagnostic") ||
+	       record.value(QStringLiteral("explicit_review_decision")).toString().trimmed().toLower() == QStringLiteral("ignored_diagnostic") ||
+	       structuredFeedbackBool(record, QStringLiteral("ignore_for_training"));
+}
+
+static bool structuredFeedbackMarksWeakNegative(const QJsonObject &record)
+{
+	return record.value(QStringLiteral("generated_feedback_class")).toString() == QStringLiteral("weak_negative") ||
+	       structuredFeedbackBool(record, QStringLiteral("weak_negative"));
+}
+
+static bool diagnosticReasonIsExploratoryOrLowSignal(const QJsonObject &record)
+{
+	const QString reason = structuredFeedbackString(record, QStringLiteral("diagnostic_rejection_reason"));
+	return reason.contains(QStringLiteral("novelty_exploration_review_required"), Qt::CaseInsensitive) ||
+	       reason.contains(QStringLiteral("too_short"), Qt::CaseInsensitive) ||
+	       reason.contains(QStringLiteral("incomplete_viewer_arc"), Qt::CaseInsensitive);
+}
+
 static bool structuredFeedbackDescribesCompleteClip(const QJsonObject &record)
 {
 	return structuredFeedbackBool(record, QStringLiteral("has_beginning")) &&
@@ -801,7 +890,8 @@ static QString crossVideoReason(const QString &reason)
 
 static bool appendRangeSignal(QVector<FeedbackRangeSignal> &results, const ClipDuration &range, const QString &decision,
 				      const QString &source, const QString &reason, double weight, int sequence,
-				      bool semanticPrototypeEligible = false)
+				      bool semanticPrototypeEligible = false, bool weakNegative = false,
+				      bool ignoreForTraining = false)
 {
 	if (!validFeedbackRange(range))
 		return false;
@@ -813,6 +903,8 @@ static bool appendRangeSignal(QVector<FeedbackRangeSignal> &results, const ClipD
 	signal.weight = std::clamp(weight, 0.05, 4.0);
 	signal.sequence = sequence;
 	signal.semanticPrototypeEligible = semanticPrototypeEligible;
+	signal.weakNegative = weakNegative;
+	signal.ignoreForTraining = ignoreForTraining;
 	results.append(signal);
 	return true;
 }
@@ -858,7 +950,8 @@ static bool feedbackSignalReasonContains(const FeedbackRangeSignal &signal, cons
 static bool adjustedGeneratedNegativeSignal(const FeedbackRangeSignal &signal)
 {
 	return signal.decision == QStringLiteral("adjusted") &&
-	       feedbackSignalReasonContains(signal, QStringLiteral("user_adjusted_generated_boundaries"));
+	       (feedbackSignalReasonContains(signal, QStringLiteral("user_adjusted_generated_boundaries")) ||
+		feedbackSignalReasonContains(signal, QStringLiteral("user_adjusted_recoverable_boundary_original")));
 }
 
 static bool adjustedCorrectedPositiveSignal(const FeedbackRangeSignal &signal)
@@ -870,7 +963,8 @@ static bool adjustedCorrectedPositiveSignal(const FeedbackRangeSignal &signal)
 static bool approvedAdjustedOriginalNegativeSignal(const FeedbackRangeSignal &signal)
 {
 	return signal.decision == QStringLiteral("approved_adjusted") &&
-	       feedbackSignalReasonContains(signal, QStringLiteral("user_approved_corrected_original_boundaries"));
+	       (feedbackSignalReasonContains(signal, QStringLiteral("user_approved_corrected_original_boundaries")) ||
+		feedbackSignalReasonContains(signal, QStringLiteral("user_approved_recoverable_boundary_original")));
 }
 
 static bool approvedAdjustedCorrectedPositiveSignal(const FeedbackRangeSignal &signal)
@@ -897,6 +991,8 @@ static void resolvePositiveNegativeConflicts(FeedbackRangeMemory &memory)
 	for (const FeedbackRangeSignal &positive : memory.positiveRanges) {
 		bool keep = true;
 		for (const FeedbackRangeSignal &negative : memory.negativeRanges) {
+			if (negative.weakNegative || negative.ignoreForTraining)
+				continue;
 			if (!feedbackSignalsConflict(positive, negative))
 				continue;
 			if (sameCorrectedFeedbackPair(negative, positive))
@@ -1030,19 +1126,47 @@ FeedbackRangeMemory CurationFeedbackStore::loadRangeMemoryForVideo(const QString
 			return crossVideoReason(reason);
 		};
 
+		if (decision == QStringLiteral("ignored_diagnostic") || explicitDecision == QStringLiteral("ignored_diagnostic") ||
+		    structuredFeedbackIgnoresTraining(record)) {
+			const QString ignoreReason = record.value(QStringLiteral("ignore_reason"))
+				.toString(QStringLiteral("user_ignored_diagnostic_not_training_signal"));
+			if (appendRangeSignal(memory.negativeRanges, generated, QStringLiteral("ignored_diagnostic"), source,
+				      reasonForScope(ignoreReason), 0.08 * scopeWeight, rowSequence, false, true, true))
+				++memory.ignoredDiagnosticSignals;
+			continue;
+		}
+
+		const bool recoverableBoundaryFeedback =
+			structuredFeedbackMarksRecoverableBoundary(record) ||
+			((decision == QStringLiteral("adjusted") || decision == QStringLiteral("approved_adjusted") ||
+			  explicitDecision == QStringLiteral("approved_adjusted")) &&
+			 diagnosticReasonIsIncompleteViewerArc(record) && feedbackRangeMeaningfullyEdited(generated, user));
+
 		if (decision == QStringLiteral("rejected") || explicitDecision == QStringLiteral("disliked")) {
+			const bool weakNegativeFeedback = !structuredFeedbackMarksBadTopic(record) &&
+				(structuredFeedbackMarksWeakNegative(record) || diagnosticReasonIsExploratoryOrLowSignal(record));
+			const QString defaultReason = recoverableBoundaryFeedback
+				? QStringLiteral("user_rejected_recoverable_boundary_not_bad_topic")
+				: weakNegativeFeedback ? QStringLiteral("user_rejected_diagnostic_weak_negative")
+					       : QStringLiteral("user_rejected_range");
+			const double negativeWeight = recoverableBoundaryFeedback ? 0.36 : weakNegativeFeedback ? 0.18 : 1.0;
 			if (appendRangeSignal(memory.negativeRanges, generated, decision, source,
-					      reasonForScope(record.value(QStringLiteral("reject_reason"))
-								     .toString(QStringLiteral("user_rejected_range"))),
-					      1.0 * scopeWeight, rowSequence))
+					      reasonForScope(record.value(QStringLiteral("reject_reason")).toString(defaultReason)),
+					      negativeWeight * scopeWeight, rowSequence, false, weakNegativeFeedback, false)) {
 				++memory.rejectedNegativeSignals;
+				if (weakNegativeFeedback)
+					++memory.weakNegativeSignals;
+			}
 			continue;
 		}
 
 		if (decision == QStringLiteral("approved_adjusted") || explicitDecision == QStringLiteral("approved_adjusted")) {
+			const QString originalReason = recoverableBoundaryFeedback
+				? QStringLiteral("user_approved_recoverable_boundary_original")
+				: QStringLiteral("user_approved_corrected_original_boundaries");
+			const double originalWeight = recoverableBoundaryFeedback ? 0.34 : 0.58;
 			if (appendRangeSignal(memory.negativeRanges, generated, QStringLiteral("approved_adjusted"), source,
-					      reasonForScope(QStringLiteral("user_approved_corrected_original_boundaries")),
-					      0.58 * scopeWeight, rowSequence))
+					      reasonForScope(originalReason), originalWeight * scopeWeight, rowSequence))
 				++memory.adjustedNegativeSignals;
 			const ClipDuration positiveRange = validFeedbackRange(user) ? user : generated;
 			if (appendRangeSignal(memory.positiveRanges, positiveRange, QStringLiteral("approved_adjusted"), source,
@@ -1055,9 +1179,12 @@ FeedbackRangeMemory CurationFeedbackStore::loadRangeMemoryForVideo(const QString
 		}
 
 		if (decision == QStringLiteral("adjusted")) {
+			const QString originalReason = recoverableBoundaryFeedback
+				? QStringLiteral("user_adjusted_recoverable_boundary_original")
+				: QStringLiteral("user_adjusted_generated_boundaries");
+			const double originalWeight = recoverableBoundaryFeedback ? 0.38 : 0.72;
 			if (appendRangeSignal(memory.negativeRanges, generated, decision, source,
-					      reasonForScope(QStringLiteral("user_adjusted_generated_boundaries")),
-					      0.72 * scopeWeight, rowSequence))
+					      reasonForScope(originalReason), originalWeight * scopeWeight, rowSequence))
 				++memory.adjustedNegativeSignals;
 			if (feedbackRangeMeaningfullyEdited(generated, user)) {
 				const bool semanticPrototypeEligible = structuredFeedbackForcesSemanticPositive(record) ||
@@ -1105,14 +1232,15 @@ FeedbackRangeMemory CurationFeedbackStore::loadRangeMemoryForVideo(const QString
 	memory.loaded = memory.recordsRead > 0;
 	if (memory.loaded) {
 		blog(LOG_INFO,
-		     "[clip-cropper] Loaded boundary feedback range memory. video=%s preset=%s records=%d exact=%d sameContent=%d legacySameContent=%d crossVideoColdStart=%d negative=%d positive=%d rawNegative=%d rawPositive=%d rejectedNegative=%d adjustedNegative=%d adjustedPositive=%d adjustedWithoutEditedRange=%d acceptedPositive=%d approvedAdjustedPositive=%d addedByUserPositive=%d semanticPrototypePositive=%d boundaryOnlyPositive=%d prunedNegative=%d prunedPositive=%d",
+		     "[clip-cropper] Loaded boundary feedback range memory. video=%s preset=%s records=%d exact=%d sameContent=%d legacySameContent=%d crossVideoColdStart=%d negative=%d positive=%d rawNegative=%d rawPositive=%d rejectedNegative=%d weakNegative=%d ignoredDiagnostic=%d adjustedNegative=%d adjustedPositive=%d adjustedWithoutEditedRange=%d acceptedPositive=%d approvedAdjustedPositive=%d addedByUserPositive=%d semanticPrototypePositive=%d boundaryOnlyPositive=%d prunedNegative=%d prunedPositive=%d",
 		     videoPath.toUtf8().constData(), presetId.toUtf8().constData(), memory.recordsRead,
 		     memory.exactRecordsRead, memory.contentRecordsRead, memory.legacyContentRecordsRead,
 		     memory.crossVideoRecordsRead, static_cast<int>(memory.negativeRanges.size()),
 		     static_cast<int>(memory.positiveRanges.size()),
 		     memory.negativeSignalsBeforeConflictResolution,
 		     memory.positiveSignalsBeforeConflictResolution,
-		     memory.rejectedNegativeSignals, memory.adjustedNegativeSignals,
+		     memory.rejectedNegativeSignals, memory.weakNegativeSignals, memory.ignoredDiagnosticSignals,
+	     memory.adjustedNegativeSignals,
 		     memory.adjustedPositiveSignals, memory.adjustedWithoutEditedRangeSignals,
 		     memory.acceptedPositiveSignals, memory.approvedAdjustedPositiveSignals,
 		     memory.addedByUserPositiveSignals, memory.semanticPrototypePositiveSignals, memory.boundaryOnlyPositiveSignals,

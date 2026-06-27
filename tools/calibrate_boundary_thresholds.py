@@ -58,8 +58,57 @@ def is_default_no_marker_placeholder(row: dict[str, Any]) -> bool:
     return abs(user_range[0]) <= 0.05 and abs(user_range[1] - 90.0) <= 0.25
 
 
+def structured_feedback(row: dict[str, Any]) -> dict[str, Any]:
+    feedback = row.get("explicit_structured_feedback")
+    return feedback if isinstance(feedback, dict) else {}
+
+
+def feedback_bool(row: dict[str, Any], key: str) -> bool:
+    feedback = structured_feedback(row)
+    value = feedback.get(key, row.get(f"feedback_{key}"))
+    return value is True
+
+
+def diagnostic_rejection_reason(row: dict[str, Any]) -> str:
+    feedback = structured_feedback(row)
+    return str(feedback.get("diagnostic_rejection_reason") or row.get("diagnostic_rejection_reason") or "")
+
+
+def is_incomplete_viewer_arc(row: dict[str, Any]) -> bool:
+    return "incomplete_viewer_arc" in diagnostic_rejection_reason(row)
+
+
+def is_bad_topic_feedback(row: dict[str, Any]) -> bool:
+    return str(row.get("generated_feedback_class", "")) == "bad_topic" or feedback_bool(row, "bad_topic")
+
+
+def is_boundary_recoverable_feedback(row: dict[str, Any]) -> bool:
+    if is_bad_topic_feedback(row):
+        return False
+    if str(row.get("generated_feedback_class", "")) == "good_topic_bad_boundary":
+        return True
+    if feedback_bool(row, "boundary_recoverable") or feedback_bool(row, "good_topic_bad_boundary"):
+        return True
+    if feedback_bool(row, "incomplete_but_recoverable"):
+        return True
+    return row.get("decision") in {"adjusted", "approved_adjusted"} and is_incomplete_viewer_arc(row)
+
+
+def is_ignored_or_weak_training_signal(row: dict[str, Any]) -> bool:
+    feedback_class = str(row.get("generated_feedback_class", ""))
+    return (
+        row.get("decision") == "ignored_diagnostic"
+        or row.get("explicit_review_decision") == "ignored_diagnostic"
+        or feedback_class in {"ignored_diagnostic", "weak_negative"}
+        or feedback_bool(row, "ignore_for_training")
+        or feedback_bool(row, "weak_negative")
+    )
+
+
 def is_calibratable_feedback(row: dict[str, Any]) -> bool:
-    if row.get("decision") == "removed_unrated":
+    if row.get("decision") in {"removed_unrated", "ignored_diagnostic"}:
+        return False
+    if is_ignored_or_weak_training_signal(row):
         return False
     if is_default_no_marker_placeholder(row):
         return False
@@ -96,10 +145,20 @@ def profile_for_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     ]
 
     total = max(1, len(rows_for_stats))
+    recoverable_boundary_rows = [row for row in rows_for_stats if is_boundary_recoverable_feedback(row)]
+    bad_topic_rows = [row for row in rows_for_stats if is_bad_topic_feedback(row)]
+    incomplete_viewer_arc_rows = [row for row in rows_for_stats if is_incomplete_viewer_arc(row)]
+    ignored_or_weak_rows = [row for row in rows if is_ignored_or_weak_training_signal(row)]
+    pure_rejected_rows = [
+        row for row in rows_for_stats
+        if row.get("decision") == "rejected" and not is_boundary_recoverable_feedback(row)
+    ]
+
     start_late_rate = starts["starts_too_late"] / total
     ends_early_rate = ends["ends_too_early"] / total
     overextended_rate = ends["overextended_after_resolution"] / total
-    reject_rate = decisions["rejected"] / total
+    recoverable_boundary_rate = len(recoverable_boundary_rows) / total
+    reject_rate = len(pure_rejected_rows) / total
 
     lookback = 60.0
     if start_late_errors:
@@ -109,13 +168,13 @@ def profile_for_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     if ends_early_errors:
         lookahead = clamp(max(42.0, median(ends_early_errors) + 28.0), 24.0, 90.0)
 
-    context_weight = clamp(1.0 + (start_late_rate * 0.55), 0.85, 1.70)
+    context_weight = clamp(1.0 + (start_late_rate * 0.55) + (recoverable_boundary_rate * 0.18), 0.85, 1.70)
     hook_weight = clamp(1.0 + (start_late_rate * 0.18), 0.85, 1.35)
     development_weight = 1.0
     resolution_weight = clamp(1.0 + (ends_early_rate * 0.35) + (overextended_rate * 0.20), 0.85, 1.70)
     target_weight = clamp(1.0 + (reject_rate * 0.30), 0.90, 1.50)
     defect_penalty = clamp(1.0 + (overextended_rate * 0.65) + (reject_rate * 0.25), 0.95, 2.20)
-    min_arc_confidence = clamp(0.30 + (reject_rate * 0.08) - (start_late_rate * 0.04), 0.24, 0.48)
+    min_arc_confidence = clamp(0.30 + (reject_rate * 0.08) - (start_late_rate * 0.04) - (recoverable_boundary_rate * 0.06), 0.24, 0.48)
 
     return {
         "records": len(rows),
@@ -123,6 +182,11 @@ def profile_for_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "decision_counts": dict(decisions),
         "start_error_counts": dict(starts),
         "end_error_counts": dict(ends),
+        "recoverable_boundary_records": len(recoverable_boundary_rows),
+        "ignored_or_weak_training_records": len(ignored_or_weak_rows),
+        "bad_topic_records": len(bad_topic_rows),
+        "incomplete_viewer_arc_records": len(incomplete_viewer_arc_rows),
+        "pure_rejected_records": len(pure_rejected_rows),
         "max_question_lookback_sec": round(lookback, 2),
         "lookahead_sec": round(lookahead, 2),
         "context_weight": round(context_weight, 4),

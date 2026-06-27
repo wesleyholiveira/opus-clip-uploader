@@ -71,6 +71,7 @@ private:
 	bool boundaryFeedbackSaved = false;
 	bool updatingClipTable = false;
 	bool diagnosticReviewMode = false;
+	bool restoredReviewedPositiveMarkersFromMemory = false;
 	bool feedbackTranscriptLoaded = false;
 	RecordingTranscript feedbackTranscript;
 
@@ -105,6 +106,7 @@ private:
 	void updateSemanticSuggestionProgress(const ReviewScoringProgressUpdate &progress);
 	void closeSemanticSuggestionProgressDialog();
 	void applySemanticClipSuggestionResult(const ReviewScoringPreparationResult &result);
+	bool restoreReviewedPositiveMarkersFromFeedbackIfEmpty(const QString &reason);
 	void captureInitialSemanticSuggestion();
 	void ensureReviewFeedbackSnapshot(const QString &source);
 	void saveBoundaryFeedback(const QString &eventName);

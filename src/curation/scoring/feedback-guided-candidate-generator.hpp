@@ -23,6 +23,11 @@ struct FeedbackGuidedCandidateGenerationOptions {
 	int maxSeeds = 96;
 	int maxSemanticPrototypeSeeds = 48;
 	int maxPatternSeeds = 48;
+	// Direct replay of approved ranges is useful only during cold start.
+	// Once the same video has many positives, exact/boundary seeds become
+	// repetition traps and should give budget back to discovery scans.
+	int maxExactPositiveSeeds = 6;
+	int maxBoundaryVariantSeeds = 8;
 };
 
 class FeedbackGuidedCandidateGenerator {

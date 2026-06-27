@@ -665,6 +665,7 @@ void prepare_review_scoring_async(QWidget *parent, const QString &videoPath, con
 	ReviewScoringPreparationResult startedResult;
 	startedResult.attempted = true;
 
+	QVector<ClipDuration> existingReviewRanges = baseSettings.clipDurations;
 	const CurationSettings transcriptSettings = scoringSettingsFromReviewSettings(baseSettings);
 	reportProgress(parent, progressCallback, obsText("Status.SuggestClipsPreparingTranscript"), 8);
 
@@ -675,7 +676,7 @@ void prepare_review_scoring_async(QWidget *parent, const QString &videoPath, con
 
 	ensure_transcript_for_curation_async(
 		parent, videoPath, transcriptSettings, true,
-		[parent, videoPath, transcriptSettings, startedResult = std::move(startedResult), progressCallback,
+		[parent, videoPath, transcriptSettings, existingReviewRanges = std::move(existingReviewRanges), startedResult = std::move(startedResult), progressCallback,
 		 finishedCallback = std::move(finishedCallback)](RecordingTranscript transcript,
 								 bool canceled) mutable {
 			ReviewScoringPreparationResult result = std::move(startedResult);
@@ -734,6 +735,7 @@ void prepare_review_scoring_async(QWidget *parent, const QString &videoPath, con
 			}
 
 			auto *workerThread = QThread::create([safeContext, videoPath, transcriptSettings,
+							      existingReviewRanges = std::move(existingReviewRanges),
 							      transcript = std::move(transcript),
 							      result = std::move(result), progressCallback,
 							      llamaOptions = std::move(llamaOptions),
@@ -842,6 +844,7 @@ void prepare_review_scoring_async(QWidget *parent, const QString &videoPath, con
 							     semanticReranker.get());
 				options.videoPath = videoPath;
 				options.contentIds = QStringList{result.contentId} + result.contentIdAliases;
+				options.existingReviewRanges = existingReviewRanges;
 				options.cancellationCallback = [cancelRequested]() {
 					return cancelRequested && cancelRequested->load();
 				};

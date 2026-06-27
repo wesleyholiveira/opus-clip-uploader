@@ -14,6 +14,8 @@ struct ViewerArcGateOptions {
 	ClipDuration searchRange;
 	double minDurationSec = 0.0;
 	double maxDurationSec = 180.0;
+	QString mainTarget;
+	bool reliableMainTarget = false;
 };
 
 class ViewerArcGate {
@@ -35,6 +37,7 @@ private:
 	bool hasExplicitViewerOrigin(const ClipCandidate &candidate) const;
 	bool hasLearnedFeedbackArcSupport(const ClipCandidate &candidate) const;
 	bool hasDirectPositiveFeedbackArcSupport(const ClipCandidate &candidate) const;
+	bool hasSelfContainedAdviceArcSupport(const ClipCandidate &candidate, const ViewerArcGateOptions &options) const;
 	QString invalidReason(const ClipCandidate &candidate) const;
 	double calibratedMinArcConfidence(const ViewerArcGateOptions &options) const;
 };

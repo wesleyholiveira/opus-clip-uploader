@@ -80,8 +80,15 @@ ClipCandidate CandidateBuilder::buildVariantFromSeed(const TranscriptIndex &inde
 	if (seedWasPositiveExact) {
 		const bool sameRange = std::fabs(seed.range.startSec - candidate.range.startSec) <= 0.75 &&
 			std::fabs(seed.range.endSec - candidate.range.endSec) <= 0.75;
-		candidate.evidence.append(sameRange ? QStringLiteral("feedback_positive_exact_seed_preserved")
-					      : QStringLiteral("feedback_positive_exact_seed_boundary_variant"));
+		if (sameRange) {
+			candidate.source = QStringLiteral("feedback_positive_exact_seed");
+			candidate.evidence.append(QStringLiteral("feedback_positive_exact_seed_preserved"));
+		} else {
+			candidate.source = QStringLiteral("feedback_positive_boundary_variant");
+			candidate.evidence.removeAll(QStringLiteral("feedback_positive_exact_seed"));
+			candidate.evidence.removeAll(QStringLiteral("feedback_positive_exact_seed_preserved"));
+			candidate.evidence.append(QStringLiteral("feedback_positive_boundary_variant_from_user_seed"));
+		}
 	}
 	candidate.evidence.removeDuplicates();
 	return scoreStructurally(index, candidate);

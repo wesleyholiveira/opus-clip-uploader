@@ -53,8 +53,53 @@ def pct_within(values: list[float], threshold: float) -> float:
     return 100.0 * sum(1 for value in values if value <= threshold) / len(values)
 
 
+def structured_feedback(row: dict[str, Any]) -> dict[str, Any]:
+    feedback = row.get("explicit_structured_feedback")
+    return feedback if isinstance(feedback, dict) else {}
+
+
+def feedback_bool(row: dict[str, Any], key: str) -> bool:
+    feedback = structured_feedback(row)
+    return feedback.get(key, row.get(f"feedback_{key}")) is True
+
+
+def diagnostic_rejection_reason(row: dict[str, Any]) -> str:
+    feedback = structured_feedback(row)
+    return str(feedback.get("diagnostic_rejection_reason") or row.get("diagnostic_rejection_reason") or "")
+
+
+def is_boundary_recoverable_feedback(row: dict[str, Any]) -> bool:
+    if str(row.get("generated_feedback_class", "")) == "bad_topic" or feedback_bool(row, "bad_topic"):
+        return False
+    if (
+        str(row.get("generated_feedback_class", "")) == "good_topic_bad_boundary"
+        or feedback_bool(row, "boundary_recoverable")
+        or feedback_bool(row, "good_topic_bad_boundary")
+        or feedback_bool(row, "incomplete_but_recoverable")
+    ):
+        return True
+    return row.get("decision") in {"adjusted", "approved_adjusted"} and is_incomplete_viewer_arc(row)
+
+
+def is_incomplete_viewer_arc(row: dict[str, Any]) -> bool:
+    return "incomplete_viewer_arc" in diagnostic_rejection_reason(row)
+
+
+def is_ignored_or_weak_training_signal(row: dict[str, Any]) -> bool:
+    feedback_class = str(row.get("generated_feedback_class", ""))
+    return (
+        row.get("decision") == "ignored_diagnostic"
+        or row.get("explicit_review_decision") == "ignored_diagnostic"
+        or feedback_class in {"ignored_diagnostic", "weak_negative"}
+        or feedback_bool(row, "ignore_for_training")
+        or feedback_bool(row, "weak_negative")
+    )
+
+
 def is_calibratable_feedback(row: dict[str, Any]) -> bool:
-    if row.get("decision") == "removed_unrated":
+    if row.get("decision") in {"removed_unrated", "ignored_diagnostic"}:
+        return False
+    if is_ignored_or_weak_training_signal(row):
         return False
     if row.get("event") == "review_rejected" and not row.get("explicit_review_decision"):
         return False
@@ -75,8 +120,13 @@ def print_group(name: str, rows: list[dict[str, Any]]) -> None:
     rows_for_stats = calibratable_rows or rows
     start_types = Counter(str(row.get("start_error_type", "unknown")) for row in rows_for_stats)
     end_types = Counter(str(row.get("end_error_type", "unknown")) for row in rows_for_stats)
+    recoverable_boundary = sum(1 for row in rows_for_stats if is_boundary_recoverable_feedback(row))
+    incomplete_arcs = sum(1 for row in rows_for_stats if is_incomplete_viewer_arc(row))
+    bad_topic = sum(1 for row in rows_for_stats if str(row.get("generated_feedback_class", "")) == "bad_topic" or feedback_bool(row, "bad_topic"))
+    ignored_or_weak = sum(1 for row in rows if is_ignored_or_weak_training_signal(row))
     print("start_error_type:", ", ".join(f"{k}={v}" for k, v in start_types.most_common()))
     print("end_error_type:", ", ".join(f"{k}={v}" for k, v in end_types.most_common()))
+    print(f"feedback_classes: recoverable_boundary={recoverable_boundary} incomplete_viewer_arc={incomplete_arcs} bad_topic={bad_topic} ignored_or_weak_training={ignored_or_weak}")
 
     start_errors = abs_values(rows_for_stats, "start_error_sec")
     end_errors = abs_values(rows_for_stats, "end_error_sec")

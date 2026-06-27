@@ -42,7 +42,8 @@ EVIDENCE_FEATURES = [
 
 STRUCTURED_FEEDBACK_FEATURES = [
     "userSaysHasBeginning", "userSaysHasDevelopment", "userSaysHasConclusion", "userSaysSingleTopic",
-    "userSaysSmoothEnding", "userSaysGoodHook", "userSaysViewerCue", "userSaysTopicShift",
+    "userSaysSmoothEnding", "userSaysGoodHook", "userSaysViewerCue", "userSaysGoodTopicBadBoundary",
+    "userSaysIncompleteRecoverable", "userSaysBoundaryRecoverable", "userSaysBadTopic", "userSaysTopicShift",
     "userSaysStartsTooLate", "userSaysStartsTooEarly", "userSaysEndsTooEarly",
     "userSaysOverextended", "userSaysMetaNoise",
 ]
@@ -57,7 +58,7 @@ FEATURE_ORDER = SCORE_FEATURES + FEEDBACK_FEATURES + EVIDENCE_FEATURES + STRUCTU
 POSITIVE_DECISIONS = {"accepted", "approved_adjusted"}
 NEGATIVE_DECISIONS = {"rejected", "adjusted"}
 RANGE_MEMORY_POSITIVE_DECISIONS = {"accepted", "approved_adjusted", "added_by_user"}
-SKIP_DECISIONS = {"removed_unrated"}
+SKIP_DECISIONS = {"removed_unrated", "ignored_diagnostic"}
 
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -127,6 +128,59 @@ def structured_reviewed_range_for_row(row: dict[str, Any]) -> tuple[float, float
     feedback = structured_feedback(row)
     return range_from_keys(feedback, "range_start_sec", "range_end_sec")
 
+
+def feedback_bool(row: dict[str, Any], key: str) -> bool:
+    feedback = structured_feedback(row)
+    return feedback.get(key, row.get(f"feedback_{key}")) is True
+
+
+def diagnostic_rejection_reason(row: dict[str, Any]) -> str:
+    feedback = structured_feedback(row)
+    return str(feedback.get("diagnostic_rejection_reason") or row.get("diagnostic_rejection_reason") or "")
+
+
+def is_incomplete_viewer_arc(row: dict[str, Any]) -> bool:
+    return "incomplete_viewer_arc" in diagnostic_rejection_reason(row)
+
+
+def is_bad_topic_feedback(row: dict[str, Any]) -> bool:
+    return str(row.get("generated_feedback_class", "")) == "bad_topic" or feedback_bool(row, "bad_topic")
+
+
+def is_boundary_recoverable_feedback(row: dict[str, Any]) -> bool:
+    if is_bad_topic_feedback(row):
+        return False
+    if str(row.get("generated_feedback_class", "")) == "good_topic_bad_boundary":
+        return True
+    if feedback_bool(row, "boundary_recoverable") or feedback_bool(row, "good_topic_bad_boundary"):
+        return True
+    if feedback_bool(row, "incomplete_but_recoverable"):
+        return True
+    return row.get("decision") in {"adjusted", "approved_adjusted"} and is_incomplete_viewer_arc(row)
+
+
+def is_boundary_recoverable_only(row: dict[str, Any]) -> bool:
+    decision = str(row.get("decision", "")).strip()
+    return decision in {"rejected", "adjusted", "approved_adjusted"} and is_boundary_recoverable_feedback(row)
+
+
+def is_ignored_or_weak_training_signal(row: dict[str, Any]) -> bool:
+    feedback_class = str(row.get("generated_feedback_class", ""))
+    return (
+        str(row.get("decision", "")).strip() == "ignored_diagnostic"
+        or str(row.get("explicit_review_decision", "")).strip() == "ignored_diagnostic"
+        or feedback_class in {"ignored_diagnostic", "weak_negative"}
+        or feedback_bool(row, "ignore_for_training")
+        or feedback_bool(row, "weak_negative")
+    )
+
+
+def is_edited_approved_adjustment(row: dict[str, Any]) -> bool:
+    if str(row.get("decision", "")).strip() != "approved_adjusted":
+        return False
+    return range_meaningfully_edited(diagnostic_original_range_for_row(row), user_range_for_row(row))
+
+
 def is_default_no_marker_placeholder(row: dict[str, Any]) -> bool:
     decision = str(row.get("decision", "")).strip()
     if decision != "added_by_user":
@@ -143,6 +197,8 @@ def is_default_no_marker_placeholder(row: dict[str, Any]) -> bool:
 def is_calibratable(row: dict[str, Any]) -> bool:
     if row.get("decision") in SKIP_DECISIONS:
         return False
+    if is_ignored_or_weak_training_signal(row):
+        return False
     if is_default_no_marker_placeholder(row):
         return False
     if row.get("event") == "review_rejected" and not row.get("explicit_review_decision"):
@@ -152,6 +208,15 @@ def is_calibratable(row: dict[str, Any]) -> bool:
 
 def label_for_row(row: dict[str, Any]) -> int | None:
     decision = str(row.get("decision", "")).strip()
+    # A recoverable incomplete arc means the topic can be useful while the generated
+    # boundaries are bad. Do not emit it as a pure ranker negative/positive row; keep
+    # it for range memory and boundary calibration instead.
+    if is_ignored_or_weak_training_signal(row):
+        return None
+    if is_boundary_recoverable_only(row):
+        return None
+    if decision == "approved_adjusted" and is_edited_approved_adjustment(row):
+        return None
     if decision in POSITIVE_DECISIONS:
         return 1
     if decision in NEGATIVE_DECISIONS:
@@ -310,18 +375,18 @@ def build_signals(rows: Iterable[dict[str, Any]]) -> dict[tuple[str, str, str], 
 
         if decision == "adjusted":
             # Runtime memory treats the generated range as the bad boundary and
-            # the corrected user range as the positive target. If the user marked
-            # "adjusted" but did not actually edit the range, keep only the
-            # negative generated-boundary signal; there is no corrected positive
-            # target to learn from.
-            if generated is not None:
+            # the corrected user range as the positive target. Recoverable incomplete
+            # arcs are not topic negatives; avoid using them as negative memory that
+            # suppresses nearby corrected positives.
+            if generated is not None and not is_boundary_recoverable_feedback(row):
                 group["negative"].append((line_no, generated))
             if range_meaningfully_edited(generated, user):
                 group["positive"].append((line_no, user))
             continue
 
         if decision in NEGATIVE_DECISIONS and generated is not None:
-            group["negative"].append((line_no, generated))
+            if not is_boundary_recoverable_feedback(row):
+                group["negative"].append((line_no, generated))
             continue
 
         if decision in RANGE_MEMORY_POSITIVE_DECISIONS:
@@ -379,6 +444,10 @@ def structured_feedback_features_for_row(row: dict[str, Any]) -> dict[str, float
         "userSaysSmoothEnding": bool_feature(row.get("feedback_has_smooth_ending", feedback.get("has_smooth_ending"))),
         "userSaysGoodHook": bool_feature(row.get("feedback_has_good_hook", feedback.get("has_good_hook"))),
         "userSaysViewerCue": bool_feature(row.get("feedback_has_viewer_cue", feedback.get("has_viewer_cue"))),
+        "userSaysGoodTopicBadBoundary": bool_feature(row.get("feedback_good_topic_bad_boundary", feedback.get("good_topic_bad_boundary"))),
+        "userSaysIncompleteRecoverable": bool_feature(row.get("feedback_incomplete_but_recoverable", feedback.get("incomplete_but_recoverable"))),
+        "userSaysBoundaryRecoverable": bool_feature(row.get("feedback_boundary_recoverable", feedback.get("boundary_recoverable"))),
+        "userSaysBadTopic": bool_feature(row.get("feedback_bad_topic", feedback.get("bad_topic"))),
         "userSaysTopicShift": bool_feature(row.get("feedback_has_topic_shift", feedback.get("has_topic_shift"))),
         "userSaysStartsTooLate": bool_feature(row.get("feedback_starts_too_late", feedback.get("starts_too_late"))),
         "userSaysStartsTooEarly": bool_feature(row.get("feedback_starts_too_early", feedback.get("starts_too_early"))),
@@ -452,6 +521,8 @@ def build_dataset(rows: list[dict[str, Any]], preset: str | None = None) -> list
                 "preset": row.get("preset"),
                 "decision": row.get("decision"),
                 "label_reason": "adjusted_generated_range_is_negative" if row.get("decision") == "adjusted" else None,
+                "generated_feedback_class": row.get("generated_feedback_class"),
+                "diagnostic_rejection_reason": diagnostic_rejection_reason(row),
                 "explicit_review_decision": row.get("explicit_review_decision"),
                 "video_file_name": row.get("video_file_name"),
                 "start_sec": r[0],
@@ -477,7 +548,14 @@ def main() -> int:
             handle.write(json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n")
     positives = sum(1 for item in dataset if item["label"] == 1)
     negatives = len(dataset) - positives
-    print(f"Wrote {args.output} examples={len(dataset)} positives={positives} negatives={negatives}")
+    selected = [row for row in rows if is_calibratable(row) and (not args.preset or str(row.get("preset") or "auto") == args.preset)]
+    recoverable_excluded = sum(1 for row in selected if is_boundary_recoverable_only(row))
+    ignored_or_weak_excluded = sum(1 for row in selected if is_ignored_or_weak_training_signal(row))
+    print(
+        f"Wrote {args.output} examples={len(dataset)} positives={positives} negatives={negatives} "
+        f"recoverable_boundary_excluded={recoverable_excluded} "
+        f"ignored_or_weak_training_excluded={ignored_or_weak_excluded}"
+    )
     return 0 if dataset else 1
 
 

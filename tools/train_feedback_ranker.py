@@ -204,6 +204,8 @@ def main() -> int:
     parser.add_argument("--preset", default="viewer_message_response")
     parser.add_argument("--dataset-output", type=Path)
     parser.add_argument("--min-examples", type=int, default=40)
+    parser.add_argument("--min-positives", type=int, default=30)
+    parser.add_argument("--min-negatives", type=int, default=60)
     parser.add_argument("--epochs", type=int, default=260)
     parser.add_argument("--learning-rate", type=float, default=0.055)
     parser.add_argument("--l2", type=float, default=0.018)
@@ -215,8 +217,17 @@ def main() -> int:
     dataset = build_dataset(rows, preset=args.preset or None)
     positives = sum(1 for item in dataset if item["label"] == 1)
     negatives = len(dataset) - positives
-    if len(dataset) < args.min_examples or positives <= 0 or negatives <= 0:
-        print(f"Not enough data to train: examples={len(dataset)} positives={positives} negatives={negatives}")
+    if len(dataset) < args.min_examples or positives < args.min_positives or negatives < args.min_negatives:
+        print(
+            "Not enough balanced data to train: "
+            f"examples={len(dataset)}/{args.min_examples} "
+            f"positives={positives}/{args.min_positives} "
+            f"negatives={negatives}/{args.min_negatives}"
+        )
+        print(
+            "Keep calibrating boundary feedback first. Override --min-positives/--min-negatives only "
+            "for inspection experiments, not production runtime models."
+        )
         return 1
 
     if args.dataset_output:

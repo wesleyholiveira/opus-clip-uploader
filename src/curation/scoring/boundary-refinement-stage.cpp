@@ -36,6 +36,20 @@ bool hasDetailedArcEvidence(const ClipCandidate &candidate)
 	});
 }
 
+static bool hasEvidenceContaining(const ClipCandidate &candidate, const QString &needle)
+{
+	return std::any_of(candidate.evidence.constBegin(), candidate.evidence.constEnd(), [&needle](const QString &evidence) {
+		return evidence == needle || evidence.contains(needle);
+	});
+}
+
+static bool isExactPositiveFeedbackSeed(const ClipCandidate &candidate)
+{
+	return candidate.source == QStringLiteral("feedback_positive_exact_seed") ||
+		hasEvidenceContaining(candidate, QStringLiteral("feedback_positive_exact_seed_preserved")) ||
+		hasEvidenceContaining(candidate, QStringLiteral("complete_viewer_arc_gate_passed_by_user_feedback"));
+}
+
 } // namespace
 
 QVector<ClipCandidate> BoundaryRefinementStage::apply(const TranscriptIndex &index,
@@ -101,6 +115,13 @@ ClipCandidate BoundaryRefinementStage::refineOne(const TranscriptIndex &index,
 	const ClipCandidate &candidate,
 	const BoundaryRefinementStageOptions &options) const
 {
+	if (options.viewerMessagePreset && isExactPositiveFeedbackSeed(candidate)) {
+		ClipCandidate preserved = candidate;
+		preserved.evidence.append(QStringLiteral("boundary_refinement_skipped_for_exact_positive_feedback_seed"));
+		preserved.evidence.removeDuplicates();
+		return preserved;
+	}
+
 	ExchangeArcBoundaryRefinementOptions refinerOptions;
 	refinerOptions.generation = options.generation;
 	refinerOptions.scoring = options.scoring;

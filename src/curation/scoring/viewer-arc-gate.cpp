@@ -155,6 +155,38 @@ static bool hasHardContextBlockerForLearnedArc(const ClipCandidate &candidate)
 		(noArcShape && !explicitOrigin && (metaOrMusicEvidence || candidate.range.startSec <= 75.0));
 }
 
+
+static bool targetAllowsSelfContainedAdviceArc(const ViewerArcGateOptions &options)
+{
+	if (options.presetId != QStringLiteral("viewer_message_response"))
+		return false;
+	const QString target = foldedCueText(options.mainTarget);
+	if (target.isEmpty())
+		return false;
+	return textContainsAny(target, {
+		"motivational speech", "motivational", "mental health", "self care", "personal growth",
+		"emotional pain", "relationships", "relationship", "terapia", "ansiedade", "depress",
+		"dor emocional", "crescimento pessoal", "auto cuidado", "autocuidado", "relacionamento"
+	});
+}
+
+static bool hasFeedbackGuidedSelfContainedSignal(const ClipCandidate &candidate)
+{
+	const double positiveRange = evidenceScoreValue(candidate, QStringLiteral("feedback_positive_range:"));
+	const double positiveText = evidenceScoreValue(candidate, QStringLiteral("feedback_positive_text:"));
+	const double positiveGuided = evidenceScoreValue(candidate, QStringLiteral("feedback_positive_guided_score:"));
+	const double feedbackMargin = evidenceScoreValue(candidate, QStringLiteral("feedback_margin:"));
+	const double prototypeSimilarity = evidenceScoreValue(candidate, QStringLiteral("feedback_prototype_similarity:"));
+	const double patternScore = evidenceScoreValue(candidate, QStringLiteral("feedback_pattern_score:"));
+	const bool feedbackPatternOrPrototype = candidate.source.contains(QStringLiteral("feedback_positive_pattern")) ||
+		candidate.source.contains(QStringLiteral("feedback_positive_semantic_prototype")) ||
+		hasEvidence(candidate, QStringLiteral("feedback_positive_pattern_search")) ||
+		hasEvidence(candidate, QStringLiteral("feedback_positive_semantic_prototype")) ||
+		hasEvidenceContaining(candidate, QStringLiteral("feedback_consistency_positive_margin"));
+	return feedbackPatternOrPrototype || positiveGuided >= 0.18 || positiveRange >= 0.18 ||
+		positiveText >= 0.30 || feedbackMargin >= 0.12 || prototypeSimilarity >= 0.24 || patternScore >= 0.24;
+}
+
 } // namespace
 
 double ViewerArcGate::calibratedMinArcConfidence(const ViewerArcGateOptions &options) const
@@ -226,9 +258,24 @@ bool ViewerArcGate::hasDirectPositiveFeedbackArcSupport(const ClipCandidate &can
 	const double positiveRange = evidenceScoreValue(candidate, QStringLiteral("feedback_positive_range:"));
 	const double positiveText = evidenceScoreValue(candidate, QStringLiteral("feedback_positive_text:"));
 	const double positiveGuided = evidenceScoreValue(candidate, QStringLiteral("feedback_positive_guided_score:"));
-	const bool exactPositiveSeed = isUserAcceptedFeedbackSeed(candidate) || positiveRange >= 0.92;
+	const bool exactPositiveSeed = isUserAcceptedFeedbackSeed(candidate);
 	if (!exactPositiveSeed && hasHardContextBlockerForLearnedArc(candidate))
 		return false;
+
+	// A high similarity to a corrected/accepted range is not enough to override the
+	// viewer-arc gate. Boundary variants often overlap a positive range perfectly
+	// while still missing the original viewer message or answer origin. Let those
+	// variants surface as diagnostics/recoverable review items instead of applying
+	// them as final markers.
+	if (!exactPositiveSeed) {
+		const bool hasOriginOrValidArc = hasExplicitViewerOrigin(candidate) ||
+			candidate.scores.semanticViewerMessage >= 0.70 || hasValidStateMachine(candidate) ||
+			hasRecoveredOpening(candidate) || hasStrongRecoveredOpening(candidate);
+		if (!hasOriginOrValidArc)
+			return false;
+		if (hasInvalidStateMachine(candidate) && !hasRecoveredOpening(candidate) && !hasStrongRecoveredOpening(candidate))
+			return false;
+	}
 
 	const QString reason = invalidReason(candidate);
 	if (reason == QStringLiteral("multiple_viewer_messages_inside_arc") ||
@@ -360,6 +407,74 @@ bool ViewerArcGate::hasLearnedFeedbackArcSupport(const ClipCandidate &candidate)
 		(candidate.range.endSec - candidate.range.startSec) <= 180.0;
 
 	return durationOk && hasUsefulBody && hasEndingOrResolution;
+}
+
+
+bool ViewerArcGate::hasSelfContainedAdviceArcSupport(const ClipCandidate &candidate,
+	const ViewerArcGateOptions &options) const
+{
+	if (!targetAllowsSelfContainedAdviceArc(options))
+		return false;
+	if (isFeedbackSuppressed(candidate) || hasHardContextBlockerForLearnedArc(candidate))
+		return false;
+
+	const QString reason = invalidReason(candidate);
+	if (reason == QStringLiteral("multiple_viewer_messages_inside_arc") ||
+	    reason == QStringLiteral("topic_shift_before_resolution"))
+		return false;
+
+	if (hasEvidence(candidate, QStringLiteral("feedback_negative_contamination")) ||
+	    hasEvidence(candidate, QStringLiteral("feedback_negative_suppressed")) ||
+	    hasEvidence(candidate, QStringLiteral("feedback_consistency_rejected")) ||
+	    hasEvidence(candidate, QStringLiteral("feedback_trained_ranker_rejected_negative_contamination")))
+		return false;
+
+	const double negativeRange = evidenceScoreValue(candidate, QStringLiteral("feedback_negative_range:"));
+	const double negativeText = evidenceScoreValue(candidate, QStringLiteral("feedback_negative_text:"));
+	if (negativeRange >= 0.42 || negativeText >= 0.55)
+		return false;
+
+	const double durationSec = candidate.range.endSec - candidate.range.startSec;
+	if (durationSec < 12.0 || durationSec > options.maxDurationSec || durationSec > 120.0)
+		return false;
+
+	const bool feedbackGuided = hasFeedbackGuidedSelfContainedSignal(candidate);
+	if (!feedbackGuided)
+		return false;
+
+	const bool noValidOriginOrSubspan =
+		hasEvidence(candidate, QStringLiteral("exchange_arc_window_dfs_no_valid_origin_or_answer")) ||
+		hasEvidence(candidate, QStringLiteral("exchange_arc_no_valid_subspan"));
+	const bool missingOpeningOrCue = reason == QStringLiteral("missing_viewer_message_cue") ||
+		reason == QStringLiteral("missing_explicit_opening") || noValidOriginOrSubspan ||
+		hasEvidence(candidate, QStringLiteral("arc_gate_cleared_prior_quality_rejection_from:missing_contextual_arc")) ||
+		hasEvidence(candidate, QStringLiteral("quality_rejected:missing_contextual_arc"));
+	const bool hasRealArcShape = hasValidStateMachine(candidate) ||
+		candidate.scores.arcCompleteness >= std::max(0.20, calibratedMinArcConfidence(options) * 0.75) ||
+		(candidate.scores.arcOpening >= 0.30 &&
+		 (candidate.scores.arcDevelopment >= 0.32 || candidate.scores.arcConclusion >= 0.32)) ||
+		hasEvidence(candidate, QStringLiteral("viewer_arc_opening_recovered")) ||
+		hasEvidenceStartingWith(candidate, QStringLiteral("exchange_arc_state_machine:repaired_strong"));
+	if (missingOpeningOrCue && !hasRealArcShape)
+		return false;
+
+	const bool hasUsefulBody = candidate.scores.semanticClipValue >= 0.62 ||
+		candidate.scores.semanticTarget >= 0.62 || candidate.scores.semanticDirectAnswer >= 0.58 ||
+		candidate.scores.advice >= 0.58 || candidate.scores.explanation >= 0.58 ||
+		candidate.scores.emotional >= 0.58 || candidate.scores.semanticEmpathy >= 0.56 ||
+		candidate.scores.rerankerRaw >= 0.54 || candidate.scores.coarseSemantic >= 0.22;
+	const bool hasHookOrOpening = candidate.scores.semanticOpeningHook >= 0.60 ||
+		candidate.scores.hook >= 0.64 || candidate.scores.semanticHook >= 0.60 ||
+		candidate.scores.rerankerOpeningDefect <= 0.22 || hasEvidenceContaining(candidate, QStringLiteral(":opening"));
+	const bool hasEndingOrResolution = candidate.scores.semanticEndingResolution >= 0.60 ||
+		candidate.scores.semanticResolution >= 0.60 || candidate.scores.arcConclusion >= 0.34 ||
+		candidate.endsBeforeNextCue || candidate.scores.rerankerEndingDefect <= 0.28 ||
+		hasEvidenceContaining(candidate, QStringLiteral(":resolution"));
+	const bool notTooDefective = candidate.scores.rerankerStructureDefect <= 0.82 &&
+		candidate.scores.rerankerOpeningDefect <= 0.78 && candidate.scores.rerankerEndingDefect <= 0.72;
+	const bool textHasEnoughBody = candidate.text.simplified().size() >= 80 || durationSec >= 24.0;
+
+	return hasUsefulBody && hasHookOrOpening && hasEndingOrResolution && notTooDefective && textHasEnoughBody;
 }
 
 bool ViewerArcGate::looksLikeViewerOriginText(const QString &rawText) const
@@ -508,6 +623,8 @@ bool ViewerArcGate::hasCompleteArc(const ClipCandidate &candidate, const ViewerA
 		return true;
 	if (hasLearnedFeedbackArcSupport(candidate))
 		return true;
+	if (hasSelfContainedAdviceArcSupport(candidate, options))
+		return true;
 	if (hasInvalidStateMachine(candidate))
 		return false;
 
@@ -541,12 +658,16 @@ QVector<ClipCandidate> ViewerArcGate::apply(QVector<ClipCandidate> candidates, c
 			const bool userSeed = isUserAcceptedFeedbackSeed(candidate);
 			const bool directPositiveSeed = !userSeed && hasDirectPositiveFeedbackArcSupport(candidate);
 			const bool learnedSeed = !userSeed && !directPositiveSeed && hasLearnedFeedbackArcSupport(candidate);
+			const bool selfContainedAdviceSeed = !userSeed && !directPositiveSeed && !learnedSeed &&
+				hasSelfContainedAdviceArcSupport(candidate, options);
 			const QString previousReason = candidate.rejectionReason.trimmed();
-			if (candidate.rejectedByQualityGate && (userSeed || directPositiveSeed || learnedSeed)) {
+			if (candidate.rejectedByQualityGate && (userSeed || directPositiveSeed || learnedSeed || selfContainedAdviceSeed)) {
 				candidate.rejectedByQualityGate = false;
 				candidate.rejectionReason.clear();
-				candidate.scores.qualityGate = std::max(candidate.scores.qualityGate, userSeed ? 0.92 : directPositiveSeed ? 0.74 : 0.68);
-				candidate.scores.final = std::max(candidate.scores.final, userSeed ? 0.88 : directPositiveSeed ? 0.60 : 0.52);
+				candidate.scores.qualityGate = std::max(candidate.scores.qualityGate,
+					userSeed ? 0.92 : directPositiveSeed ? 0.74 : learnedSeed ? 0.68 : 0.62);
+				candidate.scores.final = std::max(candidate.scores.final,
+					userSeed ? 0.88 : directPositiveSeed ? 0.60 : learnedSeed ? 0.52 : 0.48);
 				candidate.evidence.append(QStringLiteral("arc_gate_cleared_prior_quality_rejection"));
 				if (!previousReason.isEmpty())
 					candidate.evidence.append(QStringLiteral("arc_gate_cleared_prior_quality_rejection_from:%1").arg(previousReason.left(80)));
@@ -555,7 +676,9 @@ QVector<ClipCandidate> ViewerArcGate::apply(QVector<ClipCandidate> candidates, c
 				? QStringLiteral("complete_viewer_arc_gate_passed_by_user_feedback")
 				: (directPositiveSeed ? QStringLiteral("complete_viewer_arc_gate_passed_by_direct_positive_feedback")
 				               : (learnedSeed ? QStringLiteral("complete_viewer_arc_gate_passed_by_feedback_trained_ranker")
-				                              : QStringLiteral("complete_viewer_arc_gate_passed"))));
+				                              : (selfContainedAdviceSeed
+									? QStringLiteral("complete_viewer_arc_gate_passed_by_self_contained_advice_feedback")
+									: QStringLiteral("complete_viewer_arc_gate_passed")))));
 			candidate.evidence.removeDuplicates();
 			continue;
 		}
