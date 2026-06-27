@@ -182,12 +182,12 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 	src/ui/settings-dialog.cpp
 	src/ui/upload-flow.cpp
 	src/ui/upload-flow.hpp
-	src/ui/upload-confirm-dialog.cpp
+	src/ui/upload-review-flow.cpp
 	src/ui/curation-transcript-preparation.cpp
 	src/ui/curation-transcript-preparation.hpp
 	src/ui/review-scoring-preparation.cpp
 	src/ui/review-scoring-preparation.hpp
-	src/ui/video-editor-actions.cpp
+	src/ui/manual-review-actions.cpp
 	src/ui/advanced-settings-tree.cpp
 	src/ui/advanced-settings-tree.hpp
 	src/ui/video-marker-editor.cpp
@@ -202,6 +202,13 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 	src/ui/review/diagnostics-dialogs.hpp
 	src/ui/upload-review-dialog.cpp
 	src/ui/upload-review-dialog.hpp
+	src/ui/review/upload-review-dialog-layout.cpp
+	src/ui/review/upload-review-dialog-table.cpp
+	src/ui/review/upload-review-dialog-marker-io.cpp
+	src/ui/review/upload-review-dialog-suggestions.cpp
+	src/ui/review/upload-review-dialog-feedback.cpp
+	src/ui/review/upload-review-dialog-settings.cpp
+	src/ui/review/upload-review-dialog-utils.hpp
 
 	src/models/curation-settings.hpp
 	src/models/transcript.hpp

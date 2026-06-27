@@ -6,12 +6,16 @@
 #include <QSizePolicy>
 #include <QWheelEvent>
 
+namespace {
+constexpr int TimelineFixedHeight = 68;
+}
+
 #include <algorithm>
 #include <cmath>
 
 TimelineWidget::TimelineWidget(QWidget *parent) : QWidget(parent)
 {
-	setMinimumHeight(38);
+	setFixedHeight(TimelineFixedHeight);
 	setMouseTracking(true);
 	setCursor(Qt::PointingHandCursor);
 	setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
@@ -265,7 +269,6 @@ void TimelineWidget::resetVisibleRangeIfInvalid()
 	if (durationMs <= 0) {
 		visibleStartMs = 0;
 		visibleEndMs = 0;
-		setMinimumHeight(38);
 		return;
 	}
 
@@ -387,8 +390,13 @@ void TimelineWidget::zoomAt(qreal x, int wheelDelta)
 	visibleStartMs = newSpan >= durationMs ? 0 : newStart;
 	visibleEndMs = newSpan >= durationMs ? durationMs : visibleStartMs + newSpan;
 
-	const int minHeight = 38 + static_cast<int>(std::round((zoomScale() - 1.0) * 22.0));
-	setMinimumHeight(std::clamp(minHeight, 38, 76));
-	updateGeometry();
+	/*
+	 * Keep zoom a pure viewport/paint operation.  Changing minimumHeight() here
+	 * makes the parent dialog relayout while the user is clicking, seeking or
+	 * dragging markers, which looks like the timeline keeps growing.  The fixed
+	 * height reserved in the constructor is large enough for the maximum marker
+	 * and thumb scale, so Ctrl+Wheel still visually zooms the track/markers
+	 * without mutating layout geometry.
+	 */
 	update();
 }

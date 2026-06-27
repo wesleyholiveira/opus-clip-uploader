@@ -25,6 +25,16 @@ QJsonArray contentAliasesToJson(const QStringList &aliases, const QString &prima
 void insertContentIdentity(QJsonObject &record, const QString &videoPath, const FeedbackSuggestionSnapshot &suggestion);
 QString normalizedTranscriptText(QString value);
 QJsonArray rangesToJson(const QVector<ClipDuration> &ranges);
+QString candidateSnapshotId(const QString &videoPath, const CurationSettings &settings,
+				    const FeedbackSuggestionSnapshot &suggestion, int suggestedIndex,
+				    const ClipDuration &range, const QJsonObject &diagnostics,
+				    const QString &snapshotKind);
+QJsonObject candidateSnapshotRecord(const QString &videoPath, const CurationSettings &settings,
+				    const FeedbackSuggestionSnapshot &suggestion, int suggestedIndex,
+				    const ClipDuration &range, const QString &snapshotKind);
+QJsonObject userAddedSnapshotRecord(const QString &videoPath, const CurationSettings &settings,
+				    const FeedbackSuggestionSnapshot &suggestion, int userIndex,
+				    const ClipDuration &range, const QString &eventName);
 QJsonArray topicKeywordsToJson(const QStringList &keywords);
 double overlapSec(const ClipDuration &a, const ClipDuration &b);
 double unionSec(const ClipDuration &a, const ClipDuration &b);

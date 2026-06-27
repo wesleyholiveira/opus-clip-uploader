@@ -141,8 +141,13 @@ VideoMarkerEditor::VideoMarkerEditor(const QString &videoPath, QWidget *parent) 
 	currentTimeLabel = new QLabel("00:00:00", editorSurface);
 	durationTimeLabel = new QLabel("00:00:00", editorSurface);
 	selectedClipLabel = new QLabel(obsText("Label.SelectedClipInitial"), editorSurface);
-	seekStatusLabel = new QLabel(QStringLiteral("Seeking…"), editorSurface);
-	seekStatusLabel->setVisible(false);
+	selectedClipLabel->setWordWrap(false);
+	selectedClipLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+	selectedClipLabel->setMinimumHeight(selectedClipLabel->fontMetrics().height() + 4);
+	selectedClipLabel->setToolTip(selectedClipLabel->text());
+	seekStatusLabel = new QLabel(QStringLiteral(" "), editorSurface);
+	seekStatusLabel->setFixedHeight(seekStatusLabel->fontMetrics().height() + 4);
+	seekStatusLabel->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
 	seekStatusLabel->setStyleSheet(QStringLiteral("QLabel { color: palette(mid); font-size: 11px; }"));
 	auto *shortcutHelpLabel = new QLabel(obsText("Shortcut.Help"), editorSurface);
 	shortcutHelpLabel->setWordWrap(true);
@@ -605,8 +610,6 @@ void VideoMarkerEditor::updateTimelinePosition(qint64 positionMs)
 
 	const double startSec = positionMs / 1000.0;
 	currentTimeLabel->setText(formatTimecode(startSec));
-	if (seekStatusLabel && seekStatusLabel->isVisible())
-		seekStatusLabel->hide();
 	updateSelectedClipPreview(startSec);
 	emit positionChanged(positionMs);
 }
@@ -620,6 +623,36 @@ void VideoMarkerEditor::updateTimelineDuration(qint64 newDurationMs)
 	emit durationChanged(durationMs);
 }
 
+void VideoMarkerEditor::setSelectedClipText(const QString &text)
+{
+	if (!selectedClipLabel)
+		return;
+
+	/*
+	 * Do not let the preview label drive the top-level dialog width.  The label
+	 * text changes on every seek/marker click and can be much longer than the
+	 * current window.  With the default QLabel size policy Qt keeps increasing the
+	 * layout size hint, which makes the timeline look like it is growing.  The
+	 * full text remains available in the tooltip while the visible label clips to
+	 * the current dialog width.
+	 */
+	selectedClipLabel->setText(text);
+	selectedClipLabel->setToolTip(text);
+}
+
+void VideoMarkerEditor::setSeekStatusActive(bool active)
+{
+	if (!seekStatusLabel)
+		return;
+
+	/*
+	 * Keep this label in the layout at a constant height.  Hiding/showing it on
+	 * every seek changes the layout size hint and can permanently grow the parent
+	 * dialog on Windows/Qt.  A blank placeholder avoids geometry churn.
+	 */
+	seekStatusLabel->setText(active ? QStringLiteral("Seeking…") : QStringLiteral(" "));
+}
+
 void VideoMarkerEditor::updateSelectedClipPreview(double startSec)
 {
 	if (!selectedClipLabel)
@@ -630,10 +663,10 @@ void VideoMarkerEditor::updateSelectedClipPreview(double startSec)
 	if (selectedRangeIndex >= 0 && selectedRangeIndex < ranges.size()) {
 		const auto &range = ranges[selectedRangeIndex];
 		const double selectedSec = std::max(0.0, range.endSec - range.startSec);
-		selectedClipLabel->setText(obsText("Label.SelectedClipRange")
-						   .arg(selectedRangeIndex + 1)
-						   .arg(formatTimecode(range.startSec), formatTimecode(range.endSec))
-						   .arg(selectedSec, 0, 'f', 0));
+		setSelectedClipText(obsText("Label.SelectedClipRange")
+					    .arg(selectedRangeIndex + 1)
+					    .arg(formatTimecode(range.startSec), formatTimecode(range.endSec))
+					    .arg(selectedSec, 0, 'f', 0));
 		return;
 	}
 
@@ -641,11 +674,10 @@ void VideoMarkerEditor::updateSelectedClipPreview(double startSec)
 		const auto &range = ranges[i];
 		if (startSec >= range.startSec && startSec <= range.endSec) {
 			const double selectedSec = std::max(0.0, range.endSec - range.startSec);
-			selectedClipLabel->setText(
-				obsText("Label.SelectedClipRange")
-					.arg(i + 1)
-					.arg(formatTimecode(range.startSec), formatTimecode(range.endSec))
-					.arg(selectedSec, 0, 'f', 0));
+			setSelectedClipText(obsText("Label.SelectedClipRange")
+						    .arg(i + 1)
+						    .arg(formatTimecode(range.startSec), formatTimecode(range.endSec))
+						    .arg(selectedSec, 0, 'f', 0));
 			return;
 		}
 	}
@@ -654,9 +686,9 @@ void VideoMarkerEditor::updateSelectedClipPreview(double startSec)
 	if (durationMs > 0)
 		endSec = std::min(endSec, durationMs / 1000.0);
 
-	selectedClipLabel->setText(obsText("Label.NextMarkerRange")
-					   .arg(formatTimecode(startSec), formatTimecode(endSec))
-					   .arg(std::max(0.0, endSec - startSec), 0, 'f', 0));
+	setSelectedClipText(obsText("Label.NextMarkerRange")
+					    .arg(formatTimecode(startSec), formatTimecode(endSec))
+					    .arg(std::max(0.0, endSec - startSec), 0, 'f', 0));
 }
 
 void VideoMarkerEditor::seekToSeconds(double seconds)
@@ -680,10 +712,7 @@ void VideoMarkerEditor::seekToMilliseconds(qint64 positionMs)
 		positionMs = std::max<qint64>(0, positionMs);
 
 	const bool wasPlaying = player->playbackState() == QMediaPlayer::PlayingState;
-	if (seekStatusLabel) {
-		seekStatusLabel->setText(QStringLiteral("Seeking…"));
-		seekStatusLabel->show();
-	}
+	setSeekStatusActive(true);
 
 	updatingTimelineFromPlayer = true;
 	player->setPosition(positionMs);
@@ -695,10 +724,10 @@ void VideoMarkerEditor::seekToMilliseconds(qint64 positionMs)
 	const double seconds = positionMs / 1000.0;
 	currentTimeLabel->setText(formatTimecode(seconds));
 	updateSelectedClipPreview(seconds);
-	QPointer<QLabel> seekLabel(seekStatusLabel);
-	QTimer::singleShot(450, this, [seekLabel]() {
-		if (seekLabel)
-			seekLabel->hide();
+	QPointer<VideoMarkerEditor> guard(this);
+	QTimer::singleShot(450, this, [guard]() {
+		if (guard)
+			guard->setSeekStatusActive(false);
 	});
 }
 

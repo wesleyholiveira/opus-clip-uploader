@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from build_feedback_ranker_dataset import FEATURE_ORDER, build_dataset, load_jsonl
+from candidate_snapshot_join import enrich_feedback_rows_with_snapshots, load_candidate_snapshot_index
 
 
 def sigmoid(value: float) -> float:
@@ -203,6 +204,8 @@ def main() -> int:
     parser.add_argument("-o", "--output", type=Path, required=True)
     parser.add_argument("--preset", default="viewer_message_response")
     parser.add_argument("--dataset-output", type=Path)
+    parser.add_argument("--candidate-snapshot-path", type=Path, action="append", default=[],
+                        help="candidate-snapshots.jsonl file or feedback directory used to enrich rows with original text/features/scores.")
     parser.add_argument("--min-examples", type=int, default=40)
     parser.add_argument("--min-positives", type=int, default=30)
     parser.add_argument("--min-negatives", type=int, default=60)
@@ -214,6 +217,10 @@ def main() -> int:
     args = parser.parse_args()
 
     rows = load_jsonl(args.feedback_jsonl)
+    snapshot_hits = 0
+    if args.candidate_snapshot_path:
+        snapshot_index = load_candidate_snapshot_index(args.candidate_snapshot_path)
+        rows, snapshot_hits = enrich_feedback_rows_with_snapshots(rows, snapshot_index)
     dataset = build_dataset(rows, preset=args.preset or None)
     positives = sum(1 for item in dataset if item["label"] == 1)
     negatives = len(dataset) - positives
@@ -222,7 +229,8 @@ def main() -> int:
             "Not enough balanced data to train: "
             f"examples={len(dataset)}/{args.min_examples} "
             f"positives={positives}/{args.min_positives} "
-            f"negatives={negatives}/{args.min_negatives}"
+            f"negatives={negatives}/{args.min_negatives} "
+            f"snapshot_hits={snapshot_hits}"
         )
         print(
             "Keep calibrating boundary feedback first. Override --min-positives/--min-negatives only "
@@ -256,6 +264,7 @@ def main() -> int:
     args.output.write_text(json.dumps(model, indent=2, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
     print(
         f"Wrote {args.output} examples={len(dataset)} positives={positives} negatives={negatives} "
+        f"snapshot_hits={snapshot_hits} "
         f"accuracy={model['evaluation'].get('accuracy_at_0_5')}"
     )
     if args.dataset_output:

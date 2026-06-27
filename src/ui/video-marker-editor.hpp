@@ -102,6 +102,8 @@ private:
 	void handleMediaStatusChanged(QMediaPlayer::MediaStatus status);
 	void warmUpVideoFrameAfterSeek(bool wasPlaying);
 	void updateSelectedClipPreview(double startSec);
+	void setSelectedClipText(const QString &text);
+	void setSeekStatusActive(bool active);
 	void refreshTimelineMarkers();
 	void positionOverlayControls();
 	void rebuildClipRanges();

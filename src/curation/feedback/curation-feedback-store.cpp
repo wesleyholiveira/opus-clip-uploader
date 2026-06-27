@@ -82,6 +82,11 @@ QString CurationFeedbackStore::feedbackJsonlPath()
 	return QDir(feedbackDirectoryPath()).filePath(QStringLiteral("boundary-feedback.jsonl"));
 }
 
+QString CurationFeedbackStore::candidateSnapshotsJsonlPath()
+{
+	return QDir(feedbackDirectoryPath()).filePath(QStringLiteral("candidate-snapshots.jsonl"));
+}
+
 QString CurationFeedbackStore::calibrationJsonPath()
 {
 	return QDir(feedbackDirectoryPath()).filePath(QStringLiteral("boundary-calibration.json"));
@@ -365,6 +370,7 @@ bool CurationFeedbackStore::appendReviewFeedback(const QString &videoPath, const
 		return false;
 	}
 
+	QVector<QJsonObject> snapshotRecords;
 	QVector<QJsonObject> records;
 	QSet<int> usedUserRanges;
 	for (int i = 0; i < suggestion.ranges.size(); ++i) {
@@ -372,6 +378,8 @@ bool CurationFeedbackStore::appendReviewFeedback(const QString &videoPath, const
 		if (!std::isfinite(suggested.startSec) || !std::isfinite(suggested.endSec) ||
 		    suggested.endSec <= suggested.startSec)
 			continue;
+		snapshotRecords.append(candidateSnapshotRecord(videoPath, settings, suggestion, i, suggested,
+								     QStringLiteral("generated_candidate")));
 		records.append(suggestionRecord(videoPath, settings, suggestion, i, suggested, userRanges,
 						usedUserRanges, eventName, humanReason,
 						explicitDecisionsBySuggestedIndex, explicitFeedbackBySuggestedIndex));
@@ -383,15 +391,26 @@ bool CurationFeedbackStore::appendReviewFeedback(const QString &videoPath, const
 		const ClipDuration &range = userRanges.at(i);
 		if (!std::isfinite(range.startSec) || !std::isfinite(range.endSec) || range.endSec <= range.startSec)
 			continue;
+		snapshotRecords.append(userAddedSnapshotRecord(videoPath, settings, suggestion, i, range, eventName));
 		records.append(addedUserRangeRecord(videoPath, settings, suggestion, i, range, eventName));
+	}
+
+	const QString snapshotPath = candidateSnapshotsJsonlPath();
+	const bool snapshotsSaved = appendJsonLines(snapshotPath, snapshotRecords);
+	if (!snapshotsSaved) {
+		blog(LOG_ERROR,
+		     "[clip-cropper] Candidate snapshot append failed. path=%s records=%d event=%s video=%s",
+		     snapshotPath.toUtf8().constData(), static_cast<int>(snapshotRecords.size()),
+		     eventName.toUtf8().constData(), videoPath.toUtf8().constData());
+		return false;
 	}
 
 	const QString path = feedbackJsonlPath();
 	const bool saved = appendJsonLines(path, records);
 	blog(saved ? LOG_INFO : LOG_ERROR,
-	     "[clip-cropper] Boundary feedback append %s. path=%s records=%d event=%s video=%s",
+	     "[clip-cropper] Boundary feedback append %s. path=%s records=%d snapshots=%d event=%s video=%s",
 	     saved ? "succeeded" : "failed", path.toUtf8().constData(), static_cast<int>(records.size()),
-	     eventName.toUtf8().constData(), videoPath.toUtf8().constData());
+	     static_cast<int>(snapshotRecords.size()), eventName.toUtf8().constData(), videoPath.toUtf8().constData());
 	return saved;
 }
 

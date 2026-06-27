@@ -72,6 +72,7 @@ public:
 
 	static QString feedbackDirectoryPath();
 	static QString feedbackJsonlPath();
+	static QString candidateSnapshotsJsonlPath();
 	static QString calibrationJsonPath();
 	static QJsonObject loadCalibrationRoot();
 	static QString transcriptContentId(const RecordingTranscript &transcript);

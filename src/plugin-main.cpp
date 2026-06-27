@@ -22,11 +22,8 @@
 #include <QStringList>
 #include <QWidget>
 
-void open_settings(void *private_data);
-void open_confirm_dialog(void *private_data);
-void open_video_editor(void *private_data);
-void ensure_opus_api_key(QWidget *parent);
-void set_pending_recording_paths(const QStringList &paths);
+// UI entrypoints are declared in ui/ui.hpp. Keep this file using only the direct review flow;
+// the old confirm/editor entrypoints were removed intentionally.
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE("clip-cropper", "en-US")
@@ -185,20 +182,20 @@ static void ensure_opus_api_key_on_ui_thread()
 		Qt::QueuedConnection);
 }
 
-static void open_confirm_dialog_on_ui_thread()
+static void open_upload_review_flow_on_ui_thread()
 {
 	QWidget *parent = main_window();
 
 	if (!parent) {
-		blog(LOG_ERROR, "[clip-cropper] Main window is null. Cannot open upload dialog.");
+		blog(LOG_ERROR, "[clip-cropper] Main window is null. Cannot open upload review dialog.");
 		return;
 	}
 
 	QMetaObject::invokeMethod(
 		parent,
 		[]() {
-			blog(LOG_INFO, "[clip-cropper] Opening upload confirm dialog.");
-			open_confirm_dialog(nullptr);
+			blog(LOG_INFO, "[clip-cropper] Opening upload review dialog directly.");
+			open_upload_review_flow(nullptr);
 		},
 		Qt::QueuedConnection);
 }
@@ -227,12 +224,12 @@ static void on_frontend_event(enum obs_frontend_event event, void *private_data)
 
 		if (paths.isEmpty()) {
 			blog(LOG_WARNING,
-			     "[clip-cropper] No valid recording files found. Upload confirm dialog will not be shown.");
+			     "[clip-cropper] No valid recording files found. Upload review dialog will not be shown.");
 			break;
 		}
 
 		set_pending_recording_paths(paths);
-		open_confirm_dialog_on_ui_thread();
+		open_upload_review_flow_on_ui_thread();
 
 		break;
 	}
@@ -332,7 +329,7 @@ static void add_clip_cropper_tools_submenu_on_ui_thread()
 	if (!toolsMenu) {
 		blog(LOG_WARNING, "[clip-cropper] Tools menu not found. Falling back to flat Tools menu items.");
 		obs_frontend_add_tools_menu_item("Clip Cropper - Settings", open_settings, nullptr);
-		obs_frontend_add_tools_menu_item("Clip Cropper - Video editor", open_video_editor, nullptr);
+		obs_frontend_add_tools_menu_item("Clip Cropper - Review video", open_video_review, nullptr);
 		return;
 	}
 
@@ -356,8 +353,8 @@ static void add_clip_cropper_tools_submenu_on_ui_thread()
 	QAction *settingsAction = clipCropperMenu->addAction(obs_text("Menu.Settings"));
 	QObject::connect(settingsAction, &QAction::triggered, []() { open_settings(nullptr); });
 
-	QAction *videoEditorAction = clipCropperMenu->addAction(obs_text("Menu.VideoEditor"));
-	QObject::connect(videoEditorAction, &QAction::triggered, []() { open_video_editor(nullptr); });
+	QAction *videoReviewAction = clipCropperMenu->addAction(obs_text("Menu.VideoReview"));
+	QObject::connect(videoReviewAction, &QAction::triggered, []() { open_video_review(nullptr); });
 }
 
 bool obs_module_load(void)

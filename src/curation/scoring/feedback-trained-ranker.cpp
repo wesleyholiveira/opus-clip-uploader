@@ -1,5 +1,7 @@
 #include "curation/scoring/feedback-trained-ranker.hpp"
 
+#include "utils/config.hpp"
+
 #include <QDir>
 #include <QFile>
 #include <QJsonArray>
@@ -56,6 +58,9 @@ static bool jsonBool(const QJsonObject &object, const QString &key, bool fallbac
 
 QString FeedbackTrainedRanker::defaultModelPath()
 {
+	const QString configured = PluginConfig::getValue(QString::fromLatin1(CONFIG_FEEDBACK_RANKER_MODEL_PATH), QString()).trimmed();
+	if (!configured.isEmpty())
+		return configured;
 	return QDir(Curation::Feedback::CurationFeedbackStore::feedbackDirectoryPath())
 		.filePath(QStringLiteral("feedback-ranker.json"));
 }
@@ -85,7 +90,8 @@ FeedbackTrainedRankerModel FeedbackTrainedRanker::loadModel(const QString &path)
 	if (root.value(QStringLiteral("schema_version")).toInt() != 1)
 		return model;
 	model.modelType = root.value(QStringLiteral("model_type")).toString();
-	if (model.modelType != QStringLiteral("logistic_regression"))
+	if (model.modelType != QStringLiteral("logistic_regression") &&
+	    model.modelType != QStringLiteral("gbdt_tree_ensemble"))
 		return model;
 	model.presetId = root.value(QStringLiteral("preset")).toString();
 	model.trainedAtUtc = root.value(QStringLiteral("trained_at_utc")).toString();
@@ -93,6 +99,7 @@ FeedbackTrainedRankerModel FeedbackTrainedRanker::loadModel(const QString &path)
 	model.positives = root.value(QStringLiteral("positives")).toInt();
 	model.negatives = root.value(QStringLiteral("negatives")).toInt();
 	model.intercept = root.value(QStringLiteral("intercept")).toDouble(0.0);
+	model.baseScore = root.value(QStringLiteral("base_score")).toDouble(model.intercept);
 
 	const QJsonObject thresholds = root.value(QStringLiteral("thresholds")).toObject();
 	model.rejectBelow = thresholds.value(QStringLiteral("reject_below")).toDouble(0.0);
@@ -107,11 +114,40 @@ FeedbackTrainedRankerModel FeedbackTrainedRanker::loadModel(const QString &path)
 		if (!feature.isEmpty() && !model.featureOrder.contains(feature))
 			model.featureOrder.append(feature);
 	}
-	const QJsonObject weights = root.value(QStringLiteral("weights")).toObject();
-	for (auto it = weights.begin(); it != weights.end(); ++it)
-		model.weights.insert(it.key(), it.value().toDouble(0.0));
 
-	model.loaded = !model.featureOrder.isEmpty() && !model.weights.isEmpty() && model.records > 0;
+	if (model.modelType == QStringLiteral("logistic_regression")) {
+		const QJsonObject weights = root.value(QStringLiteral("weights")).toObject();
+		for (auto it = weights.begin(); it != weights.end(); ++it)
+			model.weights.insert(it.key(), it.value().toDouble(0.0));
+		model.loaded = !model.featureOrder.isEmpty() && !model.weights.isEmpty() && model.records > 0;
+		return model;
+	}
+
+	const QJsonArray trees = root.value(QStringLiteral("trees")).toArray();
+	for (const QJsonValue &treeValue : trees) {
+		if (!treeValue.isObject())
+			continue;
+		const QJsonObject treeObject = treeValue.toObject();
+		FeedbackTrainedRankerTree tree;
+		tree.weight = treeObject.value(QStringLiteral("weight")).toDouble(1.0);
+		const QJsonArray nodes = treeObject.value(QStringLiteral("nodes")).toArray();
+		for (const QJsonValue &nodeValue : nodes) {
+			if (!nodeValue.isObject())
+				continue;
+			const QJsonObject nodeObject = nodeValue.toObject();
+			FeedbackTrainedRankerTreeNode node;
+			node.leaf = nodeObject.value(QStringLiteral("leaf")).toBool(false);
+			node.value = nodeObject.value(QStringLiteral("value")).toDouble(0.0);
+			node.feature = nodeObject.value(QStringLiteral("feature")).toString();
+			node.threshold = nodeObject.value(QStringLiteral("threshold")).toDouble(0.0);
+			node.left = nodeObject.value(QStringLiteral("left")).toInt(-1);
+			node.right = nodeObject.value(QStringLiteral("right")).toInt(-1);
+			tree.nodes.append(node);
+		}
+		if (!tree.nodes.isEmpty())
+			model.trees.append(tree);
+	}
+	model.loaded = !model.featureOrder.isEmpty() && !model.trees.isEmpty() && model.records > 0;
 	return model;
 }
 
@@ -439,6 +475,39 @@ double FeedbackTrainedRanker::featureValue(const QString &name, const ClipCandid
 	return 0.0;
 }
 
+double FeedbackTrainedRanker::logisticScore(const ClipCandidate &candidate,
+						 const FeedbackSimilarityFeatures &feedbackFeatures,
+						 const FeedbackTrainedRankerModel &model)
+{
+	double linear = model.intercept;
+	for (const QString &feature : model.featureOrder)
+		linear += model.weights.value(feature, 0.0) * featureValue(feature, candidate, feedbackFeatures);
+	return bounded(sigmoid(linear));
+}
+
+double FeedbackTrainedRanker::gbdtScore(const ClipCandidate &candidate,
+					     const FeedbackSimilarityFeatures &feedbackFeatures,
+					     const FeedbackTrainedRankerModel &model)
+{
+	double raw = model.baseScore;
+	for (const FeedbackTrainedRankerTree &tree : model.trees) {
+		if (tree.nodes.isEmpty())
+			continue;
+		int index = 0;
+		int guard = 0;
+		while (index >= 0 && index < tree.nodes.size() && guard++ < 128) {
+			const FeedbackTrainedRankerTreeNode &node = tree.nodes.at(index);
+			if (node.leaf) {
+				raw += tree.weight * node.value;
+				break;
+			}
+			const double value = featureValue(node.feature, candidate, feedbackFeatures);
+			index = (value <= node.threshold) ? node.left : node.right;
+		}
+	}
+	return bounded(sigmoid(raw));
+}
+
 double FeedbackTrainedRanker::scoreCandidate(const ClipCandidate &candidate, const TranscriptIndex &index,
 					     const Curation::Feedback::FeedbackRangeMemory &memory,
 					     const FeedbackTrainedRankerModel &model,
@@ -449,10 +518,9 @@ double FeedbackTrainedRanker::scoreCandidate(const ClipCandidate &candidate, con
 	if (feedbackFeatures)
 		*feedbackFeatures = features;
 
-	double linear = model.intercept;
-	for (const QString &feature : model.featureOrder)
-		linear += model.weights.value(feature, 0.0) * featureValue(feature, candidate, features);
-	return bounded(sigmoid(linear));
+	if (model.modelType == QStringLiteral("gbdt_tree_ensemble"))
+		return gbdtScore(candidate, features, model);
+	return logisticScore(candidate, features, model);
 }
 
 QVector<ClipCandidate> FeedbackTrainedRanker::apply(QVector<ClipCandidate> candidates, const TranscriptIndex &index,
@@ -486,6 +554,7 @@ QVector<ClipCandidate> FeedbackTrainedRanker::apply(QVector<ClipCandidate> candi
 			QStringLiteral("feedback_trained_ranker_score:%1").arg(QString::number(learnedScore, 'f', 2)));
 		candidate.evidence.append(
 			QStringLiteral("feedback_trained_ranker_model_records:%1").arg(model.records));
+		candidate.evidence.append(QStringLiteral("feedback_trained_ranker_model_type:%1").arg(model.modelType));
 		candidate.evidence.removeDuplicates();
 
 		if (hardContextBlocked && !positiveGroundTruth && !positiveBacked) {

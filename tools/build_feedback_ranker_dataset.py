@@ -14,6 +14,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Iterable
 
+from candidate_snapshot_join import enrich_feedback_rows_with_snapshots, load_candidate_snapshot_index
+
 SCORE_FEATURES = [
     "duration", "boundary", "hook", "emotional", "advice", "explanation", "story", "opinion", "tutorial",
     "viewerResponse", "coarseSemantic", "semanticTarget", "embeddingTarget", "semanticViewerMessage",
@@ -538,9 +540,15 @@ def main() -> int:
     parser.add_argument("feedback_jsonl", type=Path)
     parser.add_argument("-o", "--output", type=Path, required=True)
     parser.add_argument("--preset", default="viewer_message_response")
+    parser.add_argument("--candidate-snapshot-path", type=Path, action="append", default=[],
+                        help="candidate-snapshots.jsonl file or feedback directory used to enrich rows with original text/features/scores.")
     args = parser.parse_args()
 
     rows = load_jsonl(args.feedback_jsonl)
+    snapshot_hits = 0
+    if args.candidate_snapshot_path:
+        snapshot_index = load_candidate_snapshot_index(args.candidate_snapshot_path)
+        rows, snapshot_hits = enrich_feedback_rows_with_snapshots(rows, snapshot_index)
     dataset = build_dataset(rows, preset=args.preset or None)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("w", encoding="utf-8") as handle:
@@ -554,7 +562,8 @@ def main() -> int:
     print(
         f"Wrote {args.output} examples={len(dataset)} positives={positives} negatives={negatives} "
         f"recoverable_boundary_excluded={recoverable_excluded} "
-        f"ignored_or_weak_training_excluded={ignored_or_weak_excluded}"
+        f"ignored_or_weak_training_excluded={ignored_or_weak_excluded} "
+        f"snapshot_hits={snapshot_hits}"
     )
     return 0 if dataset else 1
 

@@ -2,6 +2,7 @@
 
 #include "ui/ui-common.hpp"
 
+#include "curation/scoring/feedback-trained-ranker.hpp"
 #include "curation/scoring/semantic-embedding-settings.hpp"
 #include "transcription/whisperx-settings.hpp"
 
@@ -304,6 +305,19 @@ void open_settings_impl(void *private_data)
 		QStringLiteral("qwen3-reranker-0.6b-q8_0")));
 	treeWidget->setItemWidget(localRerankerModelItem, 1, localRerankerModelInput);
 
+	auto *feedbackRankerModelPathItem = new QTreeWidgetItem(advancedItem);
+	feedbackRankerModelPathItem->setText(0, QStringLiteral("Feedback ranker model path"));
+
+	QLineEdit *feedbackRankerModelPathInput = new QLineEdit(treeWidget);
+	feedbackRankerModelPathInput->setPlaceholderText(
+		QStringLiteral("Optional feedback-ranker.json or GBDT ranker JSON path"));
+	feedbackRankerModelPathInput->setText(PluginConfig::getValue(
+		QString::fromLatin1(Curation::Scoring::CONFIG_FEEDBACK_RANKER_MODEL_PATH)));
+	feedbackRankerModelPathInput->setToolTip(QStringLiteral(
+		"Leave empty to use the default feedback/feedback-ranker.json. This can point to a logistic_regression "
+		"or gbdt_tree_ensemble artifact produced by tools/train_feedback_ranker.py or tools/train_gbdt_ranker.py."));
+	treeWidget->setItemWidget(feedbackRankerModelPathItem, 1, feedbackRankerModelPathInput);
+
 	auto updateWhisperXFields = [whisperXBackendInput, whisperXPythonPathInput, whisperXWorkerPathInput,
 					   whisperXDeviceInput, whisperXFfmpegPathInput, whisperXModelInput, whisperXComputeTypeInput,
 					   whisperXBatchSizeInput]() {
@@ -401,7 +415,8 @@ void open_settings_impl(void *private_data)
 		 whisperXBackendInput, whisperXPythonPathInput, whisperXWorkerPathInput, whisperXDeviceInput,
 		 whisperXFfmpegPathInput, whisperXModelInput, whisperXComputeTypeInput, whisperXBatchSizeInput,
 		 localEmbeddingBackendInput, localEmbeddingEndpointInput, localEmbeddingModelInput,
-		 localRerankerBackendInput, localRerankerEndpointInput, localRerankerModelInput]() {
+		 localRerankerBackendInput, localRerankerEndpointInput, localRerankerModelInput,
+		 feedbackRankerModelPathInput]() {
 			PluginConfig::setValue("opus_api_key", apiKeyInput->text().trimmed());
 			PluginConfig::setValue("opus_brand_template_id", brandTemplateIdInput->text().trimmed());
 			const QString selectedWhisperModel = whisperModelInput->currentData().toString().trimmed();
@@ -437,6 +452,8 @@ void open_settings_impl(void *private_data)
 					       localRerankerEndpointInput->text().trimmed());
 			PluginConfig::setValue(QString::fromLatin1(Curation::Scoring::CONFIG_LOCAL_RERANKER_MODEL_ID),
 					       localRerankerModelInput->text().trimmed());
+			PluginConfig::setValue(QString::fromLatin1(Curation::Scoring::CONFIG_FEEDBACK_RANKER_MODEL_PATH),
+					       feedbackRankerModelPathInput->text().trimmed());
 
 			blog(LOG_INFO, "Clip Cropper settings saved. Opus Clip settings updated.");
 

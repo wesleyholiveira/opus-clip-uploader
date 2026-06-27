@@ -45,14 +45,14 @@ void open_settings(void *private_data)
 	open_settings_impl(private_data);
 }
 
-void open_confirm_dialog(void *private_data)
+void open_upload_review_flow(void *private_data)
 {
-	open_confirm_dialog_impl(private_data);
+	open_upload_review_flow_impl(private_data);
 }
 
-void open_video_editor(void *private_data)
+void open_video_review(void *private_data)
 {
-	open_video_editor_impl(private_data);
+	open_video_review_impl(private_data);
 }
 
 void ensure_opus_api_key(QWidget *parent)

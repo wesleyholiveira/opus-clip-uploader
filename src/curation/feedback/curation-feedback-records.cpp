@@ -258,6 +258,108 @@ QJsonArray rangesToJson(const QVector<ClipDuration> &ranges)
 	return array;
 }
 
+QString candidateSnapshotId(const QString &videoPath, const CurationSettings &settings,
+				    const FeedbackSuggestionSnapshot &suggestion, int suggestedIndex,
+				    const ClipDuration &range, const QJsonObject &diagnostics,
+				    const QString &snapshotKind)
+{
+	QCryptographicHash hash(QCryptographicHash::Sha1);
+	hash.addData(QByteArrayLiteral("clip-cropper-candidate-snapshot-v1\n"));
+	hash.addData(stableVideoId(videoPath).toUtf8());
+	hash.addData(QByteArrayLiteral("\n"));
+	hash.addData(contentIdForSuggestion(videoPath, suggestion).toUtf8());
+	hash.addData(QByteArrayLiteral("\n"));
+	hash.addData((settings.curationPreset.trimmed().isEmpty() ? QStringLiteral("auto") : settings.curationPreset.trimmed()).toUtf8());
+	hash.addData(QByteArrayLiteral("\n"));
+	hash.addData(snapshotKind.toUtf8());
+	hash.addData(QByteArrayLiteral("\n"));
+	hash.addData(QByteArray::number(suggestedIndex));
+	hash.addData(QByteArrayLiteral("\n"));
+	hash.addData(QByteArray::number(static_cast<qint64>(std::llround(range.startSec * 1000.0))));
+	hash.addData(QByteArrayLiteral("-"));
+	hash.addData(QByteArray::number(static_cast<qint64>(std::llround(range.endSec * 1000.0))));
+	hash.addData(QByteArrayLiteral("\n"));
+	hash.addData(diagnostics.value(QStringLiteral("source")).toString(suggestion.source).toUtf8());
+	hash.addData(QByteArrayLiteral("\n"));
+	hash.addData(diagnostics.value(QStringLiteral("diagnostic_kind")).toString().toUtf8());
+	return QStringLiteral("candidate_sha1:%1").arg(QString::fromLatin1(hash.result().toHex().left(28)));
+}
+
+static void insertCandidateDiagnostics(QJsonObject &record, const QJsonObject &diagnostics)
+{
+	if (diagnostics.isEmpty())
+		return;
+	const QStringList passthroughKeys{
+		QStringLiteral("diagnostic_kind"), QStringLiteral("source"), QStringLiteral("final_score"),
+		QStringLiteral("selected_rank"), QStringLiteral("rejected"), QStringLiteral("rejection_reason"),
+		QStringLiteral("scores"), QStringLiteral("classifier_labels"), QStringLiteral("evidence"),
+		QStringLiteral("text_preview"), QStringLiteral("timed_text_preview"),
+		QStringLiteral("diagnostic_feedback_source_index"), QStringLiteral("diagnostic_original_start_sec"),
+		QStringLiteral("diagnostic_original_end_sec"), QStringLiteral("diagnostic_range_edited"),
+		QStringLiteral("re_evaluation_backend"), QStringLiteral("review_status")};
+	for (const QString &key : passthroughKeys) {
+		if (diagnostics.contains(key))
+			record.insert(key, diagnostics.value(key));
+	}
+	if (diagnostics.contains(QStringLiteral("final_score")))
+		record.insert(QStringLiteral("candidate_final_score"), diagnostics.value(QStringLiteral("final_score")));
+	if (diagnostics.contains(QStringLiteral("text_preview")) && !record.contains(QStringLiteral("candidate_text")))
+		record.insert(QStringLiteral("candidate_text"), diagnostics.value(QStringLiteral("text_preview")));
+}
+
+QJsonObject candidateSnapshotRecord(const QString &videoPath, const CurationSettings &settings,
+				    const FeedbackSuggestionSnapshot &suggestion, int suggestedIndex,
+				    const ClipDuration &range, const QString &snapshotKind)
+{
+	const QJsonObject diagnostics = diagnosticsForSuggestedRange(suggestion, suggestedIndex, range);
+	QJsonObject record;
+	record.insert(QStringLiteral("schema_version"), 1);
+	record.insert(QStringLiteral("record_type"), QStringLiteral("candidate_snapshot"));
+	record.insert(QStringLiteral("timestamp_utc"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+	record.insert(QStringLiteral("candidate_snapshot_id"),
+		      candidateSnapshotId(videoPath, settings, suggestion, suggestedIndex, range, diagnostics, snapshotKind));
+	record.insert(QStringLiteral("snapshot_kind"), snapshotKind.trimmed().isEmpty() ? QStringLiteral("generated_candidate") : snapshotKind.trimmed());
+	record.insert(QStringLiteral("video_id"), stableVideoId(videoPath));
+	record.insert(QStringLiteral("video_file_name"), QFileInfo(videoPath).fileName());
+	record.insert(QStringLiteral("video_path"), videoPath);
+	insertContentIdentity(record, videoPath, suggestion);
+	record.insert(QStringLiteral("preset"), settings.curationPreset.trimmed().isEmpty() ? QStringLiteral("auto") : settings.curationPreset.trimmed());
+	record.insert(QStringLiteral("model"), settings.model);
+	record.insert(QStringLiteral("clip_length_preset"), settings.clipLengthPreset);
+	record.insert(QStringLiteral("source_language"), settings.sourceLanguage);
+	record.insert(QStringLiteral("transcription_language"), settings.transcriptionLanguage);
+	record.insert(QStringLiteral("topic_keywords"), topicKeywordsToJson(settings.topicKeywords));
+	record.insert(QStringLiteral("main_target"), settings.topicKeywords.join(QStringLiteral(", ")).left(240));
+	record.insert(QStringLiteral("review_settings_key"), settings.reviewSettingsKey);
+	record.insert(QStringLiteral("suggestion_source"), suggestion.source.trimmed().isEmpty() ? QStringLiteral("semantic_review") : suggestion.source.trimmed());
+	record.insert(QStringLiteral("suggestion_summary"), suggestion.summary.left(1000));
+	record.insert(QStringLiteral("suggested_index"), suggestedIndex);
+	record.insert(QStringLiteral("start_sec"), range.startSec);
+	record.insert(QStringLiteral("end_sec"), range.endSec);
+	record.insert(QStringLiteral("duration_sec"), range.endSec - range.startSec);
+	insertCandidateDiagnostics(record, diagnostics);
+	return record;
+}
+
+QJsonObject userAddedSnapshotRecord(const QString &videoPath, const CurationSettings &settings,
+				    const FeedbackSuggestionSnapshot &suggestion, int userIndex,
+				    const ClipDuration &range, const QString &eventName)
+{
+	QJsonObject record = candidateSnapshotRecord(videoPath, settings, suggestion, userIndex, range,
+							      QStringLiteral("user_added_marker"));
+	record.insert(QStringLiteral("candidate_snapshot_id"),
+		      candidateSnapshotId(videoPath, settings, suggestion, userIndex, range, QJsonObject{},
+					  QStringLiteral("user_added_marker")));
+	record.insert(QStringLiteral("event"), eventName.trimmed().isEmpty() ? QStringLiteral("review_closed") : eventName.trimmed());
+	record.insert(QStringLiteral("matched_user_index"), userIndex);
+	record.insert(QStringLiteral("source"), QStringLiteral("user_added_marker"));
+	QJsonArray evidence;
+	evidence.append(QStringLiteral("user_added_marker"));
+	evidence.append(QStringLiteral("missed_candidate_positive_feedback"));
+	record.insert(QStringLiteral("evidence"), evidence);
+	return record;
+}
+
 QJsonArray topicKeywordsToJson(const QStringList &keywords)
 {
 	QJsonArray array;
@@ -471,6 +573,10 @@ QJsonObject suggestionRecord(const QString &videoPath, const CurationSettings &s
 								   : suggestion.source.trimmed());
 	record.insert(QStringLiteral("suggestion_summary"), suggestion.summary.left(1000));
 	record.insert(QStringLiteral("suggested_index"), suggestedIndex);
+	const QJsonObject snapshotDiagnostics = diagnosticsForSuggestedRange(suggestion, suggestedIndex, suggestedRange);
+	record.insert(QStringLiteral("candidate_snapshot_id"),
+		      candidateSnapshotId(videoPath, settings, suggestion, suggestedIndex, suggestedRange,
+					  snapshotDiagnostics, QStringLiteral("generated_candidate")));
 	record.insert(QStringLiteral("generated_start_sec"), generatedRange.startSec);
 	record.insert(QStringLiteral("generated_end_sec"), generatedRange.endSec);
 	record.insert(QStringLiteral("generated_duration_sec"), generatedRange.endSec - generatedRange.startSec);
@@ -530,7 +636,7 @@ QJsonObject suggestionRecord(const QString &videoPath, const CurationSettings &s
 	if (explicitDecision == QStringLiteral("disliked"))
 		record.insert(QStringLiteral("reject_reason"), QStringLiteral("user_disliked_marker"));
 
-	const QJsonObject diagnostics = diagnosticsForSuggestedRange(suggestion, suggestedIndex, suggestedRange);
+	const QJsonObject diagnostics = snapshotDiagnostics;
 	if (!diagnostics.isEmpty()) {
 		record.insert(QStringLiteral("scores"), diagnostics.value(QStringLiteral("scores")));
 		record.insert(QStringLiteral("classifier_labels"),
@@ -629,6 +735,9 @@ QJsonObject addedUserRangeRecord(const QString &videoPath, const CurationSetting
 								   : suggestion.source.trimmed());
 	record.insert(QStringLiteral("suggestion_summary"), suggestion.summary.left(1000));
 	record.insert(QStringLiteral("matched_user_index"), userIndex);
+	record.insert(QStringLiteral("candidate_snapshot_id"),
+		      candidateSnapshotId(videoPath, settings, suggestion, userIndex, userRange, QJsonObject{},
+					  QStringLiteral("user_added_marker")));
 	record.insert(QStringLiteral("user_start_sec"), userRange.startSec);
 	record.insert(QStringLiteral("user_end_sec"), userRange.endSec);
 	record.insert(QStringLiteral("user_duration_sec"), userRange.endSec - userRange.startSec);

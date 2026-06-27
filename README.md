@@ -106,7 +106,7 @@ Upload
 
 Pontos importantes:
 
-- A tela intermediária anterior ao review foi removida do fluxo normal. `upload-confirm-dialog.cpp` ainda existe como ponto de compatibilidade, mas direciona para review.
+- A tela intermediária anterior ao review foi removida por completo. O fluxo de gravação parada e o fluxo manual abrem `UploadReviewDialog` diretamente.
 - O review é o centro do fluxo. Tudo que vai para upload nasce dos ranges aprovados/selecionados nele.
 - A sugestão local não altera o vídeo. Ela só altera marcadores/ranges e metadados locais.
 - O Opus recebe o vídeo ou um vídeo recortado/otimizado, além de preferências de curadoria.
@@ -200,7 +200,7 @@ Quando o OBS emite `OBS_FRONTEND_EVENT_RECORDING_STOPPED`:
 recordingStoppedAt = currentDateTime + 10s
 paths = resolve_recording_files_for_upload()
 set_pending_recording_paths(paths)
-open_confirm_dialog_on_ui_thread()
+open_upload_review_flow_on_ui_thread()
 ```
 
 A resolução tenta:
@@ -219,9 +219,9 @@ Arquivos:
 src/ui/ui.cpp
 src/ui/ui.hpp
 src/ui/ui-actions.hpp
-src/ui/video-editor-actions.cpp
+src/ui/manual-review-actions.cpp
 src/ui/settings-dialog.cpp
-src/ui/upload-confirm-dialog.cpp
+src/ui/upload-review-flow.cpp
 ```
 
 `ui.cpp` mantém `pendingRecordingPaths`, que é uma lista em memória dos vídeos que acabaram de ser gravados e ainda serão revisados/enviados. Ela é consumida pelo upload flow.
@@ -231,11 +231,11 @@ Ações principais:
 | Ação | Função | Efeito |
 |---|---|---|
 | Configurações | `open_settings` | Abre dialog de API key, modelos e backends locais. |
-| Review/upload | `open_confirm_dialog` | Abre review para gravações pendentes. |
-| Edição de vídeo | `open_video_editor` | Permite escolher manualmente um vídeo para revisar. |
+| Review/upload | `open_upload_review_flow` | Abre o review diretamente para gravações pendentes. |
+| Review manual | `open_video_review` | Permite escolher manualmente um vídeo e abre o review diretamente. |
 | Validar API key | `ensure_opus_api_key` | Mostra settings se a chave não existir. |
 
-`upload-confirm-dialog.cpp` é hoje um ponto de compatibilidade. O comportamento antigo de perguntar antes do review foi removido. O fluxo correto é abrir o review diretamente.
+O entrypoint atual é `upload-review-flow.cpp`, que só valida API key/caminho e abre `UploadReviewDialog` diretamente. Não há mais módulo de confirmação anterior ao review.
 
 ---
 
@@ -388,18 +388,29 @@ O JSONL é append-only. Isso preserva histórico e permite reconstruir memória/
 
 ## 8. Tela de review
 
-Arquivo principal: `src/ui/upload-review-dialog.*`.
+Arquivos principais:
 
-O `UploadReviewDialog` é o orquestrador. Ele deve coordenar widgets e serviços, não concentrar toda regra de scoring. Responsabilidades atuais:
+```text
+src/ui/upload-review-dialog.hpp
+src/ui/upload-review-dialog.cpp
+src/ui/review/upload-review-dialog-layout.cpp
+src/ui/review/upload-review-dialog-table.cpp
+src/ui/review/upload-review-dialog-marker-io.cpp
+src/ui/review/upload-review-dialog-suggestions.cpp
+src/ui/review/upload-review-dialog-feedback.cpp
+src/ui/review/upload-review-dialog-settings.cpp
+src/ui/review/upload-review-dialog-utils.hpp
+```
 
-- montar layout de review;
-- carregar/salvar opções de curadoria;
-- conectar player/timeline/tabela;
-- chamar preparação de transcrição;
-- chamar pipeline de scoring;
-- aplicar ranges sugeridos;
-- coletar feedback estruturado;
-- iniciar upload.
+O `UploadReviewDialog` é o orquestrador. Ele deve coordenar widgets e serviços, não concentrar toda regra de scoring, feedback, import/export e layout em uma única implementação. A implementação fica dividida por responsabilidade:
+
+- `upload-review-dialog-layout.cpp`: construtor, montagem do layout, criação de widgets e conexões iniciais;
+- `upload-review-dialog-table.cpp`: tabela de markers, edição de tempos, seleção, nudge e alternância com modo diagnóstico;
+- `upload-review-dialog-marker-io.cpp`: importação/exportação de markers e ranges de review;
+- `upload-review-dialog-suggestions.cpp`: disparo e aplicação das sugestões semânticas;
+- `upload-review-dialog-feedback.cpp`: snapshot, diagnósticos, decisões explícitas e persistência de feedback;
+- `upload-review-dialog-settings.cpp`: opções de curadoria, estimativa de créditos e extração de `CurationSettings`;
+- `upload-review-dialog-utils.hpp`: funções puras de parsing, formatação, comparação de ranges e serialização auxiliar.
 
 Componentes extraídos:
 
@@ -490,7 +501,9 @@ Arquivos:
 ```text
 src/ui/review/review-clip-table-widget.*
 src/ui/review/diagnostics-dialogs.*
-src/ui/upload-review-dialog.*
+src/ui/review/upload-review-dialog-table.cpp
+src/ui/review/upload-review-dialog-feedback.cpp
+src/ui/upload-review-dialog.hpp
 ```
 
 A tabela pode operar em dois modos:
@@ -1719,7 +1732,7 @@ Prefira `llama-server` externo ou reduza batch/modelo. Backend in-process deve s
 ## 37. Regras de manutenção
 
 1. Antes de criar arquivo novo, defina a camada: UI, transcription, curation, opus, worker, utils ou model.
-2. Antes de adicionar lógica ao `UploadReviewDialog`, verifique se ela pertence a widget extraído, preparation service, scoring ou feedback.
+2. Antes de adicionar lógica ao `UploadReviewDialog`, coloque-a no arquivo de responsabilidade correta: layout, tabela, marker I/O, sugestões, feedback ou settings. Se a regra não for UI, mova para preparation service, scoring ou feedback store.
 3. Antes de adicionar regra de scoring, escolha o estágio correto: geração, cheap scoring, semantic scoring, boundary, gate, reranker ou selection.
 4. Regra booleana reutilizável deve ir para `*-rules.*` ou helper temático.
 5. Callback Qt com vida incerta deve usar parent correto ou `QPointer`.
@@ -1738,3 +1751,404 @@ Prefira `llama-server` externo ou reduza batch/modelo. Backend in-process deve s
 18. Se mexer em CMake, rode checagem de fontes listadas e arquivo existente.
 19. README deve explicar comportamento operacional, não apenas nome de classes.
 20. A fonte da verdade da documentação é este README.
+
+---
+
+## 38. Preparação para GBDT, LambdaMART e fine-tuning Qwen3
+
+Esta base prepara o projeto para aprendizado supervisionado sem colocar treino dentro do OBS. O plugin continua responsável por gerar candidatos, extrair sinais, salvar feedback e consumir artefatos já treinados. O treino acontece em `tools/`.
+
+### 38.1 O que já existe no runtime C++
+
+`src/curation/scoring/feedback-trained-ranker.*` agora aceita dois tipos de artefato:
+
+```json
+{
+  "schema_version": 1,
+  "model_type": "logistic_regression"
+}
+```
+
+ou:
+
+```json
+{
+  "schema_version": 1,
+  "model_type": "gbdt_tree_ensemble"
+}
+```
+
+O modelo logístico continua compatível com `tools/train_feedback_ranker.py`. O novo tipo `gbdt_tree_ensemble` é produzido por `tools/train_gbdt_ranker.py` e contém árvores exportadas em JSON, com `base_score`, `feature_order`, `trees`, `thresholds` e metadados de avaliação.
+
+A configuração `feedback_ranker_model_path` permite apontar o runtime para um artefato específico. Se ficar vazia, o plugin usa o padrão:
+
+```text
+%APPDATA%/obs-studio/plugin_config/clip-cropper/feedback/feedback-ranker.json
+```
+
+No Advanced Settings há um campo **Feedback ranker model path**. Ele aceita tanto o JSON da regressão logística quanto o JSON GBDT experimental.
+
+### 38.2 O que o GBDT recebe
+
+O GBDT não recebe vídeo bruto nem transcript cru. Ele recebe as mesmas features tabulares já usadas pelo feedback ranker:
+
+```text
+duration, boundary, hook, semanticTarget, embeddingTarget,
+semanticViewerMessage, semanticTopicShift, semanticClipValue,
+reranker, rerankerRaw, rerankerClipQualityMargin,
+qualityGate, pauseBeforeSec, pauseAfterSec,
+arcOpening, arcDevelopment, arcConclusion, arcCompleteness,
+feedbackPositiveRange, feedbackNegativeRange, feedbackMargin,
+evidenceViewerResponseCue, evidenceTopicShift, featureCoverage, ...
+```
+
+Na prática, Qwen3 Embedding e Qwen3 Reranker continuam sendo usados como provedores semânticos. O GBDT aprende a combinar os scores deles com sinais de boundary, pausa, duração, arco, feedback positivo/negativo e quality gate.
+
+### 38.3 Ferramentas adicionadas
+
+```text
+tools/training_common.py
+```
+
+Helpers compartilhados para carregar JSONL, split por grupo, vetores de features, sigmoid/logit e reconstrução de texto a partir de transcript cache JSON/JSONL.
+
+```text
+tools/train_gbdt_ranker.py
+```
+
+Treina um GBDT experimental com `scikit-learn` e exporta JSON compatível com `FeedbackTrainedRanker`. Por padrão ele recusa dataset pequeno/desbalanceado. Use `--allow-small-data` apenas para smoke test.
+
+```text
+tools/evaluate_rankers.py
+```
+
+Avalia artefatos `logistic_regression` ou `gbdt_tree_ensemble` contra dataset JSONL. Mede acurácia, médias de score por classe e Precision@K por grupo.
+
+```text
+tools/export_qwen_reranker_dataset.py
+```
+
+Exporta dataset para fine-tuning do Qwen3 Reranker. Gera grupos:
+
+```json
+{
+  "query": "Preset + target + critérios editoriais",
+  "positive": ["texto de corte aceito/ajustado"],
+  "negative": ["texto de candidato rejeitado ou boundary ruim"],
+  "metadata": {}
+}
+```
+
+Se o feedback ainda não tiver `candidate_text`, use `--transcript-path` apontando para arquivos/diretórios de transcript cache. O exporter reconstrói o texto pelo overlap do range com segmentos do transcript.
+
+```text
+tools/export_qwen_embedding_dataset.py
+```
+
+Exporta triplets para fine-tuning contrastivo do Qwen3 Embedding:
+
+```json
+{
+  "anchor": "descrição do preset/target/editorial intent",
+  "positive": "texto de corte bom",
+  "negative": "texto de corte ruim"
+}
+```
+
+```text
+tools/train_qwen3_reranker_lora.py
+```
+
+Entry point offline para fine-tuning LoRA do Qwen3 Reranker com `transformers`, `datasets`, `peft` e `torch`. Ele gera um adapter LoRA. A etapa de merge/conversão/quantização para uso via `llama.cpp` deve ser feita depois de avaliar o adapter.
+
+### 38.4 Fluxo GBDT recomendado
+
+```bat
+python tools\build_feedback_ranker_dataset.py ^
+  "%APPDATA%\obs-studio\plugin_config\clip-cropper\feedback\boundary-feedback.jsonl" ^
+  -o datasets\feedback-ranker.jsonl
+
+python tools\train_gbdt_ranker.py ^
+  "%APPDATA%\obs-studio\plugin_config\clip-cropper\feedback\boundary-feedback.jsonl" ^
+  -o models\feedback-ranker-gbdt-v1.json ^
+  --dataset-output datasets\feedback-ranker-gbdt-v1.jsonl
+
+python tools\evaluate_rankers.py ^
+  models\feedback-ranker-gbdt-v1.json ^
+  --dataset datasets\feedback-ranker-gbdt-v1.jsonl
+```
+
+Depois de validar, configure no Advanced Settings:
+
+```text
+Feedback ranker model path = C:\caminho\models\feedback-ranker-gbdt-v1.json
+```
+
+### 38.5 Fluxo Qwen3 Reranker recomendado
+
+```bat
+python tools\export_qwen_reranker_dataset.py ^
+  "%APPDATA%\obs-studio\plugin_config\clip-cropper\feedback\boundary-feedback.jsonl" ^
+  --transcript-path "%APPDATA%\obs-studio\plugin_config\clip-cropper\transcription-cache" ^
+  -o datasets\qwen3-reranker-groups.jsonl
+
+python tools\train_qwen3_reranker_lora.py ^
+  datasets\qwen3-reranker-groups.jsonl ^
+  --base-model Qwen/Qwen3-Reranker-0.6B ^
+  -o models\qwen3-reranker-clip-lora-v1
+```
+
+O output é um adapter LoRA. Antes de usar no plugin, compare base vs fine-tuned em shadow mode/diagnóstico e só depois faça merge/conversão para o runtime escolhido.
+
+### 38.6 Fluxo Qwen3 Embedding recomendado
+
+```bat
+python tools\export_qwen_embedding_dataset.py ^
+  "%APPDATA%\obs-studio\plugin_config\clip-cropper\feedback\boundary-feedback.jsonl" ^
+  --transcript-path "%APPDATA%\obs-studio\plugin_config\clip-cropper\transcription-cache" ^
+  -o datasets\qwen3-embedding-triplets.jsonl
+```
+
+Esse dataset deve ser usado só depois de haver diversidade suficiente de vídeos. Com poucos vídeos, o risco é o embedding aprender estilo/tema específico demais.
+
+### 38.7 Regras de segurança
+
+1. Não treinar dentro do OBS.
+2. Não ativar GBDT/Qwen3 fine-tuned como produção sem validação por vídeo.
+3. Não usar `--allow-small-data` para gerar modelo de produção.
+4. Guardar `score_base_qwen3`, `score_finetuned_qwen3`, `gbdt_score` e `user_decision` durante shadow mode.
+5. Manter `QualityGate` e bloqueios duros ativos mesmo com modelo supervisionado.
+6. Se o feedback não tiver texto, exportadores Qwen3 precisam de transcript cache via `--transcript-path`.
+
+### 38.8 Candidate snapshots: ponte entre feedback, features e texto
+
+A fonte da verdade dos labels humanos continua sendo:
+
+```text
+%APPDATA%\obs-studio\plugin_config\clip-cropper\feedback\boundary-feedback.jsonl
+```
+
+A partir desta versão, o runtime também persiste um arquivo complementar:
+
+```text
+%APPDATA%\obs-studio\plugin_config\clip-cropper\feedback\candidate-snapshots.jsonl
+```
+
+O objetivo desse arquivo é não depender somente do `boundary-feedback.jsonl` para recuperar texto, scores e evidências. Cada linha de snapshot representa um candidato visto/avaliável no review e contém, quando disponível:
+
+```json
+{
+  "record_type": "candidate_snapshot",
+  "candidate_snapshot_id": "candidate_sha1:...",
+  "snapshot_kind": "generated_candidate",
+  "video_id": "...",
+  "preset": "viewer_message_response",
+  "suggested_index": 3,
+  "start_sec": 630.2,
+  "end_sec": 675.0,
+  "candidate_text": "texto do candidato...",
+  "timed_text_preview": "texto com tempos...",
+  "scores": {
+    "hook": 0.61,
+    "semanticTarget": 0.74,
+    "reranker": 0.82,
+    "arcCompleteness": 0.64,
+    "final": 0.73
+  },
+  "evidence": ["quality_gate_passed", "semantic_viewer_message_match"],
+  "classifier_labels": {
+    "boundary_state": "...",
+    "boundary_reasons": "..."
+  }
+}
+```
+
+O `boundary-feedback.jsonl` agora recebe o campo:
+
+```json
+{
+  "candidate_snapshot_id": "candidate_sha1:..."
+}
+```
+
+Essa relação permite montar datasets assim:
+
+```text
+boundary-feedback.jsonl      = decisão humana / label
+candidate-snapshots.jsonl    = texto, scores, evidence, source, features capturadas no review
+transcript cache             = fallback para reconstruir texto quando o snapshot não tiver texto suficiente
+```
+
+Os exporters aceitam `--candidate-snapshot-path`:
+
+```bat
+python tools\build_feedback_ranker_dataset.py ^
+  "%APPDATA%\obs-studio\plugin_config\clip-cropper\feedback\boundary-feedback.jsonl" ^
+  --candidate-snapshot-path "%APPDATA%\obs-studio\plugin_config\clip-cropper\feedback\candidate-snapshots.jsonl" ^
+  -o datasets\feedback-ranker.jsonl
+```
+
+Para o trainer leve:
+
+```bat
+python tools\train_feedback_ranker.py ^
+  "%APPDATA%\obs-studio\plugin_config\clip-cropper\feedback\boundary-feedback.jsonl" ^
+  --candidate-snapshot-path "%APPDATA%\obs-studio\plugin_config\clip-cropper\feedback\candidate-snapshots.jsonl" ^
+  -o models\feedback-ranker.json ^
+  --dataset-output datasets\feedback-ranker.jsonl
+```
+
+Para Qwen3 Reranker:
+
+```bat
+python tools\export_qwen_reranker_dataset.py ^
+  "%APPDATA%\obs-studio\plugin_config\clip-cropper\feedback\boundary-feedback.jsonl" ^
+  --candidate-snapshot-path "%APPDATA%\obs-studio\plugin_config\clip-cropper\feedback\candidate-snapshots.jsonl" ^
+  --transcript-path "%APPDATA%\obs-studio\plugin_config\clip-cropper\transcription-cache" ^
+  -o datasets\qwen3-reranker-groups.jsonl
+```
+
+Para Qwen3 Embedding:
+
+```bat
+python tools\export_qwen_embedding_dataset.py ^
+  "%APPDATA%\obs-studio\plugin_config\clip-cropper\feedback\boundary-feedback.jsonl" ^
+  --candidate-snapshot-path "%APPDATA%\obs-studio\plugin_config\clip-cropper\feedback\candidate-snapshots.jsonl" ^
+  --transcript-path "%APPDATA%\obs-studio\plugin_config\clip-cropper\transcription-cache" ^
+  -o datasets\qwen3-embedding-triplets.jsonl
+```
+
+A ordem de fallback dos exporters Qwen3 é:
+
+```text
+1. candidate_text/text/text_preview vindo do feedback ou snapshot;
+2. timed_text_preview/transcript_excerpt vindo do snapshot;
+3. reconstrução pelo transcript cache via --transcript-path.
+```
+
+O script responsável pelo join é:
+
+```text
+tools/candidate_snapshot_join.py
+```
+
+Ele tenta primeiro `candidate_snapshot_id`. Se o feedback antigo não tiver esse campo, tenta fallback por `video_id + preset + suggested_index` e similaridade de range. Isso mantém compatibilidade parcial com feedback antigo, mas o caminho preferido para dados novos é sempre usar `candidate_snapshot_id`.
+
+### 38.9 Comando agregador de treino/export
+
+Para evitar executar vários scripts manualmente, use o entrypoint único:
+
+```text
+tools/train_model.py
+```
+
+Ele orquestra análise, calibração, geração de datasets, treino tabular, export Qwen3 e treino LoRA conforme o modelo escolhido em `--model`.
+
+No estágio atual, em que o projeto ainda está principalmente coletando feedback, o comando recomendado é:
+
+```bat
+python tools\train_model.py ^
+  --model current
+```
+
+Se quiser passar caminhos explicitamente:
+
+```bat
+python tools\train_model.py ^
+  --model current ^
+  --feedback "%APPDATA%\obs-studio\plugin_config\clip-cropper\feedback\boundary-feedback.jsonl" ^
+  --candidate-snapshot-path "%APPDATA%\obs-studio\plugin_config\clip-cropper\feedback\candidate-snapshots.jsonl" ^
+  --output-root artifacts\training
+```
+
+`--model current` executa:
+
+```text
+analyze_boundary_feedback.py
+calibrate_boundary_thresholds.py
+build_feedback_ranker_dataset.py
+train_feedback_ranker.py como tentativa segura
+```
+
+A tentativa de `train_feedback_ranker.py` pode recusar o treino se o dataset ainda estiver pequeno ou desbalanceado. Isso é esperado. O artefato principal nesse estágio continua sendo:
+
+```text
+artifacts/training/reports/boundary-calibration.json
+```
+
+Os modos aceitos são:
+
+```text
+current
+  Fluxo recomendado agora: análise, calibração, dataset tabular e tentativa segura do ranker leve.
+
+analysis
+  Apenas imprime análise do boundary feedback.
+
+calibration
+  Gera boundary-calibration.json.
+
+logistic
+  Treina feedback-ranker.json com regressão logística leve. Falha se os dados forem insuficientes.
+
+gbdt
+  Treina feedback-ranker-gbdt.json. Requer scikit-learn e dados suficientes.
+
+qwen-reranker
+  Exporta dataset textual grouped/pairs para fine-tuning do Qwen3 Reranker.
+
+qwen-embedding
+  Exporta triplets anchor/positive/negative para fine-tuning do Qwen3 Embedding.
+
+qwen-reranker-lora
+  Exporta dataset Qwen3 Reranker e roda treino LoRA offline.
+
+datasets
+  Exporta dataset tabular, dataset Qwen3 Reranker e dataset Qwen3 Embedding.
+
+all
+  Executa análise, calibração, dataset tabular, logistic, GBDT e exporters Qwen3. Não treina LoRA salvo se `--train-qwen` for passado.
+```
+
+Exemplo para GBDT quando houver dados suficientes:
+
+```bat
+python tools\train_model.py ^
+  --model gbdt ^
+  --feedback "%APPDATA%\obs-studio\plugin_config\clip-cropper\feedback\boundary-feedback.jsonl" ^
+  --candidate-snapshot-path "%APPDATA%\obs-studio\plugin_config\clip-cropper\feedback\candidate-snapshots.jsonl" ^
+  --output-root artifacts\training
+```
+
+Exemplo para exportar dataset Qwen3 Reranker:
+
+```bat
+python tools\train_model.py ^
+  --model qwen-reranker ^
+  --feedback "%APPDATA%\obs-studio\plugin_config\clip-cropper\feedback\boundary-feedback.jsonl" ^
+  --candidate-snapshot-path "%APPDATA%\obs-studio\plugin_config\clip-cropper\feedback\candidate-snapshots.jsonl" ^
+  --transcript-path "%APPDATA%\obs-studio\plugin_config\clip-cropper\transcription-cache" ^
+  --output-root artifacts\training
+```
+
+Exemplo para treinar LoRA do Qwen3 Reranker offline:
+
+```bat
+python tools\train_model.py ^
+  --model qwen-reranker-lora ^
+  --feedback "%APPDATA%\obs-studio\plugin_config\clip-cropper\feedback\boundary-feedback.jsonl" ^
+  --candidate-snapshot-path "%APPDATA%\obs-studio\plugin_config\clip-cropper\feedback\candidate-snapshots.jsonl" ^
+  --transcript-path "%APPDATA%\obs-studio\plugin_config\clip-cropper\transcription-cache" ^
+  --qwen-base-model Qwen/Qwen3-Reranker-0.6B ^
+  --output-root artifacts\training
+```
+
+Esse treino LoRA exige dependências Python pesadas (`torch`, `transformers`, `datasets`, `peft`) e não deve ser executado dentro do OBS. O plugin só consome o modelo/adapter depois que ele for treinado, avaliado, convertido ou servido por um runtime externo.
+
+O agregador sempre escreve um manifesto em:
+
+```text
+artifacts/training/training-run-manifest.json
+```
+
+Esse manifesto registra feedback usado, snapshots usados, transcript paths, datasets gerados, modelos gerados e o modo escolhido. Ele é útil para reproduzir experimentos e evitar confundir datasets/modelos de execuções diferentes.
