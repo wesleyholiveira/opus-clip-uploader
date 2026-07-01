@@ -17,13 +17,17 @@ Future workflows:
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Sequence
+
+from candidate_snapshot_join import normalize_profile, row_profile
 
 MODEL_CHOICES = (
     "current",
@@ -44,6 +48,8 @@ class Paths:
     root: Path
     tools: Path
     output_root: Path
+    profile: str
+    profile_root: Path
     datasets: Path
     models: Path
     reports: Path
@@ -81,15 +87,106 @@ def existing(paths: Iterable[Path | None]) -> list[Path]:
     return [path for path in paths if path and path.exists()]
 
 
-def make_paths(output_root: Path) -> Paths:
+def make_paths(output_root: Path, profile: str) -> Paths:
     root = Path(__file__).resolve().parents[1]
     tools = root / "tools"
-    datasets = output_root / "datasets"
-    models = output_root / "models"
-    reports = output_root / "reports"
-    for directory in (output_root, datasets, models, reports):
+    normalized_profile = normalize_profile(profile)
+    profile_root = output_root / normalized_profile
+    datasets = profile_root / "datasets"
+    models = profile_root / "models"
+    reports = profile_root / "reports"
+    for directory in (output_root, profile_root, datasets, models, reports):
         directory.mkdir(parents=True, exist_ok=True)
-    return Paths(root=root, tools=tools, output_root=output_root, datasets=datasets, models=models, reports=reports)
+    return Paths(root=root, tools=tools, output_root=output_root, profile=normalized_profile, profile_root=profile_root, datasets=datasets, models=models, reports=reports)
+
+
+
+def _iter_jsonl(path: Path) -> list[dict]:
+    rows: list[dict] = []
+    if not path.exists():
+        return rows
+    with path.open("r", encoding="utf-8") as handle:
+        for line_no, line in enumerate(handle, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                print(f"[warn] Ignoring invalid JSON at {path}:{line_no}", flush=True)
+                continue
+            if isinstance(row, dict):
+                rows.append(row)
+    return rows
+
+
+def _write_jsonl(path: Path, rows: Sequence[dict]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+    return path
+
+
+def _profile_matches(row: dict, profile: str) -> bool:
+    return row_profile(row) == normalize_profile(profile)
+
+
+def write_profile_scoped_inputs(paths: Paths, feedback: Path, snapshot_paths: Sequence[Path]) -> tuple[Path, list[Path], dict[str, str | int | list[str]]]:
+    """Create audit-friendly inputs filtered to the selected training profile.
+
+    Runtime append-only files intentionally remain global so a single review log can
+    contain multiple presets. Training should not be ambiguous, so the orchestrator
+    materializes profile-scoped feedback/snapshot JSONL files under reports/ and uses
+    those files for all downstream scripts.
+    """
+    feedback_rows = _iter_jsonl(feedback)
+    filtered_feedback = [row for row in feedback_rows if _profile_matches(row, paths.profile)]
+    feedback_out = paths.reports / "boundary-feedback.filtered.jsonl"
+    _write_jsonl(feedback_out, filtered_feedback)
+
+    referenced_snapshot_ids = {
+        str(row.get("candidate_snapshot_id") or "").strip()
+        for row in filtered_feedback
+        if str(row.get("candidate_snapshot_id") or "").strip()
+    }
+
+    filtered_snapshot_outputs: list[Path] = []
+    total_snapshot_rows = 0
+    total_filtered_snapshot_rows = 0
+    source_snapshot_files: list[str] = []
+    for index, snapshot_path in enumerate(snapshot_paths, 1):
+        rows = _iter_jsonl(snapshot_path)
+        total_snapshot_rows += len(rows)
+        source_snapshot_files.append(str(snapshot_path))
+        scoped_rows = []
+        for row in rows:
+            snapshot_id = str(row.get("candidate_snapshot_id") or "").strip()
+            if _profile_matches(row, paths.profile) or (snapshot_id and snapshot_id in referenced_snapshot_ids):
+                scoped_rows.append(row)
+        if not scoped_rows:
+            continue
+        output = paths.reports / ("candidate-snapshots.filtered.jsonl" if len(snapshot_paths) == 1 else f"candidate-snapshots.{index}.filtered.jsonl")
+        _write_jsonl(output, scoped_rows)
+        filtered_snapshot_outputs.append(output)
+        total_filtered_snapshot_rows += len(scoped_rows)
+
+    stats: dict[str, str | int | list[str]] = {
+        "source_feedback": str(feedback),
+        "filtered_feedback": str(feedback_out),
+        "source_feedback_rows": len(feedback_rows),
+        "filtered_feedback_rows": len(filtered_feedback),
+        "source_candidate_snapshot_paths": source_snapshot_files,
+        "filtered_candidate_snapshot_paths": [str(path) for path in filtered_snapshot_outputs],
+        "source_candidate_snapshot_rows": total_snapshot_rows,
+        "filtered_candidate_snapshot_rows": total_filtered_snapshot_rows,
+    }
+    print(
+        f"Profile-scoped inputs: feedback {len(filtered_feedback)}/{len(feedback_rows)} rows, "
+        f"snapshots {total_filtered_snapshot_rows}/{total_snapshot_rows} rows for profile={paths.profile}",
+        flush=True,
+    )
+    return feedback_out, filtered_snapshot_outputs, stats
 
 
 def quote_cmd(cmd: Sequence[str]) -> str:
@@ -134,12 +231,14 @@ def run_calibration(paths: Paths, feedback: Path, *, min_records: int) -> Path:
             str(output),
             "--min-records",
             str(min_records),
+            "--profile",
+            paths.profile,
         ],
     )
     return output
 
 
-def run_build_tabular_dataset(paths: Paths, feedback: Path, snapshots: Sequence[Path], *, preset: str, output: Path | None = None) -> Path:
+def run_build_tabular_dataset(paths: Paths, feedback: Path, snapshots: Sequence[Path], *, preset: str, output: Path | None = None, include_weak_negatives: bool = False) -> Path:
     dataset = output or (paths.datasets / "feedback-ranker-dataset.jsonl")
     cmd = [
         sys.executable,
@@ -147,10 +246,12 @@ def run_build_tabular_dataset(paths: Paths, feedback: Path, snapshots: Sequence[
         str(feedback),
         "-o",
         str(dataset),
-        "--preset",
+        "--profile",
         preset,
     ]
     cmd.extend(repeated_path_args("--candidate-snapshot-path", snapshots))
+    if include_weak_negatives:
+        cmd.append("--include-weak-negatives")
     run_step("Build tabular feedback dataset", cmd)
     return dataset
 
@@ -167,7 +268,7 @@ def run_logistic(paths: Paths, feedback: Path, snapshots: Sequence[Path], *, pre
         str(output),
         "--dataset-output",
         str(dataset),
-        "--preset",
+        "--profile",
         preset,
     ]
     cmd.extend(repeated_path_args("--candidate-snapshot-path", snapshots))
@@ -186,7 +287,7 @@ def run_gbdt(paths: Paths, feedback: Path, snapshots: Sequence[Path], *, preset:
         str(output),
         "--dataset-output",
         str(dataset),
-        "--preset",
+        "--profile",
         preset,
     ]
     cmd.extend(repeated_path_args("--candidate-snapshot-path", snapshots))
@@ -197,7 +298,7 @@ def run_gbdt(paths: Paths, feedback: Path, snapshots: Sequence[Path], *, preset:
 
 
 def run_evaluate(paths: Paths, model: Path, dataset: Path | None = None, *, feedback: Path | None = None, preset: str) -> None:
-    cmd = [sys.executable, script(paths, "evaluate_rankers.py"), str(model), "--preset", preset]
+    cmd = [sys.executable, script(paths, "evaluate_rankers.py"), str(model), "--profile", preset]
     if dataset and dataset.exists():
         cmd.extend(["--dataset", str(dataset)])
     elif feedback:
@@ -226,6 +327,8 @@ def run_qwen_reranker_export(
         fmt,
         "--min-negatives",
         str(min_negatives),
+        "--profile",
+        paths.profile,
     ]
     cmd.extend(repeated_path_args("--candidate-snapshot-path", snapshots))
     cmd.extend(repeated_path_args("--transcript-path", transcripts))
@@ -248,6 +351,8 @@ def run_qwen_embedding_export(
         str(feedback),
         "-o",
         str(dataset),
+        "--profile",
+        paths.profile,
     ]
     cmd.extend(repeated_path_args("--candidate-snapshot-path", snapshots))
     cmd.extend(repeated_path_args("--transcript-path", transcripts))
@@ -290,21 +395,62 @@ def run_qwen_reranker_lora(paths: Paths, dataset: Path, args: argparse.Namespace
     return output_dir if rc == 0 else None
 
 
-def write_manifest(paths: Paths, args: argparse.Namespace, artifacts: dict[str, str | None]) -> Path:
-    manifest = paths.output_root / "training-run-manifest.json"
+def default_plugin_profile_dir(profile: str) -> Path | None:
+    root = plugin_data_root()
+    if not root:
+        return None
+    return root / "feedback" / "profiles" / normalize_profile(profile)
+
+
+def install_runtime_artifacts(paths: Paths, args: argparse.Namespace, artifacts: dict[str, str | None]) -> dict[str, str]:
+    target = args.plugin_profile_dir or default_plugin_profile_dir(paths.profile)
+    if target is None:
+        print("[warn] Could not resolve plugin profile directory; skipping runtime install.", flush=True)
+        return {}
+    target.mkdir(parents=True, exist_ok=True)
+    installed: dict[str, str] = {}
+
+    def copy_artifact(key: str, filename: str) -> None:
+        value = artifacts.get(key)
+        if not value:
+            return
+        source = Path(value)
+        if not source.exists():
+            return
+        destination = target / filename
+        shutil.copy2(source, destination)
+        installed[key] = str(destination)
+        print(f"Installed {key}: {destination}", flush=True)
+
+    copy_artifact("boundary_calibration", "boundary-calibration.json")
+    copy_artifact("logistic_model", "feedback-ranker.json")
+    copy_artifact("gbdt_model", "feedback-ranker-gbdt.json")
+    return installed
+
+
+def write_manifest(paths: Paths, args: argparse.Namespace, artifacts: dict[str, str | None], scoped_inputs: dict[str, str | int | list[str]]) -> Path:
+    manifest = paths.profile_root / "training-run-manifest.json"
     payload = {
         "schema_version": 1,
         "generated_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "model": args.model,
-        "feedback": str(args.feedback),
-        "candidate_snapshot_paths": [str(path) for path in args.candidate_snapshot_path],
+        "profile": args.profile,
+        "feedback": scoped_inputs.get("source_feedback", str(args.feedback)),
+        "filtered_feedback": scoped_inputs.get("filtered_feedback"),
+        "candidate_snapshot_paths": scoped_inputs.get("filtered_candidate_snapshot_paths", [str(path) for path in args.candidate_snapshot_path]),
+        "source_candidate_snapshot_paths": scoped_inputs.get("source_candidate_snapshot_paths", [str(path) for path in args.candidate_snapshot_path]),
         "transcript_paths": [str(path) for path in args.transcript_path],
+        "profile_input_stats": {
+            "source_feedback_rows": scoped_inputs.get("source_feedback_rows"),
+            "filtered_feedback_rows": scoped_inputs.get("filtered_feedback_rows"),
+            "source_candidate_snapshot_rows": scoped_inputs.get("source_candidate_snapshot_rows"),
+            "filtered_candidate_snapshot_rows": scoped_inputs.get("filtered_candidate_snapshot_rows"),
+        },
         "output_root": str(paths.output_root),
+        "profile_root": str(paths.profile_root),
         "artifacts": artifacts,
         "note": "Generated by tools/train_model.py. This manifest only records orchestration outputs; inspect each model/dataset file before production use.",
     }
-    import json
-
     manifest.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return manifest
 
@@ -320,8 +466,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--transcript-path", type=Path, action="append", default=existing([default_transcript_path()]),
                         help="Transcript cache file/directory for Qwen text reconstruction. Can be repeated.")
     parser.add_argument("--output-root", type=Path, default=Path("artifacts") / "training",
-                        help="Root folder where datasets, models, reports and the manifest are written.")
-    parser.add_argument("--preset", default="viewer_message_response")
+                        help="Root folder where datasets, models, reports and the manifest are written. The profile id is appended below this root.")
+    parser.add_argument("--install-runtime-artifacts", action="store_true",
+                        help="Copy generated calibration/model artifacts into the OBS plugin feedback/profiles/<profile> runtime directory.")
+    parser.add_argument("--plugin-profile-dir", type=Path,
+                        help="Override runtime install directory for --install-runtime-artifacts.")
+    parser.add_argument("--preset", default="viewer_message_response", help="Legacy alias for --profile.")
+    parser.add_argument("--profile", help="Training profile/preset id. Defaults to --preset.")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--allow-small-data", action="store_true",
                         help="Permissive mode for smoke tests only. Do not use generated models in production.")
@@ -357,9 +508,21 @@ def main() -> int:
 
     args.candidate_snapshot_path = [path.expanduser().resolve() for path in args.candidate_snapshot_path if path.exists()]
     args.transcript_path = [path.expanduser().resolve() for path in args.transcript_path if path.exists()]
-    paths = make_paths(args.output_root.expanduser().resolve())
+    if args.plugin_profile_dir:
+        args.plugin_profile_dir = args.plugin_profile_dir.expanduser().resolve()
+    args.profile = normalize_profile(args.profile or args.preset)
+    args.preset = args.profile
+    paths = make_paths(args.output_root.expanduser().resolve(), args.profile)
+    scoped_feedback, scoped_snapshots, scoped_inputs = write_profile_scoped_inputs(paths, args.feedback, args.candidate_snapshot_path)
 
-    artifacts: dict[str, str | None] = {}
+    artifacts: dict[str, str | None] = {
+        "filtered_feedback": str(scoped_feedback),
+    }
+    if scoped_snapshots:
+        artifacts["filtered_candidate_snapshots"] = ",".join(str(path) for path in scoped_snapshots)
+
+    feedback_for_training = scoped_feedback
+    snapshots_for_training = scoped_snapshots
 
     wants_analysis = args.model in {"current", "analysis", "calibration", "all"} and not args.skip_analysis
     wants_calibration = args.model in {"current", "calibration", "all"}
@@ -371,37 +534,43 @@ def main() -> int:
     wants_lora = args.model == "qwen-reranker-lora" or (args.model == "all" and args.train_qwen)
 
     if wants_analysis:
-        run_analysis(paths, args.feedback)
+        run_analysis(paths, feedback_for_training)
         artifacts["analysis"] = "stdout"
 
     if wants_calibration:
-        calibration = run_calibration(paths, args.feedback, min_records=args.calibration_min_records)
+        calibration = run_calibration(paths, feedback_for_training, min_records=args.calibration_min_records)
         artifacts["boundary_calibration"] = str(calibration)
 
     tabular_dataset: Path | None = None
     if wants_tabular_dataset:
-        tabular_dataset = run_build_tabular_dataset(paths, args.feedback, args.candidate_snapshot_path, preset=args.preset)
+        tabular_dataset = run_build_tabular_dataset(
+            paths,
+            feedback_for_training,
+            snapshots_for_training,
+            preset=args.preset,
+            include_weak_negatives=(args.model == "gbdt"),
+        )
         artifacts["tabular_dataset"] = str(tabular_dataset)
 
     if wants_logistic:
-        logistic = run_logistic(paths, args.feedback, args.candidate_snapshot_path, preset=args.preset, allow_failure=(args.allow_small_data or args.model == "current"))
+        logistic = run_logistic(paths, feedback_for_training, snapshots_for_training, preset=args.preset, allow_failure=(args.allow_small_data or args.model == "current"))
         artifacts["logistic_model"] = str(logistic) if logistic else None
         if logistic and not args.skip_evaluation:
-            run_evaluate(paths, logistic, tabular_dataset, feedback=args.feedback, preset=args.preset)
+            run_evaluate(paths, logistic, tabular_dataset, feedback=feedback_for_training, preset=args.preset)
 
     if wants_gbdt:
-        gbdt = run_gbdt(paths, args.feedback, args.candidate_snapshot_path, preset=args.preset, allow_small_data=args.allow_small_data)
+        gbdt = run_gbdt(paths, feedback_for_training, snapshots_for_training, preset=args.preset, allow_small_data=args.allow_small_data)
         artifacts["gbdt_model"] = str(gbdt) if gbdt else None
         gbdt_dataset = paths.datasets / "feedback-ranker-gbdt-dataset.jsonl"
         if gbdt and not args.skip_evaluation:
-            run_evaluate(paths, gbdt, gbdt_dataset if gbdt_dataset.exists() else tabular_dataset, feedback=args.feedback, preset=args.preset)
+            run_evaluate(paths, gbdt, gbdt_dataset if gbdt_dataset.exists() else tabular_dataset, feedback=feedback_for_training, preset=args.preset)
 
     qwen_reranker_dataset: Path | None = None
     if wants_qwen_reranker:
         qwen_reranker_dataset = run_qwen_reranker_export(
             paths,
-            args.feedback,
-            args.candidate_snapshot_path,
+            feedback_for_training,
+            snapshots_for_training,
             args.transcript_path,
             fmt=args.qwen_format,
             min_negatives=args.qwen_min_negatives,
@@ -409,7 +578,7 @@ def main() -> int:
         artifacts["qwen_reranker_dataset"] = str(qwen_reranker_dataset) if qwen_reranker_dataset else None
 
     if wants_qwen_embedding:
-        qwen_embedding_dataset = run_qwen_embedding_export(paths, args.feedback, args.candidate_snapshot_path, args.transcript_path)
+        qwen_embedding_dataset = run_qwen_embedding_export(paths, feedback_for_training, snapshots_for_training, args.transcript_path)
         artifacts["qwen_embedding_dataset"] = str(qwen_embedding_dataset) if qwen_embedding_dataset else None
 
     if wants_lora:
@@ -421,7 +590,11 @@ def main() -> int:
         qwen_lora = run_qwen_reranker_lora(paths, qwen_reranker_dataset, args)
         artifacts["qwen_reranker_lora"] = str(qwen_lora) if qwen_lora else None
 
-    manifest = write_manifest(paths, args, artifacts)
+    if args.install_runtime_artifacts:
+        installed = install_runtime_artifacts(paths, args, artifacts)
+        artifacts["installed_runtime_artifacts"] = ",".join(installed.values()) if installed else None
+
+    manifest = write_manifest(paths, args, artifacts, scoped_inputs)
     print(f"\nWrote manifest: {manifest}", flush=True)
     return 0
 

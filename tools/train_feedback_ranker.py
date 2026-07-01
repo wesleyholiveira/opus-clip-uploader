@@ -202,7 +202,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("feedback_jsonl", type=Path)
     parser.add_argument("-o", "--output", type=Path, required=True)
-    parser.add_argument("--preset", default="viewer_message_response")
+    parser.add_argument("--preset", default="viewer_message_response", help="Legacy alias for --profile.")
+    parser.add_argument("--profile", help="Training profile/preset id. Defaults to --preset.")
     parser.add_argument("--dataset-output", type=Path)
     parser.add_argument("--candidate-snapshot-path", type=Path, action="append", default=[],
                         help="candidate-snapshots.jsonl file or feedback directory used to enrich rows with original text/features/scores.")
@@ -221,7 +222,8 @@ def main() -> int:
     if args.candidate_snapshot_path:
         snapshot_index = load_candidate_snapshot_index(args.candidate_snapshot_path)
         rows, snapshot_hits = enrich_feedback_rows_with_snapshots(rows, snapshot_index)
-    dataset = build_dataset(rows, preset=args.preset or None)
+    profile = args.profile or args.preset
+    dataset = build_dataset(rows, preset=profile or None)
     positives = sum(1 for item in dataset if item["label"] == 1)
     negatives = len(dataset) - positives
     if len(dataset) < args.min_examples or positives < args.min_positives or negatives < args.min_negatives:
@@ -254,7 +256,7 @@ def main() -> int:
     )
     model = model_json(
         feedback_jsonl=args.feedback_jsonl,
-        preset=args.preset or "all",
+        preset=profile or "all",
         dataset=dataset,
         weights=weights,
         intercept=intercept,

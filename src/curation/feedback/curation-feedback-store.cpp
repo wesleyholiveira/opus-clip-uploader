@@ -1,5 +1,6 @@
 #include "curation/feedback/curation-feedback-store.hpp"
 #include "curation/feedback/curation-feedback-detail.hpp"
+#include "curation/curation-preset-profile.hpp"
 
 #ifdef __cplusplus
 extern "C" {
@@ -11,6 +12,7 @@ extern "C" {
 #endif
 
 #include <QCryptographicHash>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QJsonArray>
@@ -19,9 +21,11 @@ extern "C" {
 #include <QJsonParseError>
 #include <QJsonValue>
 #include <QSet>
+#include <QSaveFile>
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace Curation::Feedback {
 
@@ -77,6 +81,12 @@ QString CurationFeedbackStore::feedbackDirectoryPath()
 	return QDir::temp().filePath(QStringLiteral("clip-cropper-feedback"));
 }
 
+QString CurationFeedbackStore::feedbackProfileDirectoryPath(const QString &profileId)
+{
+	const QString profile = Curation::normalizePresetProfileId(profileId);
+	return QDir(feedbackDirectoryPath()).filePath(QStringLiteral("profiles/%1").arg(profile));
+}
+
 QString CurationFeedbackStore::feedbackJsonlPath()
 {
 	return QDir(feedbackDirectoryPath()).filePath(QStringLiteral("boundary-feedback.jsonl"));
@@ -92,25 +102,134 @@ QString CurationFeedbackStore::calibrationJsonPath()
 	return QDir(feedbackDirectoryPath()).filePath(QStringLiteral("boundary-calibration.json"));
 }
 
-QJsonObject CurationFeedbackStore::loadCalibrationRoot()
+QString CurationFeedbackStore::calibrationJsonPathForProfile(const QString &profileId)
 {
-	QFile file(calibrationJsonPath());
+	return QDir(feedbackProfileDirectoryPath(profileId)).filePath(QStringLiteral("boundary-calibration.json"));
+}
+
+QString CurationFeedbackStore::feedbackRankerModelPathForProfile(const QString &profileId, const QString &fileName)
+{
+	const QString cleanFileName = fileName.trimmed().isEmpty() ? QStringLiteral("feedback-ranker.json") : fileName.trimmed();
+	return QDir(feedbackProfileDirectoryPath(profileId)).filePath(cleanFileName);
+}
+
+static QJsonObject loadCalibrationFile(const QString &path, const char *scope)
+{
+	QFile file(path);
 	if (!file.exists() || !file.open(QIODevice::ReadOnly))
 		return {};
 	QJsonParseError error;
 	const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &error);
 	if (error.error != QJsonParseError::NoError || !document.isObject()) {
-		blog(LOG_WARNING, "[clip-cropper] Invalid boundary calibration JSON: %s",
+		blog(LOG_WARNING, "[clip-cropper] Invalid %s boundary calibration JSON: %s", scope,
 		     error.errorString().toUtf8().constData());
 		return {};
 	}
-	static bool loggedCalibrationLoad = false;
-	if (!loggedCalibrationLoad) {
-		loggedCalibrationLoad = true;
-		blog(LOG_INFO, "[clip-cropper] Loaded boundary calibration JSON. path=%s",
-		     calibrationJsonPath().toUtf8().constData());
-	}
+	blog(LOG_INFO, "[clip-cropper] Loaded %s boundary calibration JSON. path=%s", scope,
+	     path.toUtf8().constData());
 	return document.object();
+}
+
+QJsonObject CurationFeedbackStore::loadCalibrationRoot()
+{
+	return loadCalibrationFile(calibrationJsonPath(), "global");
+}
+
+QJsonObject CurationFeedbackStore::loadCalibrationRootForProfile(const QString &profileId)
+{
+	const QJsonObject profileRoot = loadCalibrationFile(calibrationJsonPathForProfile(profileId), "profile");
+	if (!profileRoot.isEmpty())
+		return profileRoot;
+	return loadCalibrationRoot();
+}
+
+
+static bool purgeRangeIsValid(const ClipDuration &range)
+{
+	return std::isfinite(range.startSec) && std::isfinite(range.endSec) && range.endSec > range.startSec;
+}
+
+static bool purgeRangesAreSameMarker(const ClipDuration &recordRange, const ClipDuration &removedRange)
+{
+	if (!purgeRangeIsValid(recordRange) || !purgeRangeIsValid(removedRange))
+		return false;
+
+	const double overlap = Detail::overlapSec(recordRange, removedRange);
+	if (overlap <= 0.0)
+		return false;
+
+	const double recordDuration = recordRange.endSec - recordRange.startSec;
+	const double removedDuration = removedRange.endSec - removedRange.startSec;
+	const double minDuration = std::max(0.001, std::min(recordDuration, removedDuration));
+	const double unionDuration = std::max(recordRange.endSec, removedRange.endSec) -
+			       std::min(recordRange.startSec, removedRange.startSec);
+	const double iou = unionDuration > 0.0 ? overlap / unionDuration : 0.0;
+	const double containment = overlap / minDuration;
+	const double startDistance = std::fabs(recordRange.startSec - removedRange.startSec);
+	const double endDistance = std::fabs(recordRange.endSec - removedRange.endSec);
+	const double centerDistance = std::fabs(((recordRange.startSec + recordRange.endSec) * 0.5) -
+					       ((removedRange.startSec + removedRange.endSec) * 0.5));
+
+	return iou >= 0.72 ||
+	       (startDistance <= 1.50 && endDistance <= 1.50) ||
+	       (containment >= 0.92 && centerDistance <= 2.50);
+}
+
+static QVector<ClipDuration> purgeCandidateRangesFromRecord(const QJsonObject &record)
+{
+	QVector<ClipDuration> ranges;
+	const auto appendRange = [&ranges, &record](const QString &startKey, const QString &endKey) {
+		const ClipDuration range = Detail::recordRange(record, startKey, endKey);
+		if (purgeRangeIsValid(range))
+			ranges.append(range);
+	};
+
+	appendRange(QStringLiteral("user_start_sec"), QStringLiteral("user_end_sec"));
+	appendRange(QStringLiteral("generated_start_sec"), QStringLiteral("generated_end_sec"));
+	appendRange(QStringLiteral("diagnostic_original_start_sec"), QStringLiteral("diagnostic_original_end_sec"));
+	appendRange(QStringLiteral("start_sec"), QStringLiteral("end_sec"));
+
+	const QJsonObject structured = record.value(QStringLiteral("explicit_structured_feedback")).toObject();
+	if (!structured.isEmpty()) {
+		const auto appendStructuredRange = [&ranges, &structured](const QString &startKey, const QString &endKey) {
+			const double startSec = structured.value(startKey).toDouble(std::numeric_limits<double>::quiet_NaN());
+			const double endSec = structured.value(endKey).toDouble(std::numeric_limits<double>::quiet_NaN());
+			const ClipDuration range{startSec, endSec};
+			if (purgeRangeIsValid(range))
+				ranges.append(range);
+		};
+		appendStructuredRange(QStringLiteral("range_start_sec"), QStringLiteral("range_end_sec"));
+		appendStructuredRange(QStringLiteral("diagnostic_original_start_sec"), QStringLiteral("diagnostic_original_end_sec"));
+	}
+
+	return ranges;
+}
+
+static bool feedbackRecordMatchesRemovedMarker(const QJsonObject &record, const QString &videoId,
+					       const QString &profileId, const QVector<ClipDuration> &removedRanges)
+{
+	if (removedRanges.isEmpty())
+		return false;
+	if (record.value(QStringLiteral("video_id")).toString() != videoId)
+		return false;
+
+	const QString recordPreset = record.value(QStringLiteral("training_profile")).toString(
+		record.value(QStringLiteral("preset")).toString());
+	if (!Detail::presetMatchesFeedback(recordPreset, profileId))
+		return false;
+
+	const QString decision = record.value(QStringLiteral("decision")).toString().trimmed().toLower();
+	if (decision == QStringLiteral("removed_unrated"))
+		return false;
+
+	const QVector<ClipDuration> recordRanges = purgeCandidateRangesFromRecord(record);
+	for (const ClipDuration &recordRange : recordRanges) {
+		for (const ClipDuration &removedRange : removedRanges) {
+			if (purgeRangesAreSameMarker(recordRange, removedRange))
+				return true;
+		}
+	}
+	return false;
 }
 
 FeedbackRangeMemory CurationFeedbackStore::loadRangeMemoryForVideo(const QString &videoPath, const QString &presetId,
@@ -138,7 +257,9 @@ FeedbackRangeMemory CurationFeedbackStore::loadRangeMemoryForVideo(const QString
 			continue;
 		const QJsonObject record = document.object();
 		++rowSequence;
-		if (!presetMatchesFeedback(record.value(QStringLiteral("preset")).toString(), presetId))
+		const QString recordPreset = record.value(QStringLiteral("training_profile")).toString(
+			record.value(QStringLiteral("preset")).toString());
+		if (!presetMatchesFeedback(recordPreset, presetId))
 			continue;
 
 		const QString decision = record.value(QStringLiteral("decision")).toString().trimmed().toLower();
@@ -352,6 +473,99 @@ FeedbackRangeMemory CurationFeedbackStore::loadRangeMemoryForVideo(const QString
 		     static_cast<int>(currentContentIds.size()));
 	}
 	return memory;
+}
+
+
+FeedbackPurgeResult CurationFeedbackStore::removeFeedbackForRanges(const QString &videoPath,
+								   const CurationSettings &settings,
+								   const QVector<ClipDuration> &ranges,
+								   const QString &reason)
+{
+	FeedbackPurgeResult result;
+	QVector<ClipDuration> removedRanges;
+	removedRanges.reserve(ranges.size());
+	for (const ClipDuration &range : ranges) {
+		if (purgeRangeIsValid(range))
+			removedRanges.append(range);
+	}
+	if (removedRanges.isEmpty())
+		return result;
+
+	result.attempted = true;
+	const QString path = feedbackJsonlPath();
+	QFile file(path);
+	if (!file.exists()) {
+		result.succeeded = true;
+		return result;
+	}
+	if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+		result.error = QStringLiteral("failed_to_open_feedback_for_read");
+		return result;
+	}
+
+	const QString videoId = stableVideoId(videoPath);
+	const QString profileId = Curation::resolvePresetProfileId(settings, settings.aiPrompt);
+	QVector<QByteArray> keptLines;
+	while (!file.atEnd()) {
+		const QByteArray rawLine = file.readLine();
+		const QByteArray trimmed = rawLine.trimmed();
+		if (trimmed.isEmpty()) {
+			keptLines.append(rawLine);
+			continue;
+		}
+		QJsonParseError error;
+		const QJsonDocument document = QJsonDocument::fromJson(trimmed, &error);
+		if (error.error != QJsonParseError::NoError || !document.isObject()) {
+			keptLines.append(rawLine);
+			continue;
+		}
+		++result.recordsRead;
+		if (feedbackRecordMatchesRemovedMarker(document.object(), videoId, profileId, removedRanges)) {
+			++result.recordsRemoved;
+			continue;
+		}
+		keptLines.append(rawLine);
+	}
+	file.close();
+
+	if (result.recordsRemoved <= 0) {
+		result.succeeded = true;
+		return result;
+	}
+
+	const QString timestamp = QDateTime::currentDateTimeUtc().toString(QStringLiteral("yyyyMMdd-HHmmss-zzz"));
+	const QString backupPath = QDir(feedbackDirectoryPath()).filePath(
+		QStringLiteral("boundary-feedback.before-marker-delete-%1.jsonl").arg(timestamp));
+	if (!QFile::copy(path, backupPath)) {
+		result.error = QStringLiteral("failed_to_backup_feedback_before_marker_delete");
+		return result;
+	}
+	result.backupPath = backupPath;
+
+	QSaveFile output(path);
+	if (!output.open(QIODevice::WriteOnly | QIODevice::Text)) {
+		result.error = QStringLiteral("failed_to_open_feedback_for_rewrite");
+		return result;
+	}
+	for (QByteArray line : keptLines) {
+		if (!line.endsWith('\n'))
+			line.append('\n');
+		if (output.write(line) != line.size()) {
+			result.error = QStringLiteral("failed_to_write_rewritten_feedback");
+			return result;
+		}
+	}
+	if (!output.commit()) {
+		result.error = QStringLiteral("failed_to_commit_rewritten_feedback");
+		return result;
+	}
+
+	result.succeeded = true;
+	blog(LOG_INFO,
+	     "[clip-cropper] Removed persisted feedback for deleted review marker. video=%s profile=%s ranges=%d recordsRemoved=%d backup=%s reason=%s",
+	     videoPath.toUtf8().constData(), profileId.toUtf8().constData(), static_cast<int>(removedRanges.size()),
+	     result.recordsRemoved, backupPath.toUtf8().constData(), reason.toUtf8().constData());
+	return result;
 }
 
 bool CurationFeedbackStore::appendReviewFeedback(const QString &videoPath, const CurationSettings &settings,

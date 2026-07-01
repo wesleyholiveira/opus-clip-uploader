@@ -63,6 +63,7 @@ private:
 	bool semanticSuggestionInProgress = false;
 	int semanticSuggestionProgressGeneration = 0;
 	Curation::Feedback::FeedbackSuggestionSnapshot lastSemanticSuggestion;
+	QString lastSemanticSuggestionTrainingProfile;
 	QMap<int, QString> explicitReviewDecisions;
 	QMap<int, QJsonObject> explicitReviewFeedbackDetails;
 	QMap<int, QString> diagnosticReviewStates;
@@ -86,6 +87,7 @@ private:
 	QVector<int> selectedDiagnosticTableRows() const;
 	int diagnosticIndexForTableRow(int row) const;
 	QString diagnosticReviewState(int diagnosticIndex) const;
+	QString pendingExplicitFeedbackDecisionForRange(const ClipDuration &range, int *outSuggestedIndex = nullptr) const;
 	bool hasReviewDiagnosticCandidates() const;
 	void updateDiagnosticModeControls();
 	void updateSuggestClipRangesButtonState();

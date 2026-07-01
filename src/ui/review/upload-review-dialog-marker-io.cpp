@@ -1,8 +1,8 @@
 #include <obs-module.h>
-#include <obs-frontend-api.h>
-#include <plugin-support.h>
 
 #include "ui/upload-review-dialog.hpp"
+
+#include "curation/curation-preset-profile.hpp"
 
 #include "ui/review/upload-review-dialog-utils.hpp"
 #include "ui/video-marker-editor.hpp"
@@ -149,6 +149,8 @@ void UploadReviewDialog::applyImportedReviewRanges(const QVector<ClipDuration> &
 		return;
 
 	lastSemanticSuggestion = Curation::Feedback::FeedbackSuggestionSnapshot{};
+	const CurationSettings settings = curationSettings();
+	lastSemanticSuggestionTrainingProfile = Curation::resolvePresetProfileId(settings, settings.aiPrompt);
 	explicitReviewDecisions.clear();
 	explicitReviewFeedbackDetails.clear();
 	boundaryFeedbackSaved = false;

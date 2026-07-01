@@ -54,7 +54,9 @@ public:
 				     const QString &videoPath) const;
 
 	static QString defaultModelPath();
+	static QString modelPathForPreset(const QString &presetId);
 	static FeedbackTrainedRankerModel loadDefaultModel();
+	static FeedbackTrainedRankerModel loadModelForPreset(const QString &presetId);
 
 private:
 	static FeedbackTrainedRankerModel loadModel(const QString &path);

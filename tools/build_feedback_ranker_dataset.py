@@ -14,7 +14,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Iterable
 
-from candidate_snapshot_join import enrich_feedback_rows_with_snapshots, load_candidate_snapshot_index
+from candidate_snapshot_join import enrich_feedback_rows_with_snapshots, load_candidate_snapshot_index, normalize_profile, row_profile
 
 SCORE_FEATURES = [
     "duration", "boundary", "hook", "emotional", "advice", "explanation", "story", "opinion", "tutorial",
@@ -57,9 +57,9 @@ FEATURE_ORDER = SCORE_FEATURES + FEEDBACK_FEATURES + EVIDENCE_FEATURES + STRUCTU
 # example for ranking.  The corrected user range is still used as a positive
 # feedback signal for range-memory features, but it is not emitted as a positive
 # supervised row here because it does not carry candidate/reranker features.
-POSITIVE_DECISIONS = {"accepted", "approved_adjusted"}
-NEGATIVE_DECISIONS = {"rejected", "adjusted"}
-RANGE_MEMORY_POSITIVE_DECISIONS = {"accepted", "approved_adjusted", "added_by_user"}
+POSITIVE_DECISIONS = {"accepted", "approved_adjusted", "liked"}
+NEGATIVE_DECISIONS = {"rejected", "adjusted", "disliked"}
+RANGE_MEMORY_POSITIVE_DECISIONS = {"accepted", "approved_adjusted", "added_by_user", "liked"}
 SKIP_DECISIONS = {"removed_unrated", "ignored_diagnostic"}
 
 
@@ -177,6 +177,27 @@ def is_ignored_or_weak_training_signal(row: dict[str, Any]) -> bool:
     )
 
 
+def is_ranker_weak_negative(row: dict[str, Any]) -> bool:
+    """Return True for explicit low-quality candidates useful for ranker training.
+
+    Boundary calibration must ignore these weak/diagnostic rows, but a ranking
+    model needs examples of candidates that looked plausible enough to be shown
+    and were explicitly dismissed or disliked by the reviewer.
+    """
+    decision = str(row.get("decision", "")).strip()
+    explicit = str(row.get("explicit_review_decision", "")).strip()
+    feedback_class = str(row.get("generated_feedback_class", "")).strip()
+    if decision in {"ignored_diagnostic", "disliked"}:
+        return True
+    if explicit in {"ignored_diagnostic", "disliked"}:
+        return True
+    if feedback_class in {"ignored_diagnostic", "weak_negative"}:
+        return True
+    if feedback_bool(row, "weak_negative") and not is_boundary_recoverable_feedback(row):
+        return True
+    return False
+
+
 def is_edited_approved_adjustment(row: dict[str, Any]) -> bool:
     if str(row.get("decision", "")).strip() != "approved_adjusted":
         return False
@@ -208,14 +229,28 @@ def is_calibratable(row: dict[str, Any]) -> bool:
     return True
 
 
-def label_for_row(row: dict[str, Any]) -> int | None:
+def is_ranker_selectable(row: dict[str, Any], *, include_weak_negatives: bool = False) -> bool:
+    if is_default_no_marker_placeholder(row):
+        return False
+    if row.get("decision") == "removed_unrated":
+        return False
+    if row.get("event") == "review_rejected" and not row.get("explicit_review_decision"):
+        return False
+    if include_weak_negatives and is_ranker_weak_negative(row):
+        return True
+    return is_calibratable(row)
+
+
+def label_for_row(row: dict[str, Any], *, include_weak_negatives: bool = False) -> int | None:
     decision = str(row.get("decision", "")).strip()
     # A recoverable incomplete arc means the topic can be useful while the generated
     # boundaries are bad. Do not emit it as a pure ranker negative/positive row; keep
     # it for range memory and boundary calibration instead.
-    if is_ignored_or_weak_training_signal(row):
-        return None
     if is_boundary_recoverable_only(row):
+        return None
+    if include_weak_negatives and is_ranker_weak_negative(row):
+        return 0
+    if is_ignored_or_weak_training_signal(row):
         return None
     if decision == "approved_adjusted" and is_edited_approved_adjustment(row):
         return None
@@ -364,16 +399,21 @@ def feature_coverage(features: dict[str, float]) -> float:
     return clamp(non_zero / max(1, len(core)))
 
 
-def build_signals(rows: Iterable[dict[str, Any]]) -> dict[tuple[str, str, str], dict[str, list[tuple[int, tuple[float, float]]]]]:
+def build_signals(rows: Iterable[dict[str, Any]], *, include_weak_negatives: bool = False) -> dict[tuple[str, str, str], dict[str, list[tuple[int, tuple[float, float]]]]]:
     grouped: dict[tuple[str, str, str], dict[str, list[tuple[int, tuple[float, float]]]]] = defaultdict(lambda: {"positive": [], "negative": []})
     for row in rows:
-        if not is_calibratable(row):
+        if not is_ranker_selectable(row, include_weak_negatives=include_weak_negatives):
             continue
         line_no = int(row.get("__line_no", 0))
         decision = str(row.get("decision", "")).strip()
         generated = range_for_row(row)
         user = user_range_for_row(row)
         group = grouped[group_key(row)]
+
+        if include_weak_negatives and is_ranker_weak_negative(row):
+            if generated is not None:
+                group["negative"].append((line_no, generated))
+            continue
 
         if decision == "adjusted":
             # Runtime memory treats the generated range as the bad boundary and
@@ -494,15 +534,16 @@ def features_for_row(row: dict[str, Any], group_signals: dict[str, list[tuple[in
     return {name: float(features.get(name, 0.0)) for name in FEATURE_ORDER}
 
 
-def build_dataset(rows: list[dict[str, Any]], preset: str | None = None) -> list[dict[str, Any]]:
-    selected = [row for row in rows if is_calibratable(row)]
-    if preset:
-        selected = [row for row in selected if str(row.get("preset") or "auto") == preset]
-    signals_by_group = build_signals(selected)
+def build_dataset(rows: list[dict[str, Any]], preset: str | None = None, *, include_weak_negatives: bool = False) -> list[dict[str, Any]]:
+    profile = normalize_profile(preset) if preset else None
+    selected = [row for row in rows if is_ranker_selectable(row, include_weak_negatives=include_weak_negatives)]
+    if profile:
+        selected = [row for row in selected if row_profile(row) == profile]
+    signals_by_group = build_signals(selected, include_weak_negatives=include_weak_negatives)
     dataset: list[dict[str, Any]] = []
     emitted_positive_semantic_keys: set[tuple[str, str, str, tuple[int, int]]] = set()
     for row in selected:
-        label = label_for_row(row)
+        label = label_for_row(row, include_weak_negatives=include_weak_negatives)
         if label is None:
             continue
         dedupe_key = positive_semantic_dedupe_key(row)
@@ -514,15 +555,17 @@ def build_dataset(rows: list[dict[str, Any]], preset: str | None = None) -> list
         if r is None:
             continue
         features = features_for_row(row, signals_by_group[group_key(row)])
+        weak_negative = is_ranker_weak_negative(row)
         dataset.append({
             "label": label,
-            "weight": 1.35 if label == 1 else 1.10 if str(row.get("decision", "")).strip() == "adjusted" else 1.0,
+            "weight": 1.35 if label == 1 else 0.70 if weak_negative else 1.10 if str(row.get("decision", "")).strip() == "adjusted" else 1.0,
             "features": features,
             "metadata": {
                 "line_no": row.get("__line_no"),
                 "preset": row.get("preset"),
+                "training_profile": row_profile(row),
                 "decision": row.get("decision"),
-                "label_reason": "adjusted_generated_range_is_negative" if row.get("decision") == "adjusted" else None,
+                "label_reason": "weak_diagnostic_negative" if weak_negative else "adjusted_generated_range_is_negative" if row.get("decision") == "adjusted" else None,
                 "generated_feedback_class": row.get("generated_feedback_class"),
                 "diagnostic_rejection_reason": diagnostic_rejection_reason(row),
                 "explicit_review_decision": row.get("explicit_review_decision"),
@@ -539,9 +582,12 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("feedback_jsonl", type=Path)
     parser.add_argument("-o", "--output", type=Path, required=True)
-    parser.add_argument("--preset", default="viewer_message_response")
+    parser.add_argument("--preset", default="viewer_message_response", help="Legacy alias for --profile.")
+    parser.add_argument("--profile", help="Training profile/preset id. Defaults to --preset.")
     parser.add_argument("--candidate-snapshot-path", type=Path, action="append", default=[],
                         help="candidate-snapshots.jsonl file or feedback directory used to enrich rows with original text/features/scores.")
+    parser.add_argument("--include-weak-negatives", action="store_true",
+                        help="Include explicit ignored_diagnostic/disliked weak negatives for ranker training. Boundary calibration still ignores them.")
     args = parser.parse_args()
 
     rows = load_jsonl(args.feedback_jsonl)
@@ -549,20 +595,22 @@ def main() -> int:
     if args.candidate_snapshot_path:
         snapshot_index = load_candidate_snapshot_index(args.candidate_snapshot_path)
         rows, snapshot_hits = enrich_feedback_rows_with_snapshots(rows, snapshot_index)
-    dataset = build_dataset(rows, preset=args.preset or None)
+    profile = args.profile or args.preset
+    dataset = build_dataset(rows, preset=profile or None, include_weak_negatives=args.include_weak_negatives)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("w", encoding="utf-8") as handle:
         for item in dataset:
             handle.write(json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n")
     positives = sum(1 for item in dataset if item["label"] == 1)
     negatives = len(dataset) - positives
-    selected = [row for row in rows if is_calibratable(row) and (not args.preset or str(row.get("preset") or "auto") == args.preset)]
+    selected_profile = normalize_profile(profile) if profile else None
+    selected = [row for row in rows if is_ranker_selectable(row, include_weak_negatives=args.include_weak_negatives) and (not selected_profile or row_profile(row) == selected_profile)]
     recoverable_excluded = sum(1 for row in selected if is_boundary_recoverable_only(row))
-    ignored_or_weak_excluded = sum(1 for row in selected if is_ignored_or_weak_training_signal(row))
+    ignored_or_weak_excluded = sum(1 for row in rows if (not selected_profile or row_profile(row) == selected_profile) and is_ignored_or_weak_training_signal(row) and not args.include_weak_negatives)
     print(
         f"Wrote {args.output} examples={len(dataset)} positives={positives} negatives={negatives} "
         f"recoverable_boundary_excluded={recoverable_excluded} "
-        f"ignored_or_weak_training_excluded={ignored_or_weak_excluded} "
+        f"ignored_or_weak_training_excluded={ignored_or_weak_excluded} include_weak_negatives={args.include_weak_negatives} "
         f"snapshot_hits={snapshot_hits}"
     )
     return 0 if dataset else 1

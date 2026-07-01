@@ -32,6 +32,10 @@ const QString &clipCropperTitle();
 
 QStringList get_recording_paths_for_upload();
 QString get_opus_api_key();
+bool opus_upload_enabled();
+QString default_local_export_directory();
+QString local_export_directory();
+QString video_quality_preset();
 QString resolve_whisper_model_path();
 QString format_duration_seconds(double durationSeconds);
 int estimate_opus_credits(double durationSeconds);

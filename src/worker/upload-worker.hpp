@@ -76,4 +76,7 @@ private:
 			const QString &message, QString *lastOutput = nullptr);
 	bool runProcessCaptureStdout(const QString &program, const QStringList &arguments, int progressStart, int progressEnd,
 				     const QString &message, QByteArray *stdoutData, QString *lastErrorOutput = nullptr);
+	void runLocalExport();
+	bool exportRangesToLocalFile(const QVector<ClipDuration> &ranges, const QString &outputPath, int progressStart,
+				      int progressEnd, int displayIndex = -1, int displayTotal = -1);
 };

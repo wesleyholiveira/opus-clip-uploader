@@ -27,7 +27,7 @@ static void upload_reviewed_video(QWidget *parent, const QString &videoPath, con
 {
 	const QString apiKey = get_opus_api_key();
 
-	if (apiKey.trimmed().isEmpty()) {
+	if (opus_upload_enabled() && apiKey.trimmed().isEmpty()) {
 		QMessageBox::warning(parent, title, obsText("Message.ConfigureApiKeyInSettings"));
 		open_settings(nullptr);
 		return;
@@ -51,7 +51,8 @@ static void upload_reviewed_video(QWidget *parent, const QString &videoPath, con
 	progressLayout->setContentsMargins(0, 0, 0, 0);
 	progressLayout->setSpacing(6);
 
-	auto *uploadStatusLabel = new QLabel(obsText("Status.PreparingUpload").arg(1), progressContainer);
+	auto *uploadStatusLabel = new QLabel(opus_upload_enabled() ? obsText("Status.PreparingUpload").arg(1)
+								       : obsText("Status.PreparingLocalExport").arg(1), progressContainer);
 	uploadStatusLabel->setWordWrap(false);
 	uploadStatusLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
 	uploadStatusLabel->setMinimumHeight(20);
@@ -101,10 +102,11 @@ void open_video_review_impl(void *private_data)
 
 	UploadReviewDialog reviewDialog(videoPath, CurationSettings{}, false, parent);
 	if (reviewDialog.exec() == QDialog::Accepted) {
-		blog(LOG_INFO, "Upload review accepted. Starting Opus upload with reviewed ranges: %s",
-		     videoPath.toUtf8().constData());
+		blog(LOG_INFO, "Upload review accepted. Starting %s with reviewed ranges: %s",
+		     opus_upload_enabled() ? "Opus upload" : "local export", videoPath.toUtf8().constData());
 		upload_reviewed_video(parent, videoPath, reviewDialog.curationSettings());
 	} else {
-		blog(LOG_INFO, "Upload review canceled before Opus upload flow: %s", videoPath.toUtf8().constData());
+		blog(LOG_INFO, "Upload review canceled before %s flow: %s",
+		     opus_upload_enabled() ? "Opus upload" : "local export", videoPath.toUtf8().constData());
 	}
 }

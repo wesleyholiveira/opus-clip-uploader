@@ -526,8 +526,14 @@ ClipScoringPipelineOptions optionsForTranscript(const RecordingTranscript &trans
 
 CurationSettings scoringSettingsFromReviewSettings(CurationSettings settings)
 {
-	if (CurationPreset::normalizeId(settings.curationPreset) == CurationPreset::autoPresetId())
-		settings.curationPreset = CurationPreset::viewerMessageResponsePresetId();
+	if (CurationPreset::normalizeId(settings.curationPreset) == CurationPreset::autoPresetId()) {
+		const QString resolvedProfile = Curation::resolvePresetProfileId(settings, settings.aiPrompt);
+		// Keep truly ambiguous Auto as Auto, but never force it into viewer_message_response.
+		// Educational topics such as language learning should resolve to explanation and use
+		// explanation calibration/feedback instead of the viewer Q&A arc gate.
+		if (resolvedProfile != Curation::autoPresetProfileId())
+			settings.curationPreset = resolvedProfile;
+	}
 	if (settings.transcriptionLanguage.trimmed().isEmpty())
 		settings.transcriptionLanguage = QStringLiteral("auto");
 	if (settings.sourceLanguage.trimmed().isEmpty())
@@ -540,6 +546,7 @@ CurationSettings scoringSettingsFromReviewSettings(CurationSettings settings)
 	settings.rangeEndSec = 0.0;
 	return settings;
 }
+
 
 CurationSettings settingsFromScoring(const ClipScoringResult &scoring)
 {
@@ -904,6 +911,8 @@ void prepare_review_scoring_async(QWidget *parent, const QString &videoPath, con
 				reportProgressToContext(safeContext, progressCallback,
 							QObject::tr("Ranking marker suggestions..."), 88);
 				result.settings = settingsFromScoring(scoring);
+				result.settings.curationPreset = options.scoring.presetId;
+				result.resolvedProfileId = options.scoring.presetId;
 				result.applied = !result.settings.clipDurations.isEmpty();
 				result.summary = scoring.summary;
 				result.candidateDiagnostics = diagnosticsFromScoring(scoring);

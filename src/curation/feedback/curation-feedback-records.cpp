@@ -1,4 +1,5 @@
 #include "curation/feedback/curation-feedback-detail.hpp"
+#include "curation/curation-preset-profile.hpp"
 
 #include "transcription/transcript-store.hpp"
 
@@ -269,7 +270,7 @@ QString candidateSnapshotId(const QString &videoPath, const CurationSettings &se
 	hash.addData(QByteArrayLiteral("\n"));
 	hash.addData(contentIdForSuggestion(videoPath, suggestion).toUtf8());
 	hash.addData(QByteArrayLiteral("\n"));
-	hash.addData((settings.curationPreset.trimmed().isEmpty() ? QStringLiteral("auto") : settings.curationPreset.trimmed()).toUtf8());
+	hash.addData(Curation::normalizePresetProfileId(settings.curationPreset).toUtf8());
 	hash.addData(QByteArrayLiteral("\n"));
 	hash.addData(snapshotKind.toUtf8());
 	hash.addData(QByteArrayLiteral("\n"));
@@ -323,7 +324,9 @@ QJsonObject candidateSnapshotRecord(const QString &videoPath, const CurationSett
 	record.insert(QStringLiteral("video_file_name"), QFileInfo(videoPath).fileName());
 	record.insert(QStringLiteral("video_path"), videoPath);
 	insertContentIdentity(record, videoPath, suggestion);
+	const QString trainingProfile = Curation::resolvePresetProfileId(settings, settings.aiPrompt);
 	record.insert(QStringLiteral("preset"), settings.curationPreset.trimmed().isEmpty() ? QStringLiteral("auto") : settings.curationPreset.trimmed());
+	record.insert(QStringLiteral("training_profile"), trainingProfile);
 	record.insert(QStringLiteral("model"), settings.model);
 	record.insert(QStringLiteral("clip_length_preset"), settings.clipLengthPreset);
 	record.insert(QStringLiteral("source_language"), settings.sourceLanguage);
@@ -558,9 +561,11 @@ QJsonObject suggestionRecord(const QString &videoPath, const CurationSettings &s
 	record.insert(QStringLiteral("video_file_name"), QFileInfo(videoPath).fileName());
 	record.insert(QStringLiteral("video_path"), videoPath);
 	insertContentIdentity(record, videoPath, suggestion);
+	const QString trainingProfile = Curation::resolvePresetProfileId(settings, settings.aiPrompt);
 	record.insert(QStringLiteral("preset"), settings.curationPreset.trimmed().isEmpty()
 							? QStringLiteral("auto")
 							: settings.curationPreset.trimmed());
+	record.insert(QStringLiteral("training_profile"), trainingProfile);
 	record.insert(QStringLiteral("model"), settings.model);
 	record.insert(QStringLiteral("clip_length_preset"), settings.clipLengthPreset);
 	record.insert(QStringLiteral("source_language"), settings.sourceLanguage);
@@ -724,9 +729,11 @@ QJsonObject addedUserRangeRecord(const QString &videoPath, const CurationSetting
 	record.insert(QStringLiteral("video_file_name"), QFileInfo(videoPath).fileName());
 	record.insert(QStringLiteral("video_path"), videoPath);
 	insertContentIdentity(record, videoPath, suggestion);
+	const QString trainingProfile = Curation::resolvePresetProfileId(settings, settings.aiPrompt);
 	record.insert(QStringLiteral("preset"), settings.curationPreset.trimmed().isEmpty()
 							? QStringLiteral("auto")
 							: settings.curationPreset.trimmed());
+	record.insert(QStringLiteral("training_profile"), trainingProfile);
 	record.insert(QStringLiteral("topic_keywords"), topicKeywordsToJson(settings.topicKeywords));
 	record.insert(QStringLiteral("main_target"), settings.topicKeywords.join(QStringLiteral(", ")).left(240));
 	record.insert(QStringLiteral("review_settings_key"), settings.reviewSettingsKey);

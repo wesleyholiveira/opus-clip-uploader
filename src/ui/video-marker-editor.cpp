@@ -125,6 +125,10 @@ VideoMarkerEditor::VideoMarkerEditor(const QString &videoPath, QWidget *parent) 
 		if (self)
 			self->selectMarker(index);
 	};
+	timeline->clipRangeSelected = [self](int index) {
+		if (self)
+			self->selectRange(index);
+	};
 	timeline->markerMovePreviewRequested = [self](int index, qint64 positionMs) {
 		if (!self)
 			return;
@@ -159,11 +163,19 @@ VideoMarkerEditor::VideoMarkerEditor(const QString &videoPath, QWidget *parent) 
 	reviewActionButton = new QPushButton(obsText("Button.ReviewAndUpload"), editorSurface);
 	reviewActionButton->setVisible(false);
 	reviewActionButton->setToolTip(obsText("Tooltip.ReviewAndUpload"));
+	undoActionButton = new QPushButton(QStringLiteral("Undo"), editorSurface);
+	undoActionButton->setToolTip(QStringLiteral("Undo the last marker change. Shortcut: Ctrl+Z."));
+	undoActionButton->setEnabled(false);
+	redoActionButton = new QPushButton(QStringLiteral("Redo"), editorSurface);
+	redoActionButton->setToolTip(QStringLiteral("Redo the last undone marker change. Shortcut: Ctrl+Y or Ctrl+Shift+Z."));
+	redoActionButton->setEnabled(false);
 
 	connect(reviewActionButton, &QPushButton::clicked, this, [this]() {
 		saveMarkers();
 		emit reviewRequested();
 	});
+	connect(undoActionButton, &QPushButton::clicked, this, &VideoMarkerEditor::undoMarkerAction);
+	connect(redoActionButton, &QPushButton::clicked, this, &VideoMarkerEditor::redoMarkerAction);
 
 	connect(player, &QMediaPlayer::playbackStateChanged, this, [this](QMediaPlayer::PlaybackState state) {
 		playPauseControl->setPlaying(state == QMediaPlayer::PlayingState);
@@ -184,6 +196,8 @@ VideoMarkerEditor::VideoMarkerEditor(const QString &videoPath, QWidget *parent) 
 	controlsLayout->setContentsMargins(0, 0, 0, 0);
 	controlsLayout->setSpacing(8);
 	controlsLayout->addWidget(reviewActionButton);
+	controlsLayout->addWidget(undoActionButton);
+	controlsLayout->addWidget(redoActionButton);
 	controlsLayout->addStretch();
 
 	surfaceLayout->addWidget(videoContainer, 1);
@@ -257,7 +271,12 @@ QVector<double> VideoMarkerEditor::markerPositions() const
 
 void VideoMarkerEditor::setMarkerPositions(const QVector<double> &markers)
 {
+	if (!restoringMarkerHistory)
+		pushUndoState();
+
 	clipMarkersSec.clear();
+	hasPendingManualMarkerStart = false;
+	pendingManualMarkerStartSec = 0.0;
 
 	const double durationSec = durationMs > 0 ? durationMs / 1000.0 : 0.0;
 
@@ -281,6 +300,106 @@ void VideoMarkerEditor::setReviewActionVisible(bool visible)
 		reviewActionButton->setVisible(visible);
 }
 
+VideoMarkerEditor::MarkerEditorState VideoMarkerEditor::currentMarkerEditorState() const
+{
+	MarkerEditorState state;
+	state.markers = clipMarkersSec;
+	std::sort(state.markers.begin(), state.markers.end());
+	state.hasPendingManualMarkerStart = hasPendingManualMarkerStart;
+	state.pendingManualMarkerStartSec = pendingManualMarkerStartSec;
+	state.selectedRangeIndex = selectedRangeIndex;
+	state.selectedMarkerIndex = selectedMarkerIndex;
+	return state;
+}
+
+void VideoMarkerEditor::restoreMarkerEditorState(const MarkerEditorState &state)
+{
+	restoringMarkerHistory = true;
+	clipMarkersSec = state.markers;
+	std::sort(clipMarkersSec.begin(), clipMarkersSec.end());
+	hasPendingManualMarkerStart = state.hasPendingManualMarkerStart;
+	pendingManualMarkerStartSec = state.pendingManualMarkerStartSec;
+	selectedRangeIndex = state.selectedRangeIndex;
+	selectedMarkerIndex = state.selectedMarkerIndex;
+	rebuildClipRanges();
+	restoringMarkerHistory = false;
+	updateUndoRedoControls();
+}
+
+void VideoMarkerEditor::pushUndoState()
+{
+	if (restoringMarkerHistory)
+		return;
+
+	undoStack.append(currentMarkerEditorState());
+	static constexpr int MaxMarkerHistoryDepth = 80;
+	while (undoStack.size() > MaxMarkerHistoryDepth)
+		undoStack.removeFirst();
+	clearRedoStack();
+	updateUndoRedoControls();
+}
+
+void VideoMarkerEditor::clearRedoStack()
+{
+	redoStack.clear();
+	updateUndoRedoControls();
+}
+
+void VideoMarkerEditor::updateUndoRedoControls()
+{
+	if (undoActionButton)
+		undoActionButton->setEnabled(!undoStack.isEmpty());
+	if (redoActionButton)
+		redoActionButton->setEnabled(!redoStack.isEmpty());
+}
+
+void VideoMarkerEditor::setPendingManualMarkerStart(double startSec)
+{
+	if (durationMs > 0)
+		startSec = std::clamp(startSec, 0.0, durationMs / 1000.0);
+	else
+		startSec = std::max(0.0, startSec);
+
+	hasPendingManualMarkerStart = true;
+	pendingManualMarkerStartSec = startSec;
+	selectedMarkerIndex = -1;
+	selectedRangeIndex = -1;
+	if (timeline) {
+		timeline->setSelectedMarkerIndex(-1);
+		timeline->setSelectedClipRangeIndex(-1);
+	}
+	updateSelectedClipPreview(startSec);
+	updateUndoRedoControls();
+}
+
+void VideoMarkerEditor::clearPendingManualMarkerStart()
+{
+	hasPendingManualMarkerStart = false;
+	pendingManualMarkerStartSec = 0.0;
+	updateSelectedClipPreview(positionMilliseconds() / 1000.0);
+	updateUndoRedoControls();
+}
+
+void VideoMarkerEditor::undoMarkerAction()
+{
+	if (undoStack.isEmpty())
+		return;
+
+	const MarkerEditorState previous = undoStack.takeLast();
+	redoStack.append(currentMarkerEditorState());
+	restoreMarkerEditorState(previous);
+}
+
+void VideoMarkerEditor::redoMarkerAction()
+{
+	if (redoStack.isEmpty())
+		return;
+
+	const MarkerEditorState next = redoStack.takeLast();
+	undoStack.append(currentMarkerEditorState());
+	restoreMarkerEditorState(next);
+}
+
 void VideoMarkerEditor::setupShortcuts()
 {
 	auto addShortcut = [this](const QKeySequence &sequence, auto slot,
@@ -301,6 +420,9 @@ void VideoMarkerEditor::setupShortcuts()
 	addShortcut(QKeySequence(Qt::Key_Period), &VideoMarkerEditor::seekForwardFrame);
 	addShortcut(QKeySequence(Qt::Key_Comma), &VideoMarkerEditor::seekBackwardFrame);
 	addShortcut(QKeySequence(Qt::Key_M), &VideoMarkerEditor::addMarkerAtCurrentPosition);
+	addShortcut(QKeySequence::Undo, &VideoMarkerEditor::undoMarkerAction);
+	addShortcut(QKeySequence::Redo, &VideoMarkerEditor::redoMarkerAction);
+	addShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Z), &VideoMarkerEditor::redoMarkerAction);
 	addShortcut(QKeySequence(Qt::Key_Delete), &VideoMarkerEditor::deleteSelectedMarkerOrRange,
 		    Qt::WidgetWithChildrenShortcut);
 	addShortcut(QKeySequence(Qt::Key_Backspace), &VideoMarkerEditor::deleteSelectedMarkerOrRange,
@@ -523,6 +645,9 @@ void VideoMarkerEditor::seekBackwardFrame()
 
 void VideoMarkerEditor::addClipDuration(double startSec, double endSec)
 {
+	pushUndoState();
+	clearPendingManualMarkerStart();
+
 	if (durationMs > 0) {
 		const double durationSec = durationMs / 1000.0;
 		startSec = std::clamp(startSec, 0.0, durationSec);
@@ -538,11 +663,37 @@ void VideoMarkerEditor::addClipDuration(double startSec, double endSec)
 
 void VideoMarkerEditor::addMarkerAtCurrentPosition()
 {
-	const double startSec = positionMilliseconds() / 1000.0;
+	double markerSec = positionMilliseconds() / 1000.0;
+	if (durationMs > 0)
+		markerSec = std::clamp(markerSec, 0.0, durationMs / 1000.0);
+	else
+		markerSec = std::max(0.0, markerSec);
+
+	if (!hasPendingManualMarkerStart) {
+		pushUndoState();
+		setPendingManualMarkerStart(markerSec);
+		return;
+	}
+
+	pushUndoState();
+	const double first = pendingManualMarkerStartSec;
+	const double second = markerSec;
+	double startSec = std::min(first, second);
+	double endSec = std::max(first, second);
+	static constexpr double MinManualClipDurationSec = 0.25;
+	if (endSec <= startSec + MinManualClipDurationSec) {
+		endSec = startSec + MinManualClipDurationSec;
+		if (durationMs > 0)
+			endSec = std::min(endSec, durationMs / 1000.0);
+	}
+
+	hasPendingManualMarkerStart = false;
+	pendingManualMarkerStartSec = 0.0;
 	clipMarkersSec.append(startSec);
+	clipMarkersSec.append(endSec);
 	rebuildClipRanges();
 
-	QVector<double> markers = markerPositions();
+	const QVector<double> markers = markerPositions();
 	for (int i = 0; i < markers.size(); ++i) {
 		if (std::abs(markers[i] - startSec) < 0.01) {
 			selectMarker(i);
@@ -554,8 +705,12 @@ void VideoMarkerEditor::addMarkerAtCurrentPosition()
 void VideoMarkerEditor::selectRange(int index)
 {
 	clearSelectedMarker();
-	selectedRangeIndex = index;
+	const int rangeCount = clipRanges().size();
+	selectedRangeIndex = index >= 0 && index < rangeCount ? index : -1;
+	if (timeline)
+		timeline->setSelectedClipRangeIndex(selectedRangeIndex);
 	updateSelectedClipPreview(positionMilliseconds() / 1000.0);
+	emit rangeSelected(selectedRangeIndex);
 }
 
 void VideoMarkerEditor::goToSelectedRange()
@@ -577,6 +732,9 @@ void VideoMarkerEditor::removeSelectedMarker()
 {
 	if (selectedMarkerIndex < 0)
 		return;
+
+	pushUndoState();
+	clearPendingManualMarkerStart();
 
 	QVector<double> markers = clipMarkersSec;
 	std::sort(markers.begin(), markers.end());
@@ -657,6 +815,19 @@ void VideoMarkerEditor::updateSelectedClipPreview(double startSec)
 {
 	if (!selectedClipLabel)
 		return;
+
+	if (hasPendingManualMarkerStart) {
+		double previewEndSec = startSec;
+		if (durationMs > 0)
+			previewEndSec = std::clamp(previewEndSec, 0.0, durationMs / 1000.0);
+		const double rangeStartSec = std::min(pendingManualMarkerStartSec, previewEndSec);
+		const double rangeEndSec = std::max(pendingManualMarkerStartSec, previewEndSec);
+		setSelectedClipText(obsText("Label.PendingMarkerRange")
+					    .arg(formatTimecode(pendingManualMarkerStartSec))
+					    .arg(formatTimecode(rangeStartSec), formatTimecode(rangeEndSec))
+					    .arg(std::max(0.0, rangeEndSec - rangeStartSec), 0, 'f', 0));
+		return;
+	}
 
 	const QVector<ClipDuration> ranges = clipRanges();
 
@@ -786,8 +957,9 @@ void VideoMarkerEditor::refreshTimelineMarkers()
 		markers.append(static_cast<qint64>(markerSec * 1000.0));
 
 	timeline->setMarkers(markers);
-	timeline->setSelectedMarkerIndex(selectedMarkerIndex);
 	timeline->setClipRanges(clipRanges());
+	timeline->setSelectedMarkerIndex(selectedMarkerIndex);
+	timeline->setSelectedClipRangeIndex(selectedRangeIndex);
 }
 
 void VideoMarkerEditor::rebuildClipRanges()
@@ -802,6 +974,7 @@ void VideoMarkerEditor::rebuildClipRanges()
 	refreshTimelineMarkers();
 	updateSelectedClipPreview(positionMilliseconds() / 1000.0);
 	saveMarkers();
+	updateUndoRedoControls();
 	emit rangesChanged(ranges);
 }
 
@@ -815,9 +988,12 @@ void VideoMarkerEditor::selectMarker(int index)
 
 	selectedMarkerIndex = index;
 	selectedRangeIndex = index / 2;
-	if (timeline)
+	if (timeline) {
 		timeline->setSelectedMarkerIndex(selectedMarkerIndex);
+		timeline->setSelectedClipRangeIndex(selectedRangeIndex);
+	}
 	updateSelectedClipPreview(markers[index]);
+	emit rangeSelected(selectedRangeIndex);
 }
 
 void VideoMarkerEditor::clearSelectedMarker()
@@ -836,6 +1012,11 @@ void VideoMarkerEditor::updateMarkerAtIndex(int index, double markerSec, bool co
 	std::sort(markers.begin(), markers.end());
 	if (index < 0 || index >= markers.size())
 		return;
+
+	if (commit) {
+		pushUndoState();
+		clearPendingManualMarkerStart();
+	}
 
 	const double durationSec = durationMs > 0 ? durationMs / 1000.0 : 0.0;
 	markerSec = std::max(0.0, markerSec);
@@ -878,6 +1059,9 @@ void VideoMarkerEditor::removeClipRangeAtIndex(int index)
 	const int markerIndex = index * 2;
 	if (markerIndex >= markers.size())
 		return;
+
+	pushUndoState();
+	clearPendingManualMarkerStart();
 
 	const double startMarker = markers[markerIndex];
 	const bool hasExplicitEnd = markerIndex + 1 < markers.size();
@@ -935,8 +1119,14 @@ void VideoMarkerEditor::loadSavedMarkers()
 			loadedMarkers.append(marker);
 	}
 
-	if (!loadedMarkers.isEmpty())
+	if (!loadedMarkers.isEmpty()) {
+		restoringMarkerHistory = true;
 		setMarkerPositions(loadedMarkers);
+		restoringMarkerHistory = false;
+		undoStack.clear();
+		redoStack.clear();
+		updateUndoRedoControls();
+	}
 }
 
 void VideoMarkerEditor::saveMarkers() const

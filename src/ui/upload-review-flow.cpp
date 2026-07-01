@@ -86,7 +86,9 @@ static void upload_after_review(QWidget *parent, const QStringList &paths, const
 		return;
 	}
 
-	blog(LOG_INFO, "Opening Opus upload progress dialog after review: %s", paths.first().toUtf8().constData());
+	blog(LOG_INFO, "%s progress dialog after review: %s",
+	     opus_upload_enabled() ? "Opening Opus upload" : "Opening local export",
+	     paths.first().toUtf8().constData());
 	start_reviewed_upload(parent, paths, apiKey, curationSettings);
 }
 
@@ -98,20 +100,21 @@ static void open_review_and_upload_with_settings(QWidget *parent, const QStringL
 		return;
 	}
 
-	blog(LOG_INFO, "Opening upload review dialog directly before Opus upload flow: %s",
-	     paths.first().toUtf8().constData());
+	blog(LOG_INFO, "Opening upload review dialog directly before %s flow: %s",
+	     opus_upload_enabled() ? "Opus upload" : "local export", paths.first().toUtf8().constData());
 
 	UploadReviewDialog reviewDialog(paths.first(), initialSettings, false, parent);
 
 	if (reviewDialog.exec() != QDialog::Accepted) {
-		blog(LOG_INFO, "Upload review canceled before Opus upload flow: %s", paths.first().toUtf8().constData());
+		blog(LOG_INFO, "Upload review canceled before %s flow: %s",
+		     opus_upload_enabled() ? "Opus upload" : "local export", paths.first().toUtf8().constData());
 		clear_pending_recording_paths();
 		return;
 	}
 
 	const CurationSettings curationSettings = reviewDialog.curationSettings();
-	blog(LOG_INFO, "Upload review accepted. Starting Opus upload with reviewed ranges: %s",
-	     paths.first().toUtf8().constData());
+	blog(LOG_INFO, "Upload review accepted. Starting %s with reviewed ranges: %s",
+	     opus_upload_enabled() ? "Opus upload" : "local export", paths.first().toUtf8().constData());
 	upload_after_review(parent, paths, apiKey, curationSettings);
 }
 
@@ -142,7 +145,7 @@ void open_upload_review_flow_impl(void *private_data)
 
 	QWidget *parent = reinterpret_cast<QWidget *>(obs_frontend_get_main_window());
 	const QString apiKey = get_opus_api_key();
-	if (apiKey.trimmed().isEmpty()) {
+	if (opus_upload_enabled() && apiKey.trimmed().isEmpty()) {
 		clear_pending_recording_paths();
 		QMessageBox::warning(parent, title, obsText("Message.ConfigureApiKeyInSettings"));
 		open_settings(nullptr);

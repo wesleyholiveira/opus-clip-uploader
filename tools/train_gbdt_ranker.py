@@ -47,6 +47,26 @@ def class_weights(labels: list[int]) -> list[float]:
     return [pos_weight if label == 1 else neg_weight for label in labels]
 
 
+def sample_weights(rows: list[dict[str, Any]], labels: list[int]) -> list[float]:
+    base = class_weights(labels)
+    weights: list[float] = []
+    for item, class_weight in zip(rows, base):
+        try:
+            item_weight = float(item.get("weight", 1.0))
+        except (TypeError, ValueError):
+            item_weight = 1.0
+        weights.append(max(0.05, item_weight) * class_weight)
+    return weights
+
+
+def weighted_positive_prior(labels: list[int], weights: list[float]) -> float:
+    total = sum(weights)
+    if total <= 0:
+        return 0.5
+    positive_weight = sum(weight for label, weight in zip(labels, weights) if label == 1)
+    return min(0.999999, max(0.000001, positive_weight / total))
+
+
 def tree_to_json(tree, feature_order: list[str], learning_rate: float) -> dict[str, Any]:
     nodes: list[dict[str, Any]] = []
     for i in range(tree.node_count):
@@ -74,11 +94,11 @@ def export_model(
     validation: list[dict[str, Any]],
     classifier,
     metrics: dict[str, Any],
+    base_score: float,
+    weak_negatives_included: bool,
 ) -> dict[str, Any]:
     positives = sum(1 for item in dataset if int(item["label"]) == 1)
     negatives = len(dataset) - positives
-    prior = positives / max(1, len(dataset))
-    base_score = logit(prior)
     trees = [
         tree_to_json(estimator[0].tree_, list(FEATURE_ORDER), classifier.learning_rate)
         for estimator in classifier.estimators_
@@ -96,9 +116,9 @@ def export_model(
         "base_score": round(base_score, 10),
         "trees": trees,
         "thresholds": {
-            "reject_below": 0.18,
-            "accept_above": 0.52,
-            "strong_accept_above": 0.80,
+            "reject_below": 0.16,
+            "accept_above": 0.58,
+            "strong_accept_above": 0.82,
         },
         "training": {
             "algorithm": "sklearn.ensemble.GradientBoostingClassifier",
@@ -107,6 +127,7 @@ def export_model(
             "n_estimators": int(classifier.n_estimators),
             "learning_rate": float(classifier.learning_rate),
             "max_depth": int(classifier.max_depth),
+            "weak_negatives_included": bool(weak_negatives_included),
         },
         "evaluation": metrics,
         "note": (
@@ -142,17 +163,20 @@ def main() -> int:
     parser.add_argument("feedback_jsonl", type=Path)
     parser.add_argument("-o", "--output", type=Path, required=True)
     parser.add_argument("--dataset-output", type=Path)
-    parser.add_argument("--preset", default="viewer_message_response")
+    parser.add_argument("--preset", default="viewer_message_response", help="Legacy alias for --profile.")
+    parser.add_argument("--profile", help="Training profile/preset id. Defaults to --preset.")
     parser.add_argument("--candidate-snapshot-path", type=Path, action="append", default=[],
                         help="candidate-snapshots.jsonl file or feedback directory used to enrich rows with original text/features/scores.")
-    parser.add_argument("--min-examples", type=int, default=400)
-    parser.add_argument("--min-positives", type=int, default=120)
-    parser.add_argument("--min-negatives", type=int, default=160)
+    parser.add_argument("--min-examples", type=int, default=140)
+    parser.add_argument("--min-positives", type=int, default=45)
+    parser.add_argument("--min-negatives", type=int, default=35)
     parser.add_argument("--validation-ratio", type=float, default=0.2)
-    parser.add_argument("--n-estimators", type=int, default=160)
-    parser.add_argument("--learning-rate", type=float, default=0.045)
+    parser.add_argument("--n-estimators", type=int, default=96)
+    parser.add_argument("--learning-rate", type=float, default=0.055)
     parser.add_argument("--max-depth", type=int, default=3)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--exclude-weak-negatives", action="store_true",
+                        help="Do not include ignored_diagnostic/disliked rows as weak ranker negatives.")
     parser.add_argument("--allow-small-data", action="store_true", help="Only for local smoke tests; do not use for production models.")
     args = parser.parse_args()
 
@@ -161,7 +185,8 @@ def main() -> int:
     if args.candidate_snapshot_path:
         snapshot_index = load_candidate_snapshot_index(args.candidate_snapshot_path)
         rows, snapshot_hits = enrich_feedback_rows_with_snapshots(rows, snapshot_index)
-    dataset = build_dataset(rows, preset=args.preset or None)
+    profile = args.profile or args.preset
+    dataset = build_dataset(rows, preset=profile or None, include_weak_negatives=not args.exclude_weak_negatives)
     positives = sum(1 for item in dataset if int(item["label"]) == 1)
     negatives = len(dataset) - positives
     if not args.allow_small_data and (
@@ -190,7 +215,9 @@ def main() -> int:
     np, GradientBoostingClassifier, accuracy_score, log_loss, roc_auc_score = require_sklearn()
     x_train = np.asarray([feature_vector(item) for item in train], dtype=float)
     y_train = np.asarray([int(item["label"]) for item in train], dtype=int)
-    weights = np.asarray(class_weights(y_train.tolist()), dtype=float)
+    weights_list = sample_weights(train, y_train.tolist())
+    weights = np.asarray(weights_list, dtype=float)
+    base_score = logit(weighted_positive_prior(y_train.tolist(), weights_list))
     classifier = GradientBoostingClassifier(
         n_estimators=args.n_estimators,
         learning_rate=args.learning_rate,
@@ -203,16 +230,18 @@ def main() -> int:
     metrics.update(evaluate_split("validation", validation, classifier, np, accuracy_score, log_loss, roc_auc_score))
     model = export_model(
         feedback_jsonl=args.feedback_jsonl,
-        preset=args.preset or "all",
+        preset=profile or "all",
         dataset=dataset,
         train=train,
         validation=validation,
         classifier=classifier,
         metrics=metrics,
+        base_score=base_score,
+        weak_negatives_included=not args.exclude_weak_negatives,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(model, indent=2, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
-    print(f"Wrote {args.output} examples={len(dataset)} positives={positives} negatives={negatives} snapshot_hits={snapshot_hits}")
+    print(f"Wrote {args.output} examples={len(dataset)} positives={positives} negatives={negatives} snapshot_hits={snapshot_hits} weak_negatives_included={not args.exclude_weak_negatives}")
     if validation:
         print(f"Validation: {metrics.get('validation')}")
     return 0

@@ -1,0 +1,7919 @@
+{
+  "base_score": 0.6032908514,
+  "evaluation": {
+    "train": {
+      "accuracy_at_0_5": 0.9286,
+      "examples": 98,
+      "log_loss": 0.19553,
+      "negative_mean_score": 0.1762,
+      "negatives": 52,
+      "positive_mean_score": 0.8944,
+      "positives": 46,
+      "roc_auc": 0.9818
+    },
+    "validation": {
+      "accuracy_at_0_5": 0.7222,
+      "examples": 54,
+      "log_loss": 0.719971,
+      "negative_mean_score": 0.4952,
+      "negatives": 41,
+      "positive_mean_score": 0.9209,
+      "positives": 13,
+      "roc_auc": 0.909
+    }
+  },
+  "feature_order": [
+    "duration",
+    "boundary",
+    "hook",
+    "emotional",
+    "advice",
+    "explanation",
+    "story",
+    "opinion",
+    "tutorial",
+    "viewerResponse",
+    "coarseSemantic",
+    "semanticTarget",
+    "embeddingTarget",
+    "semanticViewerMessage",
+    "semanticDirectAnswer",
+    "semanticNoise",
+    "semanticTopicShift",
+    "semanticClipValue",
+    "semanticEmpathy",
+    "semanticHook",
+    "semanticResolution",
+    "semanticMetaNoise",
+    "semanticOpeningHook",
+    "semanticOpeningMetaNoise",
+    "semanticEndingResolution",
+    "semanticEndingMetaNoise",
+    "semanticEndingTopicShift",
+    "topicContinuity",
+    "semanticFocusContinuity",
+    "reranker",
+    "rerankerRaw",
+    "rerankerBadClip",
+    "rerankerOpeningDefect",
+    "rerankerEndingDefect",
+    "rerankerStructureDefect",
+    "rerankerClipQualityMargin",
+    "qualityGate",
+    "noise",
+    "pauseBeforeSec",
+    "pauseAfterSec",
+    "maxInternalPauseSec",
+    "pauseBoundary",
+    "arcOpening",
+    "arcDevelopment",
+    "arcConclusion",
+    "arcBoundaryCleanliness",
+    "arcTailRisk",
+    "arcCompleteness",
+    "final",
+    "feedbackPositiveRange",
+    "feedbackNegativeRange",
+    "feedbackPositiveText",
+    "feedbackNegativeText",
+    "feedbackPositiveScore",
+    "feedbackNegativeScore",
+    "feedbackMargin",
+    "feedbackPositiveDominates",
+    "feedbackRawMarginPositive",
+    "feedbackPositiveOverlap",
+    "feedbackNegativeOverlap",
+    "feedbackNegativeContamination",
+    "feedbackExplainedByPositive",
+    "evidenceViewerResponseCue",
+    "evidenceCleanBoundary",
+    "evidenceQualityPassed",
+    "evidenceArcInvalid",
+    "evidenceMissingViewerCue",
+    "evidenceMultipleViewerMessages",
+    "evidenceTopicShift",
+    "evidencePositiveSeed",
+    "evidencePatternSearch",
+    "evidenceSemanticResolution",
+    "evidenceSemanticHook",
+    "evidenceRerankerStrongMatch",
+    "evidenceMetaPrelude",
+    "evidenceMusicOrIntro",
+    "evidenceHardContextBlocker",
+    "featureCoverage",
+    "userSaysHasBeginning",
+    "userSaysHasDevelopment",
+    "userSaysHasConclusion",
+    "userSaysSingleTopic",
+    "userSaysSmoothEnding",
+    "userSaysGoodHook",
+    "userSaysViewerCue",
+    "userSaysGoodTopicBadBoundary",
+    "userSaysIncompleteRecoverable",
+    "userSaysBoundaryRecoverable",
+    "userSaysBadTopic",
+    "userSaysTopicShift",
+    "userSaysStartsTooLate",
+    "userSaysStartsTooEarly",
+    "userSaysEndsTooEarly",
+    "userSaysOverextended",
+    "userSaysMetaNoise"
+  ],
+  "model_type": "gbdt_tree_ensemble",
+  "negatives": 93,
+  "note": "Experimental tabular GBDT ranker. Keep hard gates enabled; use shadow diagnostics until validated by video-level holdout.",
+  "positives": 59,
+  "preset": "explanation",
+  "records": 152,
+  "schema_version": 1,
+  "source_feedback": "C:\\Users\\wesleyholiveira\\Downloads\\obs-clip-cropper-plugin-opus-clip-chunked-upload\\artifacts\\training\\explanation\\reports\\boundary-feedback.filtered.jsonl",
+  "thresholds": {
+    "accept_above": 0.58,
+    "reject_below": 0.16,
+    "strong_accept_above": 0.82
+  },
+  "trained_at_utc": "2026-06-30T04:30:51+00:00",
+  "training": {
+    "algorithm": "sklearn.ensemble.GradientBoostingClassifier",
+    "learning_rate": 0.055,
+    "max_depth": 3,
+    "n_estimators": 96,
+    "train_examples": 98,
+    "validation_examples": 54,
+    "weak_negatives_included": true
+  },
+  "trees": [
+    {
+      "nodes": [
+        {
+          "feature": "userSaysHasDevelopment",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5766522884
+        },
+        {
+          "feature": "semanticEndingResolution",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.6168398857
+        },
+        {
+          "leaf": true,
+          "value": -0.3279356232
+        },
+        {
+          "leaf": true,
+          "value": -2.0773075904
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.5651930273
+        },
+        {
+          "leaf": true,
+          "value": -2.828125
+        },
+        {
+          "leaf": true,
+          "value": 1.1282234691
+        },
+        {
+          "feature": "userSaysSmoothEnding",
+          "leaf": false,
+          "left": 9,
+          "right": 10,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.547008547
+        },
+        {
+          "feature": "userSaysViewerCue",
+          "leaf": false,
+          "left": 11,
+          "right": 12,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.222592138
+        },
+        {
+          "leaf": true,
+          "value": 1.547008547
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysSingleTopic",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5766522884
+        },
+        {
+          "feature": "semanticEndingResolution",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.6168398857
+        },
+        {
+          "leaf": true,
+          "value": -0.308242723
+        },
+        {
+          "leaf": true,
+          "value": -1.9024408866
+        },
+        {
+          "feature": "viewerResponse",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.6211743653
+        },
+        {
+          "leaf": true,
+          "value": -2.749360701
+        },
+        {
+          "leaf": true,
+          "value": 1.0973350456
+        },
+        {
+          "feature": "userSaysSmoothEnding",
+          "leaf": false,
+          "left": 9,
+          "right": 10,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.5023911289
+        },
+        {
+          "feature": "userSaysViewerCue",
+          "leaf": false,
+          "left": 11,
+          "right": 12,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.1802284629
+        },
+        {
+          "leaf": true,
+          "value": 1.5023911289
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysHasDevelopment",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5935510695
+        },
+        {
+          "feature": "semanticTarget",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.3186866343
+        },
+        {
+          "leaf": true,
+          "value": -0.6505990351
+        },
+        {
+          "leaf": true,
+          "value": -2.4750277428
+        },
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.6678986847
+        },
+        {
+          "leaf": true,
+          "value": 0.5447338119
+        },
+        {
+          "leaf": true,
+          "value": -2.5893952069
+        },
+        {
+          "feature": "userSaysSmoothEnding",
+          "leaf": false,
+          "left": 9,
+          "right": 10,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.4625466632
+        },
+        {
+          "feature": "userSaysViewerCue",
+          "leaf": false,
+          "left": 11,
+          "right": 12,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.1407444393
+        },
+        {
+          "leaf": true,
+          "value": 1.4625466632
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysHasConclusion",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5766522884
+        },
+        {
+          "feature": "boundary",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.9382199943
+        },
+        {
+          "leaf": true,
+          "value": -0.6364409905
+        },
+        {
+          "leaf": true,
+          "value": -2.3385673129
+        },
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.6145893931
+        },
+        {
+          "leaf": true,
+          "value": -2.4393600486
+        },
+        {
+          "leaf": true,
+          "value": 1.0517855344
+        },
+        {
+          "feature": "userSaysSmoothEnding",
+          "leaf": false,
+          "left": 9,
+          "right": 10,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.4267965256
+        },
+        {
+          "feature": "userSaysViewerCue",
+          "leaf": false,
+          "left": 11,
+          "right": 12,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.1037409589
+        },
+        {
+          "leaf": true,
+          "value": 1.4267965256
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysHasDevelopment",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5935510695
+        },
+        {
+          "feature": "semanticEndingResolution",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.2955500782
+        },
+        {
+          "leaf": true,
+          "value": -0.5685683884
+        },
+        {
+          "leaf": true,
+          "value": -2.1896240091
+        },
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.6678986847
+        },
+        {
+          "leaf": true,
+          "value": 0.5200495223
+        },
+        {
+          "leaf": true,
+          "value": -2.3028658258
+        },
+        {
+          "feature": "userSaysSmoothEnding",
+          "leaf": false,
+          "left": 9,
+          "right": 10,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.3945846016
+        },
+        {
+          "feature": "userSaysViewerCue",
+          "leaf": false,
+          "left": 11,
+          "right": 12,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.068883965
+        },
+        {
+          "leaf": true,
+          "value": 1.3945846016
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysHasConclusion",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5766522884
+        },
+        {
+          "feature": "semanticEndingResolution",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.6168398857
+        },
+        {
+          "leaf": true,
+          "value": -0.1973248978
+        },
+        {
+          "leaf": true,
+          "value": -1.5337660957
+        },
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.6145893931
+        },
+        {
+          "leaf": true,
+          "value": -2.2229858692
+        },
+        {
+          "leaf": true,
+          "value": 1.0101132277
+        },
+        {
+          "feature": "userSaysSmoothEnding",
+          "leaf": false,
+          "left": 9,
+          "right": 10,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.3654507112
+        },
+        {
+          "feature": "feedbackPositiveScore",
+          "leaf": false,
+          "left": 11,
+          "right": 12,
+          "threshold": 0.2348377258
+        },
+        {
+          "leaf": true,
+          "value": 1.0786570393
+        },
+        {
+          "leaf": true,
+          "value": 1.3994441595
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysHasConclusion",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5935510695
+        },
+        {
+          "feature": "semanticEndingResolution",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.2955500782
+        },
+        {
+          "leaf": true,
+          "value": -0.5210756951
+        },
+        {
+          "leaf": true,
+          "value": -1.9851203362
+        },
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.6678986847
+        },
+        {
+          "leaf": true,
+          "value": 0.506346649
+        },
+        {
+          "leaf": true,
+          "value": -2.0988973017
+        },
+        {
+          "feature": "userSaysSmoothEnding",
+          "leaf": false,
+          "left": 9,
+          "right": 10,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.3390106856
+        },
+        {
+          "feature": "userSaysViewerCue",
+          "leaf": false,
+          "left": 11,
+          "right": 12,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.0002971626
+        },
+        {
+          "leaf": true,
+          "value": 1.3444005191
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysHasConclusion",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5935510695
+        },
+        {
+          "feature": "semanticEndingMetaNoise",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.3107038438
+        },
+        {
+          "leaf": true,
+          "value": -0.4892737139
+        },
+        {
+          "leaf": true,
+          "value": -1.8843501669
+        },
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.6678986847
+        },
+        {
+          "leaf": true,
+          "value": 0.4827018858
+        },
+        {
+          "leaf": true,
+          "value": -1.9820630122
+        },
+        {
+          "feature": "feedbackPositiveRange",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.2348377258
+        },
+        {
+          "feature": "userSaysSmoothEnding",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.3149412269
+        },
+        {
+          "leaf": true,
+          "value": 1.0165010344
+        },
+        {
+          "leaf": true,
+          "value": 1.3500542725
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysSingleTopic",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5766522884
+        },
+        {
+          "feature": "semanticEndingResolution",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.6168398857
+        },
+        {
+          "leaf": true,
+          "value": -0.1443313247
+        },
+        {
+          "leaf": true,
+          "value": -1.3627896027
+        },
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.6145893931
+        },
+        {
+          "leaf": true,
+          "value": -2.052142067
+        },
+        {
+          "leaf": true,
+          "value": 0.9683744998
+        },
+        {
+          "feature": "feedbackRawMarginPositive",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.2348377258
+        },
+        {
+          "feature": "userSaysSmoothEnding",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.2929682591
+        },
+        {
+          "leaf": true,
+          "value": 0.9887253
+        },
+        {
+          "leaf": true,
+          "value": 1.3250032628
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysSingleTopic",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.7163988054
+        },
+        {
+          "feature": "duration",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.724999994
+        },
+        {
+          "leaf": true,
+          "value": -0.3469322939
+        },
+        {
+          "leaf": true,
+          "value": -1.9062634642
+        },
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.6602125466
+        },
+        {
+          "leaf": true,
+          "value": 0.7256673825
+        },
+        {
+          "leaf": true,
+          "value": -1.9246739301
+        },
+        {
+          "feature": "semanticClipValue",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.3247748315
+        },
+        {
+          "feature": "userSaysSmoothEnding",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.2728578649
+        },
+        {
+          "leaf": true,
+          "value": 0.9350457731
+        },
+        {
+          "feature": "semanticHook",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.7243559062
+        },
+        {
+          "leaf": true,
+          "value": 1.2864533807
+        },
+        {
+          "leaf": true,
+          "value": 1.3190807004
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysHasDevelopment",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5766522884
+        },
+        {
+          "feature": "semanticEndingResolution",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.6168398857
+        },
+        {
+          "leaf": true,
+          "value": -0.1213340103
+        },
+        {
+          "leaf": true,
+          "value": -1.2612433044
+        },
+        {
+          "feature": "arcOpening",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.5475358665
+        },
+        {
+          "leaf": true,
+          "value": -2.2420018583
+        },
+        {
+          "leaf": true,
+          "value": 0.8832808526
+        },
+        {
+          "feature": "feedbackMargin",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.6174188554
+        },
+        {
+          "feature": "userSaysViewerCue",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 0.969513606
+        },
+        {
+          "leaf": true,
+          "value": 1.2689830755
+        },
+        {
+          "leaf": true,
+          "value": 1.2870144391
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysHasConclusion",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5935510695
+        },
+        {
+          "feature": "semanticEmpathy",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.3042784929
+        },
+        {
+          "leaf": true,
+          "value": -0.4232529016
+        },
+        {
+          "leaf": true,
+          "value": -1.6614319208
+        },
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.6678986847
+        },
+        {
+          "leaf": true,
+          "value": 0.4703366678
+        },
+        {
+          "leaf": true,
+          "value": -1.7508202573
+        },
+        {
+          "feature": "feedbackMargin",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.6174188554
+        },
+        {
+          "feature": "userSaysSmoothEnding",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.2411985824
+        },
+        {
+          "leaf": true,
+          "value": 0.9050888415
+        },
+        {
+          "leaf": true,
+          "value": 1.2674002851
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysHasConclusion",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "evidencePatternSearch",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.9177277982
+        },
+        {
+          "leaf": true,
+          "value": -0.9701875686
+        },
+        {
+          "leaf": true,
+          "value": 1.3263832347
+        },
+        {
+          "feature": "arcOpening",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.4512599856
+        },
+        {
+          "leaf": true,
+          "value": -1.635072571
+        },
+        {
+          "leaf": true,
+          "value": 0.6263942486
+        },
+        {
+          "feature": "userSaysViewerCue",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.5
+        },
+        {
+          "feature": "userSaysSmoothEnding",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.2252823863
+        },
+        {
+          "leaf": true,
+          "value": 0.8180742419
+        },
+        {
+          "feature": "arcDevelopment",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.2799026072
+        },
+        {
+          "leaf": true,
+          "value": 1.2414287334
+        },
+        {
+          "leaf": true,
+          "value": 1.2368073429
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysHasConclusion",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "evidencePatternSearch",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5
+        },
+        {
+          "feature": "boundary",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.4148000032
+        },
+        {
+          "leaf": true,
+          "value": -0.3829085274
+        },
+        {
+          "leaf": true,
+          "value": -1.5243027645
+        },
+        {
+          "feature": "arcTailRisk",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.288624227
+        },
+        {
+          "leaf": true,
+          "value": -1.0044262787
+        },
+        {
+          "leaf": true,
+          "value": 0.7717998413
+        },
+        {
+          "feature": "viewerResponse",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.3196899295
+        },
+        {
+          "feature": "userSaysSmoothEnding",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.2106007444
+        },
+        {
+          "leaf": true,
+          "value": 0.8263829643
+        },
+        {
+          "feature": "semanticEndingResolution",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.6437937021
+        },
+        {
+          "leaf": true,
+          "value": 1.2559027255
+        },
+        {
+          "leaf": true,
+          "value": 1.2212343413
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysHasDevelopment",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.7427356243
+        },
+        {
+          "feature": "duration",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.724999994
+        },
+        {
+          "leaf": true,
+          "value": -0.1584534942
+        },
+        {
+          "leaf": true,
+          "value": -1.7201837348
+        },
+        {
+          "feature": "arcOpening",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.6596603394
+        },
+        {
+          "leaf": true,
+          "value": 0.7300170549
+        },
+        {
+          "leaf": true,
+          "value": -2.3213721437
+        },
+        {
+          "feature": "feedbackPositiveScore",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.2348377258
+        },
+        {
+          "feature": "userSaysViewerCue",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 0.8693991806
+        },
+        {
+          "leaf": true,
+          "value": 1.2103625783
+        },
+        {
+          "leaf": true,
+          "value": 1.2278288225
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.675052464
+        },
+        {
+          "feature": "boundary",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.9382199943
+        },
+        {
+          "feature": "semanticEndingMetaNoise",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.714011699
+        },
+        {
+          "leaf": true,
+          "value": 0.1103542709
+        },
+        {
+          "leaf": true,
+          "value": 1.1439203158
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.5856360197
+        },
+        {
+          "leaf": true,
+          "value": -1.5996811453
+        },
+        {
+          "leaf": true,
+          "value": 1.2994903192
+        },
+        {
+          "feature": "semanticOpeningMetaNoise",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.8018386364
+        },
+        {
+          "feature": "semanticOpeningMetaNoise",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.7613658011
+        },
+        {
+          "leaf": true,
+          "value": -1.5750248801
+        },
+        {
+          "leaf": true,
+          "value": -1.6583215997
+        },
+        {
+          "leaf": true,
+          "value": -2.1095482941
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysSingleTopic",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "evidencePatternSearch",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.9177277982
+        },
+        {
+          "leaf": true,
+          "value": -0.8470073184
+        },
+        {
+          "leaf": true,
+          "value": 1.2874356317
+        },
+        {
+          "feature": "arcDevelopment",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.547850728
+        },
+        {
+          "leaf": true,
+          "value": -0.8076691825
+        },
+        {
+          "leaf": true,
+          "value": 0.7678163038
+        },
+        {
+          "feature": "feedbackMargin",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.6174188554
+        },
+        {
+          "feature": "userSaysSmoothEnding",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.1866984323
+        },
+        {
+          "leaf": true,
+          "value": 0.7959096385
+        },
+        {
+          "leaf": true,
+          "value": 1.2116628119
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.675052464
+        },
+        {
+          "feature": "boundary",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.9382199943
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.6052529514
+        },
+        {
+          "leaf": true,
+          "value": 0.3377503109
+        },
+        {
+          "leaf": true,
+          "value": -1.7710345409
+        },
+        {
+          "feature": "arcCompleteness",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.5455540121
+        },
+        {
+          "leaf": true,
+          "value": -1.5393433764
+        },
+        {
+          "leaf": true,
+          "value": 1.2645166216
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.5883812904
+        },
+        {
+          "feature": "semanticResolution",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.7063476741
+        },
+        {
+          "leaf": true,
+          "value": -1.4975288281
+        },
+        {
+          "leaf": true,
+          "value": -1.5733235981
+        },
+        {
+          "leaf": true,
+          "value": -1.9450721824
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysHasDevelopment",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "evidencePatternSearch",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.9177277982
+        },
+        {
+          "leaf": true,
+          "value": -0.7976271295
+        },
+        {
+          "leaf": true,
+          "value": 1.2560458014
+        },
+        {
+          "feature": "arcTailRisk",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.288624227
+        },
+        {
+          "leaf": true,
+          "value": -0.9047853922
+        },
+        {
+          "leaf": true,
+          "value": 0.7158151745
+        },
+        {
+          "feature": "userSaysViewerCue",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.5
+        },
+        {
+          "feature": "userSaysSmoothEnding",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.1716830377
+        },
+        {
+          "leaf": true,
+          "value": 0.6969540758
+        },
+        {
+          "feature": "evidenceViewerResponseCue",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.1845560453
+        },
+        {
+          "leaf": true,
+          "value": 1.1707529478
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.675052464
+        },
+        {
+          "feature": "duration",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.724999994
+        },
+        {
+          "feature": "evidencePatternSearch",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 0.1252264338
+        },
+        {
+          "leaf": true,
+          "value": 1.3837809238
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.8305285275
+        },
+        {
+          "leaf": true,
+          "value": -1.3212075918
+        },
+        {
+          "leaf": true,
+          "value": 0.9271780766
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.5883812904
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5825016499
+        },
+        {
+          "leaf": true,
+          "value": -1.4350894177
+        },
+        {
+          "leaf": true,
+          "value": -1.5161981942
+        },
+        {
+          "leaf": true,
+          "value": -1.8832887635
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysHasConclusion",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5766522884
+        },
+        {
+          "feature": "arcDevelopment",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.5709753335
+        },
+        {
+          "leaf": true,
+          "value": -0.3427193339
+        },
+        {
+          "leaf": true,
+          "value": -1.8875833516
+        },
+        {
+          "feature": "viewerResponse",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.6211743653
+        },
+        {
+          "leaf": true,
+          "value": -1.6823429097
+        },
+        {
+          "leaf": true,
+          "value": 0.8753260863
+        },
+        {
+          "feature": "feedbackPositiveDominates",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.5
+        },
+        {
+          "feature": "userSaysViewerCue",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 0.7832254202
+        },
+        {
+          "leaf": true,
+          "value": 1.1721830087
+        },
+        {
+          "leaf": true,
+          "value": 1.1857788242
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.675052464
+        },
+        {
+          "feature": "boundary",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.9382199943
+        },
+        {
+          "feature": "semanticOpeningHook",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.7294486165
+        },
+        {
+          "leaf": true,
+          "value": 0.136435789
+        },
+        {
+          "leaf": true,
+          "value": 1.4006813336
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.5856360197
+        },
+        {
+          "leaf": true,
+          "value": -1.4534629848
+        },
+        {
+          "leaf": true,
+          "value": 1.2108817217
+        },
+        {
+          "feature": "arcOpening",
+          "leaf": false,
+          "left": 9,
+          "right": 10,
+          "threshold": 0.4788926989
+        },
+        {
+          "leaf": true,
+          "value": -1.8356536436
+        },
+        {
+          "feature": "semanticOpeningHook",
+          "leaf": false,
+          "left": 11,
+          "right": 12,
+          "threshold": 0.7595442533
+        },
+        {
+          "leaf": true,
+          "value": -1.3909584542
+        },
+        {
+          "leaf": true,
+          "value": -1.4702568255
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysHasDevelopment",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "evidencePatternSearch",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5
+        },
+        {
+          "feature": "boundary",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.4148000032
+        },
+        {
+          "leaf": true,
+          "value": -0.2926230528
+        },
+        {
+          "leaf": true,
+          "value": -1.3135919661
+        },
+        {
+          "feature": "arcOpening",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.5471984148
+        },
+        {
+          "leaf": true,
+          "value": -0.9179352206
+        },
+        {
+          "leaf": true,
+          "value": 0.6264603019
+        },
+        {
+          "feature": "userSaysViewerCue",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.5
+        },
+        {
+          "feature": "userSaysSmoothEnding",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.1519784273
+        },
+        {
+          "leaf": true,
+          "value": 0.6342337692
+        },
+        {
+          "feature": "boundary",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.3471940011
+        },
+        {
+          "leaf": true,
+          "value": 1.1652025274
+        },
+        {
+          "leaf": true,
+          "value": 1.1523194246
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.675052464
+        },
+        {
+          "feature": "semanticResolution",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.7153521776
+        },
+        {
+          "feature": "topicContinuity",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.7707726359
+        },
+        {
+          "leaf": true,
+          "value": 0.1522906404
+        },
+        {
+          "leaf": true,
+          "value": -1.1821348729
+        },
+        {
+          "feature": "arcDevelopment",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.5299606919
+        },
+        {
+          "leaf": true,
+          "value": -1.4747214226
+        },
+        {
+          "leaf": true,
+          "value": 1.4042930586
+        },
+        {
+          "feature": "arcDevelopment",
+          "leaf": false,
+          "left": 9,
+          "right": 10,
+          "threshold": 0.5342298746
+        },
+        {
+          "leaf": true,
+          "value": -1.7182134707
+        },
+        {
+          "feature": "arcDevelopment",
+          "leaf": false,
+          "left": 11,
+          "right": 12,
+          "threshold": 0.5887243152
+        },
+        {
+          "leaf": true,
+          "value": -1.4203136656
+        },
+        {
+          "leaf": true,
+          "value": -1.3024105327
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysHasDevelopment",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5766522884
+        },
+        {
+          "feature": "arcDevelopment",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.5709753335
+        },
+        {
+          "leaf": true,
+          "value": -0.3114208058
+        },
+        {
+          "leaf": true,
+          "value": -1.7683675038
+        },
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.6145893931
+        },
+        {
+          "leaf": true,
+          "value": -1.5844845275
+        },
+        {
+          "leaf": true,
+          "value": 0.8436579144
+        },
+        {
+          "feature": "feedbackPositiveDominates",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.5
+        },
+        {
+          "feature": "userSaysSmoothEnding",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.141458132
+        },
+        {
+          "leaf": true,
+          "value": 0.6787457523
+        },
+        {
+          "leaf": true,
+          "value": 1.1654346417
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "viewerResponse",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.6991648674
+        },
+        {
+          "feature": "semanticResolution",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.7153521776
+        },
+        {
+          "feature": "topicContinuity",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.7707726359
+        },
+        {
+          "leaf": true,
+          "value": 0.1510426527
+        },
+        {
+          "leaf": true,
+          "value": -1.1217331163
+        },
+        {
+          "feature": "arcTailRisk",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.320719853
+        },
+        {
+          "leaf": true,
+          "value": 1.3768805683
+        },
+        {
+          "leaf": true,
+          "value": -1.4303033094
+        },
+        {
+          "feature": "arcTailRisk",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.3255856633
+        },
+        {
+          "feature": "featureCoverage",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5555555671
+        },
+        {
+          "leaf": true,
+          "value": -1.2429434156
+        },
+        {
+          "leaf": true,
+          "value": -1.3866058158
+        },
+        {
+          "leaf": true,
+          "value": -1.684484693
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysHasConclusion",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "evidencePatternSearch",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.9177277982
+        },
+        {
+          "leaf": true,
+          "value": -0.6710606004
+        },
+        {
+          "leaf": true,
+          "value": 1.2046228244
+        },
+        {
+          "feature": "arcTailRisk",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.288624227
+        },
+        {
+          "leaf": true,
+          "value": -0.7688666994
+        },
+        {
+          "leaf": true,
+          "value": 0.6579128642
+        },
+        {
+          "feature": "userSaysViewerCue",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.5
+        },
+        {
+          "feature": "userSaysSmoothEnding",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.1317513249
+        },
+        {
+          "leaf": true,
+          "value": 0.5783741092
+        },
+        {
+          "feature": "semanticClipValue",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.6555376053
+        },
+        {
+          "leaf": true,
+          "value": 1.1468014589
+        },
+        {
+          "leaf": true,
+          "value": 1.1354507519
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "viewerResponse",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.6991648674
+        },
+        {
+          "feature": "semanticOpeningHook",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.7342402339
+        },
+        {
+          "feature": "duration",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.724999994
+        },
+        {
+          "leaf": true,
+          "value": 0.2896680825
+        },
+        {
+          "leaf": true,
+          "value": -0.6090552486
+        },
+        {
+          "feature": "arcOpening",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.6649533808
+        },
+        {
+          "leaf": true,
+          "value": 1.347075841
+        },
+        {
+          "leaf": true,
+          "value": -1.231432679
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.5883812904
+        },
+        {
+          "feature": "featureCoverage",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5555555671
+        },
+        {
+          "leaf": true,
+          "value": -1.2186688178
+        },
+        {
+          "leaf": true,
+          "value": -1.360028341
+        },
+        {
+          "leaf": true,
+          "value": -1.64690848
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysHasConclusion",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5766522884
+        },
+        {
+          "feature": "arcDevelopment",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.5709753335
+        },
+        {
+          "leaf": true,
+          "value": -0.2844890587
+        },
+        {
+          "leaf": true,
+          "value": -1.6629152424
+        },
+        {
+          "feature": "arcOpening",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.5475358665
+        },
+        {
+          "leaf": true,
+          "value": -1.6502705117
+        },
+        {
+          "leaf": true,
+          "value": 0.790822866
+        },
+        {
+          "feature": "feedbackPositiveRange",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.2348377258
+        },
+        {
+          "feature": "userSaysViewerCue",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 0.6717784494
+        },
+        {
+          "leaf": true,
+          "value": 1.1332156835
+        },
+        {
+          "leaf": true,
+          "value": 1.1467055667
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "viewerResponse",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.6991648674
+        },
+        {
+          "feature": "semanticResolution",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.7153521776
+        },
+        {
+          "feature": "topicContinuity",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.7707726359
+        },
+        {
+          "leaf": true,
+          "value": 0.1336019289
+        },
+        {
+          "leaf": true,
+          "value": -1.0271616922
+        },
+        {
+          "feature": "arcTailRisk",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.320719853
+        },
+        {
+          "leaf": true,
+          "value": 1.3384330631
+        },
+        {
+          "leaf": true,
+          "value": -1.3926285185
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.5883812904
+        },
+        {
+          "feature": "arcDevelopment",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.2704152763
+        },
+        {
+          "leaf": true,
+          "value": -1.20131778
+        },
+        {
+          "leaf": true,
+          "value": -1.3290197325
+        },
+        {
+          "leaf": true,
+          "value": -1.5396171934
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysSingleTopic",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "evidencePatternSearch",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.9177277982
+        },
+        {
+          "leaf": true,
+          "value": -0.6271468679
+        },
+        {
+          "leaf": true,
+          "value": 1.1882119692
+        },
+        {
+          "feature": "arcDevelopment",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.547850728
+        },
+        {
+          "leaf": true,
+          "value": -0.6726185387
+        },
+        {
+          "leaf": true,
+          "value": 0.6697527837
+        },
+        {
+          "feature": "feedbackPositiveScore",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.2348377258
+        },
+        {
+          "feature": "userSaysSmoothEnding",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.1165642071
+        },
+        {
+          "leaf": true,
+          "value": 0.5930329986
+        },
+        {
+          "leaf": true,
+          "value": 1.1367303473
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.675052464
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.9172463119
+        },
+        {
+          "feature": "duration",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.724999994
+        },
+        {
+          "leaf": true,
+          "value": 0.321728337
+        },
+        {
+          "leaf": true,
+          "value": -0.7461229456
+        },
+        {
+          "feature": "arcDevelopment",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.5386649668
+        },
+        {
+          "leaf": true,
+          "value": 1.3565098286
+        },
+        {
+          "leaf": true,
+          "value": 1.1946391667
+        },
+        {
+          "feature": "semanticOpeningMetaNoise",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.8018386364
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5825016499
+        },
+        {
+          "leaf": true,
+          "value": -1.2169947739
+        },
+        {
+          "leaf": true,
+          "value": -1.3091302685
+        },
+        {
+          "leaf": true,
+          "value": -1.4777975092
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysSingleTopic",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "evidencePatternSearch",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.9177277982
+        },
+        {
+          "leaf": true,
+          "value": -0.5958729952
+        },
+        {
+          "leaf": true,
+          "value": 1.1650935053
+        },
+        {
+          "feature": "arcOpening",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.5471984148
+        },
+        {
+          "leaf": true,
+          "value": -0.7908376363
+        },
+        {
+          "leaf": true,
+          "value": 0.6036609434
+        },
+        {
+          "feature": "userSaysViewerCue",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.5
+        },
+        {
+          "feature": "userSaysSmoothEnding",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.1076985548
+        },
+        {
+          "leaf": true,
+          "value": 0.481285944
+        },
+        {
+          "feature": "duration",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.575000003
+        },
+        {
+          "leaf": true,
+          "value": 1.1150018925
+        },
+        {
+          "leaf": true,
+          "value": 1.1375069067
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.675052464
+        },
+        {
+          "feature": "semanticOpeningHook",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.7300519347
+        },
+        {
+          "feature": "duration",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.724999994
+        },
+        {
+          "leaf": true,
+          "value": 0.2707425022
+        },
+        {
+          "leaf": true,
+          "value": -0.5848151055
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.2731170058
+        },
+        {
+          "leaf": true,
+          "value": -1.1691032241
+        },
+        {
+          "leaf": true,
+          "value": 1.3102964458
+        },
+        {
+          "feature": "evidencePatternSearch",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.5
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5588065088
+        },
+        {
+          "leaf": true,
+          "value": -1.2336947972
+        },
+        {
+          "leaf": true,
+          "value": -1.1631067989
+        },
+        {
+          "feature": "arcTailRisk",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.3250572383
+        },
+        {
+          "leaf": true,
+          "value": -1.3059448944
+        },
+        {
+          "leaf": true,
+          "value": -1.4217497332
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysSingleTopic",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "evidencePatternSearch",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.9177277982
+        },
+        {
+          "leaf": true,
+          "value": -0.5708669351
+        },
+        {
+          "leaf": true,
+          "value": 1.1599076882
+        },
+        {
+          "feature": "arcTailRisk",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.288624227
+        },
+        {
+          "leaf": true,
+          "value": -0.6620053354
+        },
+        {
+          "leaf": true,
+          "value": 0.6415824051
+        },
+        {
+          "feature": "userSaysViewerCue",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.5
+        },
+        {
+          "feature": "userSaysSmoothEnding",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.0998353079
+        },
+        {
+          "leaf": true,
+          "value": 0.4509966362
+        },
+        {
+          "feature": "duration",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.575000003
+        },
+        {
+          "leaf": true,
+          "value": 1.106564734
+        },
+        {
+          "leaf": true,
+          "value": 1.1333898572
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.675052464
+        },
+        {
+          "feature": "semanticResolution",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.7153521776
+        },
+        {
+          "feature": "semanticResolution",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.701530993
+        },
+        {
+          "leaf": true,
+          "value": 0.0964671062
+        },
+        {
+          "leaf": true,
+          "value": -1.3033791318
+        },
+        {
+          "feature": "semanticEndingMetaNoise",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.7755738497
+        },
+        {
+          "leaf": true,
+          "value": 1.2922492989
+        },
+        {
+          "leaf": true,
+          "value": -1.3230686052
+        },
+        {
+          "feature": "evidencePatternSearch",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.5
+        },
+        {
+          "feature": "userSaysMetaNoise",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": -1.2116254956
+        },
+        {
+          "leaf": true,
+          "value": -1.1482702524
+        },
+        {
+          "feature": "arcCompleteness",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.498038277
+        },
+        {
+          "leaf": true,
+          "value": -1.4040355567
+        },
+        {
+          "leaf": true,
+          "value": -1.2902589468
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5766522884
+        },
+        {
+          "feature": "semanticEndingResolution",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.6168398857
+        },
+        {
+          "feature": "arcTailRisk",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.2905011028
+        },
+        {
+          "leaf": true,
+          "value": 0.1349134172
+        },
+        {
+          "leaf": true,
+          "value": 1.2790014534
+        },
+        {
+          "feature": "semanticEndingMetaNoise",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.7198027968
+        },
+        {
+          "leaf": true,
+          "value": -1.4622986565
+        },
+        {
+          "leaf": true,
+          "value": 0.153968335
+        },
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.6145893931
+        },
+        {
+          "feature": "feedbackPositiveDominates",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": -1.3052753255
+        },
+        {
+          "leaf": true,
+          "value": -1.7752288446
+        },
+        {
+          "feature": "arcCompleteness",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.5380696952
+        },
+        {
+          "leaf": true,
+          "value": -1.3633416833
+        },
+        {
+          "leaf": true,
+          "value": 1.0377920165
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysSingleTopic",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "evidencePatternSearch",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.9177277982
+        },
+        {
+          "leaf": true,
+          "value": -0.5351489091
+        },
+        {
+          "leaf": true,
+          "value": 1.1409517349
+        },
+        {
+          "feature": "arcDevelopment",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.547850728
+        },
+        {
+          "leaf": true,
+          "value": -0.6391662742
+        },
+        {
+          "leaf": true,
+          "value": 0.6257775015
+        },
+        {
+          "feature": "feedbackMargin",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.6174188554
+        },
+        {
+          "feature": "userSaysViewerCue",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 0.5561505867
+        },
+        {
+          "leaf": true,
+          "value": 1.1027914917
+        },
+        {
+          "leaf": true,
+          "value": 1.1166179471
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.675052464
+        },
+        {
+          "feature": "semanticHook",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.7300519347
+        },
+        {
+          "feature": "duration",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.724999994
+        },
+        {
+          "leaf": true,
+          "value": 0.2507242957
+        },
+        {
+          "leaf": true,
+          "value": -0.5575198168
+        },
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.6642672122
+        },
+        {
+          "leaf": true,
+          "value": 1.2662018452
+        },
+        {
+          "leaf": true,
+          "value": -1.1400725048
+        },
+        {
+          "feature": "evidencePatternSearch",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.5
+        },
+        {
+          "feature": "semanticEndingResolution",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.6897059977
+        },
+        {
+          "leaf": true,
+          "value": -1.1937720134
+        },
+        {
+          "leaf": true,
+          "value": -1.1247138806
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.5883812904
+        },
+        {
+          "leaf": true,
+          "value": -1.2568308331
+        },
+        {
+          "leaf": true,
+          "value": -1.3350041743
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5766522884
+        },
+        {
+          "feature": "semanticEndingResolution",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.6168398857
+        },
+        {
+          "feature": "evidencePatternSearch",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 0.1231845738
+        },
+        {
+          "leaf": true,
+          "value": 1.2480545705
+        },
+        {
+          "feature": "semanticEndingMetaNoise",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.7198027968
+        },
+        {
+          "leaf": true,
+          "value": -1.4204106267
+        },
+        {
+          "leaf": true,
+          "value": 0.1567508732
+        },
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.6145893931
+        },
+        {
+          "feature": "semanticResolution",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.6546747684
+        },
+        {
+          "leaf": true,
+          "value": -1.2713381541
+        },
+        {
+          "leaf": true,
+          "value": -1.7057597311
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.6097638607
+        },
+        {
+          "leaf": true,
+          "value": 0.9698228946
+        },
+        {
+          "leaf": true,
+          "value": -1.6361951272
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "viewerResponse",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.6991648674
+        },
+        {
+          "feature": "semanticResolution",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.7153521776
+        },
+        {
+          "feature": "semanticResolution",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.701530993
+        },
+        {
+          "leaf": true,
+          "value": 0.0799753166
+        },
+        {
+          "leaf": true,
+          "value": -1.2170730583
+        },
+        {
+          "feature": "arcTailRisk",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.320719853
+        },
+        {
+          "leaf": true,
+          "value": 1.2554431779
+        },
+        {
+          "leaf": true,
+          "value": -1.2861075385
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.5669638216
+        },
+        {
+          "feature": "arcDevelopment",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.2715835571
+        },
+        {
+          "leaf": true,
+          "value": -1.132698215
+        },
+        {
+          "leaf": true,
+          "value": -1.2007110114
+        },
+        {
+          "feature": "boundary",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.6554560065
+        },
+        {
+          "leaf": true,
+          "value": -1.3283427467
+        },
+        {
+          "leaf": true,
+          "value": -1.2669229012
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysHasConclusion",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "evidencePatternSearch",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.9177277982
+        },
+        {
+          "leaf": true,
+          "value": -0.5061380187
+        },
+        {
+          "leaf": true,
+          "value": 1.1288423894
+        },
+        {
+          "feature": "arcOpening",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.5471984148
+        },
+        {
+          "leaf": true,
+          "value": -0.7059081236
+        },
+        {
+          "leaf": true,
+          "value": 0.5719653493
+        },
+        {
+          "feature": "feedbackPositiveDominates",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.5
+        },
+        {
+          "feature": "userSaysSmoothEnding",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.0877729287
+        },
+        {
+          "leaf": true,
+          "value": 0.4552174815
+        },
+        {
+          "leaf": true,
+          "value": 1.1069675551
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.675052464
+        },
+        {
+          "feature": "semanticOpeningHook",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.7300519347
+        },
+        {
+          "feature": "semanticHook",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.6969283223
+        },
+        {
+          "leaf": true,
+          "value": 0.0978066586
+        },
+        {
+          "leaf": true,
+          "value": -1.0603966318
+        },
+        {
+          "feature": "semanticMetaNoise",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.7551600933
+        },
+        {
+          "leaf": true,
+          "value": 1.2419476841
+        },
+        {
+          "leaf": true,
+          "value": -1.1212605452
+        },
+        {
+          "feature": "duration",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.299999997
+        },
+        {
+          "feature": "topicContinuity",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.7369632423
+        },
+        {
+          "leaf": true,
+          "value": -1.2232573791
+        },
+        {
+          "leaf": true,
+          "value": -1.2759456969
+        },
+        {
+          "feature": "viewerResponse",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.6912641227
+        },
+        {
+          "leaf": true,
+          "value": -1.1059112376
+        },
+        {
+          "leaf": true,
+          "value": -1.1753061199
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5766522884
+        },
+        {
+          "feature": "semanticEndingResolution",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.6168398857
+        },
+        {
+          "feature": "arcTailRisk",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.2905011028
+        },
+        {
+          "leaf": true,
+          "value": 0.1150817897
+        },
+        {
+          "leaf": true,
+          "value": 1.2154600468
+        },
+        {
+          "feature": "semanticEndingMetaNoise",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.7198027968
+        },
+        {
+          "leaf": true,
+          "value": -1.3744373411
+        },
+        {
+          "leaf": true,
+          "value": 0.1786774373
+        },
+        {
+          "feature": "viewerResponse",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.6211743653
+        },
+        {
+          "feature": "semanticHook",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.64321208
+        },
+        {
+          "leaf": true,
+          "value": -1.6241627377
+        },
+        {
+          "leaf": true,
+          "value": -1.2490801826
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.6097638607
+        },
+        {
+          "leaf": true,
+          "value": 0.9515341763
+        },
+        {
+          "leaf": true,
+          "value": -1.5710375708
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysHasDevelopment",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "evidencePatternSearch",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.9177277982
+        },
+        {
+          "leaf": true,
+          "value": -0.4722664636
+        },
+        {
+          "leaf": true,
+          "value": 1.1142957963
+        },
+        {
+          "feature": "arcTailRisk",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.288624227
+        },
+        {
+          "leaf": true,
+          "value": -0.5845933947
+        },
+        {
+          "leaf": true,
+          "value": 0.6008172153
+        },
+        {
+          "feature": "userSaysHasBeginning",
+          "leaf": false,
+          "left": 9,
+          "right": 10,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.1350968398
+        },
+        {
+          "feature": "userSaysSmoothEnding",
+          "leaf": false,
+          "left": 11,
+          "right": 12,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.0817132974
+        },
+        {
+          "leaf": true,
+          "value": 0.4988719211
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.675052464
+        },
+        {
+          "feature": "duration",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.724999994
+        },
+        {
+          "feature": "evidencePatternSearch",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 0.0443129199
+        },
+        {
+          "leaf": true,
+          "value": 1.2063027651
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.8305285275
+        },
+        {
+          "leaf": true,
+          "value": -1.0607327279
+        },
+        {
+          "leaf": true,
+          "value": 0.7854634842
+        },
+        {
+          "feature": "semanticEndingMetaNoise",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.7238478065
+        },
+        {
+          "feature": "arcDevelopment",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5715553463
+        },
+        {
+          "leaf": true,
+          "value": -1.1670943594
+        },
+        {
+          "leaf": true,
+          "value": -1.0900358149
+        },
+        {
+          "feature": "semanticOpeningMetaNoise",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.7943051755
+        },
+        {
+          "leaf": true,
+          "value": -1.2341054259
+        },
+        {
+          "leaf": true,
+          "value": -1.2980843611
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysHasDevelopment",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "evidencePatternSearch",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5
+        },
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.6372751892
+        },
+        {
+          "leaf": true,
+          "value": -0.2108184046
+        },
+        {
+          "leaf": true,
+          "value": -1.1173066642
+        },
+        {
+          "feature": "arcOpening",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.5471984148
+        },
+        {
+          "leaf": true,
+          "value": -0.6904057474
+        },
+        {
+          "leaf": true,
+          "value": 0.5361873565
+        },
+        {
+          "feature": "userSaysViewerCue",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.5
+        },
+        {
+          "feature": "userSaysSmoothEnding",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.0768061954
+        },
+        {
+          "leaf": true,
+          "value": 0.3058730029
+        },
+        {
+          "feature": "topicContinuity",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.7243387103
+        },
+        {
+          "leaf": true,
+          "value": 1.0826275063
+        },
+        {
+          "leaf": true,
+          "value": 1.1024093684
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.675052464
+        },
+        {
+          "feature": "semanticHook",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.7300519347
+        },
+        {
+          "feature": "duration",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.724999994
+        },
+        {
+          "leaf": true,
+          "value": 0.2103677518
+        },
+        {
+          "leaf": true,
+          "value": -0.5000303697
+        },
+        {
+          "feature": "semanticOpeningMetaNoise",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.760053277
+        },
+        {
+          "leaf": true,
+          "value": 1.2513341917
+        },
+        {
+          "leaf": true,
+          "value": 0.6481687831
+        },
+        {
+          "feature": "duration",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.299999997
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.566942811
+        },
+        {
+          "leaf": true,
+          "value": -1.1951091768
+        },
+        {
+          "leaf": true,
+          "value": -1.2543067599
+        },
+        {
+          "feature": "topicContinuity",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.8569558561
+        },
+        {
+          "leaf": true,
+          "value": -1.1465270835
+        },
+        {
+          "leaf": true,
+          "value": -1.0797425801
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5766522884
+        },
+        {
+          "feature": "semanticEndingResolution",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.6168398857
+        },
+        {
+          "feature": "evidencePatternSearch",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 0.1017761281
+        },
+        {
+          "leaf": true,
+          "value": 1.1737193035
+        },
+        {
+          "feature": "semanticEndingMetaNoise",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.7198027968
+        },
+        {
+          "leaf": true,
+          "value": -1.3261664696
+        },
+        {
+          "leaf": true,
+          "value": 0.1807716304
+        },
+        {
+          "feature": "viewerResponse",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.6211743653
+        },
+        {
+          "feature": "feedbackRawMarginPositive",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.3608750626
+        },
+        {
+          "leaf": true,
+          "value": -1.2117080637
+        },
+        {
+          "leaf": true,
+          "value": -1.5212933013
+        },
+        {
+          "feature": "arcOpening",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.5457161367
+        },
+        {
+          "leaf": true,
+          "value": -1.2574075346
+        },
+        {
+          "leaf": true,
+          "value": 0.9884481208
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5766522884
+        },
+        {
+          "feature": "semanticViewerMessage",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.6140537858
+        },
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.3007623255
+        },
+        {
+          "leaf": true,
+          "value": 0.1094168661
+        },
+        {
+          "leaf": true,
+          "value": 1.2623934218
+        },
+        {
+          "feature": "arcDevelopment",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.5592889786
+        },
+        {
+          "leaf": true,
+          "value": -0.3253764127
+        },
+        {
+          "leaf": true,
+          "value": -1.3616774673
+        },
+        {
+          "feature": "viewerResponse",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.6211743653
+        },
+        {
+          "feature": "feedbackPositiveScore",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.3608750626
+        },
+        {
+          "leaf": true,
+          "value": -1.1983228781
+        },
+        {
+          "leaf": true,
+          "value": -1.4794510052
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.6097638607
+        },
+        {
+          "leaf": true,
+          "value": 0.9275681048
+        },
+        {
+          "leaf": true,
+          "value": -1.4650496126
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "viewerResponse",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.6991648674
+        },
+        {
+          "feature": "semanticEndingMetaNoise",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.7198027968
+        },
+        {
+          "feature": "semanticEndingResolution",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.6843120158
+        },
+        {
+          "leaf": true,
+          "value": 0.0621946589
+        },
+        {
+          "leaf": true,
+          "value": -1.1260976926
+        },
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.656611532
+        },
+        {
+          "leaf": true,
+          "value": 1.2169275636
+        },
+        {
+          "leaf": true,
+          "value": -1.169876067
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.5669638216
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5380860567
+        },
+        {
+          "leaf": true,
+          "value": -1.112180919
+        },
+        {
+          "leaf": true,
+          "value": -1.1470959454
+        },
+        {
+          "feature": "semanticOpeningMetaNoise",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.7943051755
+        },
+        {
+          "leaf": true,
+          "value": -1.2227626279
+        },
+        {
+          "leaf": true,
+          "value": -1.2449077333
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysSingleTopic",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.7163988054
+        },
+        {
+          "feature": "duration",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.724999994
+        },
+        {
+          "leaf": true,
+          "value": -0.0930286194
+        },
+        {
+          "leaf": true,
+          "value": -1.2367191413
+        },
+        {
+          "feature": "arcOpening",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.6596603394
+        },
+        {
+          "leaf": true,
+          "value": 0.5257615172
+        },
+        {
+          "leaf": true,
+          "value": -1.4171136203
+        },
+        {
+          "feature": "feedbackPositiveScore",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.2348377258
+        },
+        {
+          "feature": "userSaysSmoothEnding",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.0704888413
+        },
+        {
+          "leaf": true,
+          "value": 0.3455922545
+        },
+        {
+          "leaf": true,
+          "value": 1.0924463759
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5766522884
+        },
+        {
+          "feature": "semanticEndingResolution",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.6168398857
+        },
+        {
+          "feature": "evidencePatternSearch",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 0.0805608697
+        },
+        {
+          "leaf": true,
+          "value": 1.1558750959
+        },
+        {
+          "feature": "semanticEndingMetaNoise",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.7198027968
+        },
+        {
+          "leaf": true,
+          "value": -1.2739722475
+        },
+        {
+          "leaf": true,
+          "value": 0.1846395169
+        },
+        {
+          "feature": "arcOpening",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.5475358665
+        },
+        {
+          "feature": "semanticOpeningHook",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.6538097262
+        },
+        {
+          "leaf": true,
+          "value": -1.4143342679
+        },
+        {
+          "leaf": true,
+          "value": -1.2359883917
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.608569622
+        },
+        {
+          "leaf": true,
+          "value": 1.0538488863
+        },
+        {
+          "leaf": true,
+          "value": -1.2861594842
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysHasConclusion",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "evidencePatternSearch",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.9177277982
+        },
+        {
+          "leaf": true,
+          "value": -0.3994004327
+        },
+        {
+          "leaf": true,
+          "value": 1.0878129752
+        },
+        {
+          "feature": "arcDevelopment",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.547850728
+        },
+        {
+          "leaf": true,
+          "value": -0.6117313528
+        },
+        {
+          "leaf": true,
+          "value": 0.5639186933
+        },
+        {
+          "feature": "feedbackRawMarginPositive",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.2348377258
+        },
+        {
+          "feature": "userSaysSmoothEnding",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.0661646733
+        },
+        {
+          "leaf": true,
+          "value": 0.3187532904
+        },
+        {
+          "leaf": true,
+          "value": 1.0866704814
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.675052464
+        },
+        {
+          "feature": "semanticResolution",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.7153521776
+        },
+        {
+          "feature": "semanticResolution",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.701530993
+        },
+        {
+          "leaf": true,
+          "value": 0.0687907995
+        },
+        {
+          "leaf": true,
+          "value": -1.0596700109
+        },
+        {
+          "feature": "semanticMetaNoise",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.7511534691
+        },
+        {
+          "leaf": true,
+          "value": 1.1736612721
+        },
+        {
+          "leaf": true,
+          "value": -1.1893764706
+        },
+        {
+          "feature": "semanticEndingMetaNoise",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.7238478065
+        },
+        {
+          "feature": "evidenceViewerResponseCue",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": -1.0552848547
+        },
+        {
+          "leaf": true,
+          "value": -1.1237997879
+        },
+        {
+          "feature": "topicContinuity",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.7369632423
+        },
+        {
+          "leaf": true,
+          "value": -1.1779237785
+        },
+        {
+          "leaf": true,
+          "value": -1.2039813084
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysHasDevelopment",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "evidencePatternSearch",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.9177277982
+        },
+        {
+          "leaf": true,
+          "value": -0.3806556277
+        },
+        {
+          "leaf": true,
+          "value": 1.0824032998
+        },
+        {
+          "feature": "arcDevelopment",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.547850728
+        },
+        {
+          "leaf": true,
+          "value": -0.5797012859
+        },
+        {
+          "leaf": true,
+          "value": 0.5423135206
+        },
+        {
+          "feature": "userSaysViewerCue",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.5
+        },
+        {
+          "feature": "userSaysSmoothEnding",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.0621607725
+        },
+        {
+          "leaf": true,
+          "value": 0.2096266832
+        },
+        {
+          "feature": "boundary",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.5273260027
+        },
+        {
+          "leaf": true,
+          "value": 1.0760943798
+        },
+        {
+          "leaf": true,
+          "value": 1.0554134092
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "feedbackNegativeRange",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.4369331598
+        },
+        {
+          "feature": "boundary",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.8712839782
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.6010474265
+        },
+        {
+          "leaf": true,
+          "value": 0.1223738364
+        },
+        {
+          "leaf": true,
+          "value": -1.2413366968
+        },
+        {
+          "feature": "arcCompleteness",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.5474105477
+        },
+        {
+          "leaf": true,
+          "value": -1.1775384096
+        },
+        {
+          "leaf": true,
+          "value": 1.0833719062
+        },
+        {
+          "feature": "evidenceViewerResponseCue",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.5
+        },
+        {
+          "feature": "arcDevelopment",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5780894756
+        },
+        {
+          "leaf": true,
+          "value": 1.0708722641
+        },
+        {
+          "leaf": true,
+          "value": 1.1125446721
+        },
+        {
+          "leaf": true,
+          "value": 1.2732004067
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5766522884
+        },
+        {
+          "feature": "semanticEndingResolution",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.6168398857
+        },
+        {
+          "feature": "evidencePatternSearch",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 0.0794267773
+        },
+        {
+          "leaf": true,
+          "value": 1.1431375585
+        },
+        {
+          "feature": "semanticEndingMetaNoise",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.7198027968
+        },
+        {
+          "leaf": true,
+          "value": -1.2495019527
+        },
+        {
+          "leaf": true,
+          "value": 0.1694835695
+        },
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.6145893931
+        },
+        {
+          "feature": "feedbackPositiveDominates",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": -1.1528056297
+        },
+        {
+          "leaf": true,
+          "value": -1.4116780041
+        },
+        {
+          "feature": "arcCompleteness",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.5380696952
+        },
+        {
+          "leaf": true,
+          "value": -1.1906839386
+        },
+        {
+          "leaf": true,
+          "value": 0.9499633147
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.675052464
+        },
+        {
+          "feature": "semanticResolution",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.7153521776
+        },
+        {
+          "feature": "semanticResolution",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.701530993
+        },
+        {
+          "leaf": true,
+          "value": 0.0629567481
+        },
+        {
+          "leaf": true,
+          "value": -1.0263450109
+        },
+        {
+          "feature": "arcBoundaryCleanliness",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.5081687719
+        },
+        {
+          "leaf": true,
+          "value": -1.1625514633
+        },
+        {
+          "leaf": true,
+          "value": 1.1562496602
+        },
+        {
+          "feature": "semanticEndingMetaNoise",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.7238478065
+        },
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.6860759556
+        },
+        {
+          "leaf": true,
+          "value": -1.0480158048
+        },
+        {
+          "leaf": true,
+          "value": -1.1065885866
+        },
+        {
+          "feature": "evidenceSemanticResolution",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": -1.1689416924
+        },
+        {
+          "leaf": true,
+          "value": -1.1864564689
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysHasDevelopment",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "evidencePatternSearch",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5
+        },
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.6372751892
+        },
+        {
+          "leaf": true,
+          "value": -0.1737185471
+        },
+        {
+          "leaf": true,
+          "value": -1.0324564574
+        },
+        {
+          "feature": "arcTailRisk",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.288624227
+        },
+        {
+          "leaf": true,
+          "value": -0.5128825831
+        },
+        {
+          "leaf": true,
+          "value": 0.5552234336
+        },
+        {
+          "feature": "feedbackPositiveOverlap",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.2069333345
+        },
+        {
+          "feature": "userSaysViewerCue",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 0.3262828279
+        },
+        {
+          "leaf": true,
+          "value": 1.0667012866
+        },
+        {
+          "leaf": true,
+          "value": 1.0792392586
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5766522884
+        },
+        {
+          "feature": "semanticEndingResolution",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.6168398857
+        },
+        {
+          "feature": "arcBoundaryCleanliness",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.6209106445
+        },
+        {
+          "leaf": true,
+          "value": 0.0852488822
+        },
+        {
+          "leaf": true,
+          "value": 1.1465971421
+        },
+        {
+          "feature": "semanticEndingMetaNoise",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.7198027968
+        },
+        {
+          "leaf": true,
+          "value": -1.2237112767
+        },
+        {
+          "leaf": true,
+          "value": 0.1616311869
+        },
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.6145893931
+        },
+        {
+          "feature": "semanticHook",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.64321208
+        },
+        {
+          "leaf": true,
+          "value": -1.3940978072
+        },
+        {
+          "leaf": true,
+          "value": -1.1426353445
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.6097638607
+        },
+        {
+          "leaf": true,
+          "value": 0.902564885
+        },
+        {
+          "leaf": true,
+          "value": -1.3362184634
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.675052464
+        },
+        {
+          "feature": "semanticHook",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.7300519347
+        },
+        {
+          "feature": "semanticOpeningHook",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.6947743893
+        },
+        {
+          "leaf": true,
+          "value": 0.0702450524
+        },
+        {
+          "leaf": true,
+          "value": -0.9273302131
+        },
+        {
+          "feature": "semanticMetaNoise",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.7285878956
+        },
+        {
+          "leaf": true,
+          "value": 1.1759920464
+        },
+        {
+          "leaf": true,
+          "value": 0.601244088
+        },
+        {
+          "feature": "semanticEndingMetaNoise",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.7238478065
+        },
+        {
+          "feature": "arcOpening",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.6175949574
+        },
+        {
+          "leaf": true,
+          "value": -1.0960549347
+        },
+        {
+          "leaf": true,
+          "value": -1.0400368439
+        },
+        {
+          "feature": "semanticResolution",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.7179945409
+        },
+        {
+          "leaf": true,
+          "value": -1.1631313996
+        },
+        {
+          "leaf": true,
+          "value": -1.1817023119
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysSingleTopic",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.7163988054
+        },
+        {
+          "feature": "duration",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.724999994
+        },
+        {
+          "leaf": true,
+          "value": -0.0705328063
+        },
+        {
+          "leaf": true,
+          "value": -1.1771072635
+        },
+        {
+          "feature": "arcOpening",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.6596603394
+        },
+        {
+          "leaf": true,
+          "value": 0.5043234881
+        },
+        {
+          "leaf": true,
+          "value": -1.3077608032
+        },
+        {
+          "feature": "userSaysHasBeginning",
+          "leaf": false,
+          "left": 9,
+          "right": 10,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.1099859426
+        },
+        {
+          "feature": "feedbackRawMarginPositive",
+          "leaf": false,
+          "left": 11,
+          "right": 12,
+          "threshold": 0.2348377258
+        },
+        {
+          "leaf": true,
+          "value": 0.4222050914
+        },
+        {
+          "leaf": true,
+          "value": 1.0740367461
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5766522884
+        },
+        {
+          "feature": "arcDevelopment",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5709753335
+        },
+        {
+          "feature": "arcTailRisk",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.3049042076
+        },
+        {
+          "leaf": true,
+          "value": 0.0502406573
+        },
+        {
+          "leaf": true,
+          "value": -1.2028236821
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.7492918074
+        },
+        {
+          "leaf": true,
+          "value": -1.1231371445
+        },
+        {
+          "leaf": true,
+          "value": -1.2944425671
+        },
+        {
+          "feature": "arcOpening",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.5475358665
+        },
+        {
+          "feature": "feedbackPositiveScore",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.4760192633
+        },
+        {
+          "leaf": true,
+          "value": -1.1630845943
+        },
+        {
+          "leaf": true,
+          "value": -1.3434516412
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.608569622
+        },
+        {
+          "leaf": true,
+          "value": 1.0213900941
+        },
+        {
+          "leaf": true,
+          "value": -1.2096765994
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "feedbackNegativeScore",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.406107381
+        },
+        {
+          "feature": "boundary",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.8712839782
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.6010474265
+        },
+        {
+          "leaf": true,
+          "value": 0.0965015614
+        },
+        {
+          "leaf": true,
+          "value": -1.1848672379
+        },
+        {
+          "feature": "arcDevelopment",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.5842676759
+        },
+        {
+          "leaf": true,
+          "value": -1.1398774493
+        },
+        {
+          "leaf": true,
+          "value": 1.0656381869
+        },
+        {
+          "feature": "semanticViewerMessage",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.6847016811
+        },
+        {
+          "feature": "evidenceMetaPrelude",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.0541372831
+        },
+        {
+          "leaf": true,
+          "value": 1.0846473316
+        },
+        {
+          "leaf": true,
+          "value": 1.2198153293
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5766522884
+        },
+        {
+          "feature": "arcDevelopment",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5709753335
+        },
+        {
+          "feature": "arcTailRisk",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.3049042076
+        },
+        {
+          "leaf": true,
+          "value": 0.0460401697
+        },
+        {
+          "leaf": true,
+          "value": -1.1909032684
+        },
+        {
+          "feature": "viewerResponse",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.6578738391
+        },
+        {
+          "leaf": true,
+          "value": -1.2696715478
+        },
+        {
+          "leaf": true,
+          "value": -1.1145505562
+        },
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.6145893931
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.6379030347
+        },
+        {
+          "leaf": true,
+          "value": -1.1168448725
+        },
+        {
+          "leaf": true,
+          "value": -1.3206865174
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.6097638607
+        },
+        {
+          "leaf": true,
+          "value": 0.8933561373
+        },
+        {
+          "leaf": true,
+          "value": -1.257673116
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysSingleTopic",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "evidencePatternSearch",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.9177277982
+        },
+        {
+          "leaf": true,
+          "value": -0.3213899515
+        },
+        {
+          "leaf": true,
+          "value": 1.0588255683
+        },
+        {
+          "feature": "arcDevelopment",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.547850728
+        },
+        {
+          "leaf": true,
+          "value": -0.5361982364
+        },
+        {
+          "leaf": true,
+          "value": 0.5264101337
+        },
+        {
+          "feature": "feedbackNegativeRange",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.0973750576
+        },
+        {
+          "feature": "userSaysSmoothEnding",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.0544031253
+        },
+        {
+          "leaf": true,
+          "value": 0.2659887418
+        },
+        {
+          "feature": "feedbackNegativeScore",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.3098943159
+        },
+        {
+          "leaf": true,
+          "value": 1.1101144877
+        },
+        {
+          "leaf": true,
+          "value": 1.0516118676
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "viewerResponse",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.6991648674
+        },
+        {
+          "feature": "semanticEndingMetaNoise",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.7198027968
+        },
+        {
+          "feature": "semanticEndingResolution",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.6843120158
+        },
+        {
+          "leaf": true,
+          "value": 0.0397416215
+        },
+        {
+          "leaf": true,
+          "value": -0.9997561654
+        },
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.656611532
+        },
+        {
+          "leaf": true,
+          "value": 1.1403609411
+        },
+        {
+          "leaf": true,
+          "value": -1.1051321934
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.5669638216
+        },
+        {
+          "feature": "semanticResolution",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.7137141526
+        },
+        {
+          "leaf": true,
+          "value": -1.0734663375
+        },
+        {
+          "leaf": true,
+          "value": -1.0924020638
+        },
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.6862401962
+        },
+        {
+          "leaf": true,
+          "value": -1.1451341473
+        },
+        {
+          "leaf": true,
+          "value": -1.1387048293
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysHasDevelopment",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "evidencePatternSearch",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.9177277982
+        },
+        {
+          "leaf": true,
+          "value": -0.3045648333
+        },
+        {
+          "leaf": true,
+          "value": 1.0539189445
+        },
+        {
+          "feature": "arcTailRisk",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.288624227
+        },
+        {
+          "leaf": true,
+          "value": -0.4742786696
+        },
+        {
+          "leaf": true,
+          "value": 0.5434929597
+        },
+        {
+          "feature": "userSaysHasBeginning",
+          "leaf": false,
+          "left": 9,
+          "right": 10,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.1006737545
+        },
+        {
+          "feature": "userSaysSmoothEnding",
+          "leaf": false,
+          "left": 11,
+          "right": 12,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.0508664137
+        },
+        {
+          "leaf": true,
+          "value": 0.2572367439
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "viewerResponse",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.6991648674
+        },
+        {
+          "feature": "semanticHook",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.7342402339
+        },
+        {
+          "feature": "semanticOpeningHook",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.6947743893
+        },
+        {
+          "leaf": true,
+          "value": 0.0602845327
+        },
+        {
+          "leaf": true,
+          "value": -0.8894119212
+        },
+        {
+          "feature": "arcCompleteness",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.5265412331
+        },
+        {
+          "leaf": true,
+          "value": 1.1553253966
+        },
+        {
+          "leaf": true,
+          "value": 0.9100709402
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.5669638216
+        },
+        {
+          "feature": "arcDevelopment",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5433824658
+        },
+        {
+          "leaf": true,
+          "value": -1.0649533634
+        },
+        {
+          "leaf": true,
+          "value": -1.0845323104
+        },
+        {
+          "feature": "semanticEmpathy",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.6846674979
+        },
+        {
+          "leaf": true,
+          "value": -1.1342376172
+        },
+        {
+          "leaf": true,
+          "value": -1.1404102091
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5766522884
+        },
+        {
+          "feature": "arcDevelopment",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5709753335
+        },
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.6602125466
+        },
+        {
+          "leaf": true,
+          "value": 0.0567034218
+        },
+        {
+          "leaf": true,
+          "value": -1.1350907846
+        },
+        {
+          "feature": "viewerResponse",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.6578738391
+        },
+        {
+          "leaf": true,
+          "value": -1.2471961319
+        },
+        {
+          "leaf": true,
+          "value": -1.0998367818
+        },
+        {
+          "feature": "arcOpening",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.5475358665
+        },
+        {
+          "feature": "boundary",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.3149040043
+        },
+        {
+          "leaf": true,
+          "value": -1.3180384905
+        },
+        {
+          "leaf": true,
+          "value": -1.1364871054
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.608569622
+        },
+        {
+          "leaf": true,
+          "value": 0.9998151938
+        },
+        {
+          "leaf": true,
+          "value": -1.1682908341
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "boundary",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.9382199943
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.6010474265
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.5760867298
+        },
+        {
+          "leaf": true,
+          "value": -0.0052278838
+        },
+        {
+          "leaf": true,
+          "value": 0.7799515585
+        },
+        {
+          "feature": "arcDevelopment",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.5961444378
+        },
+        {
+          "leaf": true,
+          "value": -1.1101376456
+        },
+        {
+          "leaf": true,
+          "value": -1.2190582546
+        },
+        {
+          "feature": "arcBoundaryCleanliness",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.6305762827
+        },
+        {
+          "feature": "semanticClipValue",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.6506128013
+        },
+        {
+          "leaf": true,
+          "value": -1.2405632501
+        },
+        {
+          "leaf": true,
+          "value": -1.0731383594
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.6005582213
+        },
+        {
+          "leaf": true,
+          "value": 1.0507812565
+        },
+        {
+          "leaf": true,
+          "value": 1.0426005182
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysHasConclusion",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "evidencePatternSearch",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5
+        },
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.6372751892
+        },
+        {
+          "leaf": true,
+          "value": -0.1427130269
+        },
+        {
+          "leaf": true,
+          "value": -0.9811645283
+        },
+        {
+          "feature": "arcOpening",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.5471984148
+        },
+        {
+          "leaf": true,
+          "value": -0.5604396217
+        },
+        {
+          "leaf": true,
+          "value": 0.4980762537
+        },
+        {
+          "feature": "feedbackMargin",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.6174188554
+        },
+        {
+          "feature": "userSaysSmoothEnding",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.0477156865
+        },
+        {
+          "leaf": true,
+          "value": 0.1196832898
+        },
+        {
+          "leaf": true,
+          "value": 1.0665382182
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "feedbackNegativeScore",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.406107381
+        },
+        {
+          "feature": "boundary",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.8712839782
+        },
+        {
+          "feature": "boundary",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.7791640162
+        },
+        {
+          "leaf": true,
+          "value": -0.0020376663
+        },
+        {
+          "leaf": true,
+          "value": 1.1244481011
+        },
+        {
+          "feature": "arcCompleteness",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.5474105477
+        },
+        {
+          "leaf": true,
+          "value": -1.1116522674
+        },
+        {
+          "leaf": true,
+          "value": 1.048665431
+        },
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.6456761062
+        },
+        {
+          "feature": "feedbackNegativeOverlap",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.28125
+        },
+        {
+          "leaf": true,
+          "value": 1.0411756349
+        },
+        {
+          "leaf": true,
+          "value": 1.0628075897
+        },
+        {
+          "leaf": true,
+          "value": 1.1752215784
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysHasDevelopment",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "evidencePatternSearch",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.9177277982
+        },
+        {
+          "leaf": true,
+          "value": -0.2661823373
+        },
+        {
+          "leaf": true,
+          "value": 1.0456558626
+        },
+        {
+          "feature": "arcTailRisk",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.288624227
+        },
+        {
+          "leaf": true,
+          "value": -0.4856532885
+        },
+        {
+          "leaf": true,
+          "value": 0.5269921354
+        },
+        {
+          "feature": "feedbackMargin",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.6174188554
+        },
+        {
+          "feature": "userSaysSmoothEnding",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.0447488328
+        },
+        {
+          "leaf": true,
+          "value": 0.1138512987
+        },
+        {
+          "leaf": true,
+          "value": 1.0627544167
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.675052464
+        },
+        {
+          "feature": "semanticResolution",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.7153521776
+        },
+        {
+          "feature": "duration",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.724999994
+        },
+        {
+          "leaf": true,
+          "value": 0.1251566206
+        },
+        {
+          "leaf": true,
+          "value": -0.4563713712
+        },
+        {
+          "feature": "arcTailRisk",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.320719853
+        },
+        {
+          "leaf": true,
+          "value": 1.1098282389
+        },
+        {
+          "leaf": true,
+          "value": -1.0981935932
+        },
+        {
+          "feature": "semanticEndingMetaNoise",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.7238478065
+        },
+        {
+          "feature": "arcDevelopment",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5715553463
+        },
+        {
+          "leaf": true,
+          "value": -1.0657007918
+        },
+        {
+          "leaf": true,
+          "value": -1.028278411
+        },
+        {
+          "feature": "evidenceSemanticResolution",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": -1.1120578037
+        },
+        {
+          "leaf": true,
+          "value": -1.1310258726
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5766522884
+        },
+        {
+          "feature": "arcDevelopment",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5709753335
+        },
+        {
+          "feature": "arcTailRisk",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.3049042076
+        },
+        {
+          "leaf": true,
+          "value": 0.0449879549
+        },
+        {
+          "leaf": true,
+          "value": -1.143075972
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.7492918074
+        },
+        {
+          "leaf": true,
+          "value": -1.0868864006
+        },
+        {
+          "leaf": true,
+          "value": -1.2148822585
+        },
+        {
+          "feature": "viewerResponse",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.6211743653
+        },
+        {
+          "feature": "feedbackPositiveDominates",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": -1.0966723453
+        },
+        {
+          "leaf": true,
+          "value": -1.300523371
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.6097638607
+        },
+        {
+          "leaf": true,
+          "value": 0.8804419975
+        },
+        {
+          "leaf": true,
+          "value": -1.1865077734
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "viewerResponse",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.6991648674
+        },
+        {
+          "feature": "semanticEndingMetaNoise",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.7198027968
+        },
+        {
+          "feature": "semanticEndingMetaNoise",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.6382784843
+        },
+        {
+          "leaf": true,
+          "value": 0.1074826206
+        },
+        {
+          "leaf": true,
+          "value": -0.4717969143
+        },
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.656611532
+        },
+        {
+          "leaf": true,
+          "value": 1.1117137829
+        },
+        {
+          "leaf": true,
+          "value": -1.077452854
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.5607229769
+        },
+        {
+          "feature": "semanticEmpathy",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.702360332
+        },
+        {
+          "leaf": true,
+          "value": -1.0652966713
+        },
+        {
+          "leaf": true,
+          "value": -1.0501208323
+        },
+        {
+          "feature": "semanticEmpathy",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.7046843469
+        },
+        {
+          "leaf": true,
+          "value": -1.1127870043
+        },
+        {
+          "leaf": true,
+          "value": -1.0824328911
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5766522884
+        },
+        {
+          "feature": "semanticEndingResolution",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.6168398857
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.5526403785
+        },
+        {
+          "leaf": true,
+          "value": 0.0511618866
+        },
+        {
+          "leaf": true,
+          "value": 1.1153798519
+        },
+        {
+          "feature": "semanticEndingMetaNoise",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.7198027968
+        },
+        {
+          "leaf": true,
+          "value": -1.1466627066
+        },
+        {
+          "leaf": true,
+          "value": 0.231788892
+        },
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.6145893931
+        },
+        {
+          "feature": "topicContinuity",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.7664742172
+        },
+        {
+          "leaf": true,
+          "value": -1.2726115557
+        },
+        {
+          "leaf": true,
+          "value": -1.0897201945
+        },
+        {
+          "feature": "arcOpening",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.5457161367
+        },
+        {
+          "leaf": true,
+          "value": -1.1103594488
+        },
+        {
+          "leaf": true,
+          "value": 0.9184364831
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysHasDevelopment",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "evidencePatternSearch",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.9177277982
+        },
+        {
+          "leaf": true,
+          "value": -0.2511600709
+        },
+        {
+          "leaf": true,
+          "value": 1.039660345
+        },
+        {
+          "feature": "semanticEndingMetaNoise",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.6382784843
+        },
+        {
+          "leaf": true,
+          "value": 1.0997406571
+        },
+        {
+          "leaf": true,
+          "value": -0.0027998443
+        },
+        {
+          "feature": "userSaysHasBeginning",
+          "leaf": false,
+          "left": 9,
+          "right": 10,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.0913214358
+        },
+        {
+          "feature": "userSaysViewerCue",
+          "leaf": false,
+          "left": 11,
+          "right": 12,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 0.2246107296
+        },
+        {
+          "leaf": true,
+          "value": 1.0505126091
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "feedbackNegativeRange",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.406107381
+        },
+        {
+          "feature": "boundary",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.8712839782
+        },
+        {
+          "feature": "boundary",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.7791640162
+        },
+        {
+          "leaf": true,
+          "value": -0.0033934754
+        },
+        {
+          "leaf": true,
+          "value": 1.1023516239
+        },
+        {
+          "feature": "arcDevelopment",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.5842676759
+        },
+        {
+          "leaf": true,
+          "value": -1.0930056717
+        },
+        {
+          "leaf": true,
+          "value": 1.0406793518
+        },
+        {
+          "feature": "evidenceViewerResponseCue",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.5
+        },
+        {
+          "feature": "evidenceMetaPrelude",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.0352995321
+        },
+        {
+          "leaf": true,
+          "value": 1.0548664399
+        },
+        {
+          "leaf": true,
+          "value": 1.1468384457
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.675052464
+        },
+        {
+          "feature": "semanticHook",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.7300519347
+        },
+        {
+          "feature": "duration",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.724999994
+        },
+        {
+          "leaf": true,
+          "value": 0.1103435653
+        },
+        {
+          "leaf": true,
+          "value": -0.4445481391
+        },
+        {
+          "feature": "semanticOpeningMetaNoise",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.7436114848
+        },
+        {
+          "leaf": true,
+          "value": 1.1196492595
+        },
+        {
+          "leaf": true,
+          "value": 0.8195073421
+        },
+        {
+          "feature": "semanticEndingMetaNoise",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.7238478065
+        },
+        {
+          "feature": "topicContinuity",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.8569558561
+        },
+        {
+          "leaf": true,
+          "value": -1.0527840651
+        },
+        {
+          "leaf": true,
+          "value": -1.0227087171
+        },
+        {
+          "feature": "topicContinuity",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.7710469663
+        },
+        {
+          "leaf": true,
+          "value": -1.0963011734
+        },
+        {
+          "leaf": true,
+          "value": -1.1101148238
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5766522884
+        },
+        {
+          "feature": "arcDevelopment",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5709753335
+        },
+        {
+          "feature": "feedbackMargin",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.5292111039
+        },
+        {
+          "leaf": true,
+          "value": -0.0773974433
+        },
+        {
+          "leaf": true,
+          "value": 0.9008316937
+        },
+        {
+          "feature": "viewerResponse",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.6578738391
+        },
+        {
+          "leaf": true,
+          "value": -1.176421696
+        },
+        {
+          "leaf": true,
+          "value": -1.0732092161
+        },
+        {
+          "feature": "viewerResponse",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.6211743653
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.6379030347
+        },
+        {
+          "leaf": true,
+          "value": -1.0818997852
+        },
+        {
+          "leaf": true,
+          "value": -1.2479590207
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.6097638607
+        },
+        {
+          "leaf": true,
+          "value": 0.867893267
+        },
+        {
+          "leaf": true,
+          "value": -1.1723159266
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysHasConclusion",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "evidencePatternSearch",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5
+        },
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.6372751892
+        },
+        {
+          "leaf": true,
+          "value": -0.1119946998
+        },
+        {
+          "leaf": true,
+          "value": -0.9567907613
+        },
+        {
+          "feature": "arcTailRisk",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.288624227
+        },
+        {
+          "leaf": true,
+          "value": -0.4545997031
+        },
+        {
+          "leaf": true,
+          "value": 0.5254240376
+        },
+        {
+          "feature": "feedbackMargin",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.4513124675
+        },
+        {
+          "feature": "feedbackNegativeRange",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.3098943159
+        },
+        {
+          "leaf": true,
+          "value": 1.0968524799
+        },
+        {
+          "leaf": true,
+          "value": 1.0351014356
+        },
+        {
+          "feature": "userSaysSmoothEnding",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.0414821545
+        },
+        {
+          "leaf": true,
+          "value": 0.1267322605
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "viewerResponse",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.6991648674
+        },
+        {
+          "feature": "semanticEndingMetaNoise",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.7198027968
+        },
+        {
+          "feature": "semanticEndingMetaNoise",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.6382784843
+        },
+        {
+          "leaf": true,
+          "value": 0.0923829647
+        },
+        {
+          "leaf": true,
+          "value": -0.4472575323
+        },
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.656611532
+        },
+        {
+          "leaf": true,
+          "value": 1.0945367482
+        },
+        {
+          "leaf": true,
+          "value": -1.066463096
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.5669638216
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.555585146
+        },
+        {
+          "leaf": true,
+          "value": -1.0434539556
+        },
+        {
+          "leaf": true,
+          "value": -1.065968419
+        },
+        {
+          "feature": "arcBoundaryCleanliness",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.5300438255
+        },
+        {
+          "leaf": true,
+          "value": -1.0987603007
+        },
+        {
+          "leaf": true,
+          "value": -1.106177139
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5766522884
+        },
+        {
+          "feature": "semanticEndingResolution",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.6168398857
+        },
+        {
+          "feature": "arcBoundaryCleanliness",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.6209106445
+        },
+        {
+          "leaf": true,
+          "value": 0.0440254178
+        },
+        {
+          "leaf": true,
+          "value": 1.09458863
+        },
+        {
+          "feature": "semanticEndingMetaNoise",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.7198027968
+        },
+        {
+          "leaf": true,
+          "value": -1.1234330708
+        },
+        {
+          "leaf": true,
+          "value": 0.2162599668
+        },
+        {
+          "feature": "arcOpening",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.5475358665
+        },
+        {
+          "feature": "semanticHook",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.6683339179
+        },
+        {
+          "leaf": true,
+          "value": -1.2325080632
+        },
+        {
+          "leaf": true,
+          "value": -1.0963570702
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.608569622
+        },
+        {
+          "leaf": true,
+          "value": 0.9654743689
+        },
+        {
+          "leaf": true,
+          "value": -1.1094059975
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.845972538
+        },
+        {
+          "feature": "duration",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.724999994
+        },
+        {
+          "feature": "semanticOpeningMetaNoise",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.725807935
+        },
+        {
+          "leaf": true,
+          "value": 0.1364635189
+        },
+        {
+          "leaf": true,
+          "value": -1.0839650816
+        },
+        {
+          "feature": "semanticClipValue",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.6492798328
+        },
+        {
+          "leaf": true,
+          "value": -1.1474784584
+        },
+        {
+          "leaf": true,
+          "value": -0.5724343776
+        },
+        {
+          "feature": "arcBoundaryCleanliness",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.6127562523
+        },
+        {
+          "feature": "semanticViewerMessage",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.6865616143
+        },
+        {
+          "leaf": true,
+          "value": -1.1690904409
+        },
+        {
+          "leaf": true,
+          "value": -1.1919286858
+        },
+        {
+          "feature": "semanticClipValue",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.6465628147
+        },
+        {
+          "leaf": true,
+          "value": 1.1163702795
+        },
+        {
+          "leaf": true,
+          "value": 0.823708462
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5766522884
+        },
+        {
+          "feature": "semanticEndingResolution",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.6168398857
+        },
+        {
+          "feature": "arcTailRisk",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.2905011028
+        },
+        {
+          "leaf": true,
+          "value": 0.0244963602
+        },
+        {
+          "leaf": true,
+          "value": 1.077712396
+        },
+        {
+          "feature": "semanticEndingMetaNoise",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.7198027968
+        },
+        {
+          "leaf": true,
+          "value": -1.1097140819
+        },
+        {
+          "leaf": true,
+          "value": 0.2130896934
+        },
+        {
+          "feature": "viewerResponse",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.6211743653
+        },
+        {
+          "feature": "semanticTarget",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.7106733024
+        },
+        {
+          "leaf": true,
+          "value": -1.0712224434
+        },
+        {
+          "leaf": true,
+          "value": -1.203980754
+        },
+        {
+          "feature": "arcOpening",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.5457161367
+        },
+        {
+          "leaf": true,
+          "value": -1.0868152534
+        },
+        {
+          "leaf": true,
+          "value": 0.9043758301
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "feedbackNegativeScore",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.406107381
+        },
+        {
+          "feature": "userSaysSingleTopic",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5
+        },
+        {
+          "feature": "final",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.8481835723
+        },
+        {
+          "leaf": true,
+          "value": -0.1875126366
+        },
+        {
+          "leaf": true,
+          "value": 0.4837560566
+        },
+        {
+          "feature": "feedbackMargin",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.4513124675
+        },
+        {
+          "leaf": true,
+          "value": 1.0897032369
+        },
+        {
+          "leaf": true,
+          "value": 0.3080863509
+        },
+        {
+          "feature": "semanticEndingMetaNoise",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.7290268838
+        },
+        {
+          "feature": "topicContinuity",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.7316965461
+        },
+        {
+          "leaf": true,
+          "value": 1.0294656582
+        },
+        {
+          "leaf": true,
+          "value": 1.0468965073
+        },
+        {
+          "leaf": true,
+          "value": 1.115435905
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "viewerResponse",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.6991648674
+        },
+        {
+          "feature": "semanticEndingMetaNoise",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.7198027968
+        },
+        {
+          "feature": "userSaysHasDevelopment",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": -0.1182692645
+        },
+        {
+          "leaf": true,
+          "value": 0.3706748803
+        },
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.656611532
+        },
+        {
+          "leaf": true,
+          "value": 1.0822531898
+        },
+        {
+          "leaf": true,
+          "value": -1.0607822194
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.5607229769
+        },
+        {
+          "feature": "arcBoundaryCleanliness",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.6117775142
+        },
+        {
+          "leaf": true,
+          "value": -1.0367582446
+        },
+        {
+          "leaf": true,
+          "value": -1.0447241508
+        },
+        {
+          "feature": "boundary",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.6554560065
+        },
+        {
+          "leaf": true,
+          "value": -1.0718969513
+        },
+        {
+          "leaf": true,
+          "value": -1.0953879286
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5766522884
+        },
+        {
+          "feature": "semanticEndingResolution",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.6168398857
+        },
+        {
+          "feature": "arcBoundaryCleanliness",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.6209106445
+        },
+        {
+          "leaf": true,
+          "value": 0.0352777477
+        },
+        {
+          "leaf": true,
+          "value": 1.0827570347
+        },
+        {
+          "feature": "semanticEndingMetaNoise",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.7198027968
+        },
+        {
+          "leaf": true,
+          "value": -1.1029843079
+        },
+        {
+          "leaf": true,
+          "value": 0.1927124014
+        },
+        {
+          "feature": "viewerResponse",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.6211743653
+        },
+        {
+          "feature": "semanticMetaNoise",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.6595096886
+        },
+        {
+          "leaf": true,
+          "value": -1.0660325016
+        },
+        {
+          "leaf": true,
+          "value": -1.1877269851
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.6097638607
+        },
+        {
+          "leaf": true,
+          "value": 0.8577559501
+        },
+        {
+          "leaf": true,
+          "value": -1.1409000802
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "viewerResponse",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.6991648674
+        },
+        {
+          "feature": "semanticResolution",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.7153521776
+        },
+        {
+          "feature": "semanticResolution",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.701530993
+        },
+        {
+          "leaf": true,
+          "value": 0.0287381774
+        },
+        {
+          "leaf": true,
+          "value": -0.8526352935
+        },
+        {
+          "feature": "arcTailRisk",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.320719853
+        },
+        {
+          "leaf": true,
+          "value": 1.0730671438
+        },
+        {
+          "leaf": true,
+          "value": -1.0688892039
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.5607229769
+        },
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.6775617599
+        },
+        {
+          "leaf": true,
+          "value": -1.0324709969
+        },
+        {
+          "leaf": true,
+          "value": -1.0398346243
+        },
+        {
+          "feature": "semanticTarget",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.6897215843
+        },
+        {
+          "leaf": true,
+          "value": -1.0907678258
+        },
+        {
+          "leaf": true,
+          "value": -1.0700593812
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "feedbackNegativeScore",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.406107381
+        },
+        {
+          "feature": "boundary",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.8712839782
+        },
+        {
+          "feature": "boundary",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.7791640162
+        },
+        {
+          "leaf": true,
+          "value": -0.0051325203
+        },
+        {
+          "leaf": true,
+          "value": 1.0761016016
+        },
+        {
+          "feature": "arcCompleteness",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.5474105477
+        },
+        {
+          "leaf": true,
+          "value": -1.0655985736
+        },
+        {
+          "leaf": true,
+          "value": 1.0313870594
+        },
+        {
+          "feature": "semanticOpeningMetaNoise",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.6881831884
+        },
+        {
+          "feature": "semanticTarget",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.6806279719
+        },
+        {
+          "leaf": true,
+          "value": 1.0270290354
+        },
+        {
+          "leaf": true,
+          "value": 1.0424408579
+        },
+        {
+          "leaf": true,
+          "value": 1.1010547813
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "userSaysHasDevelopment",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5
+        },
+        {
+          "feature": "evidencePatternSearch",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.5
+        },
+        {
+          "feature": "evidenceMetaPrelude",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": -0.1606762599
+        },
+        {
+          "leaf": true,
+          "value": -1.1625961421
+        },
+        {
+          "feature": "semanticEndingMetaNoise",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.6382784843
+        },
+        {
+          "leaf": true,
+          "value": 1.0695009044
+        },
+        {
+          "leaf": true,
+          "value": 0.0088798452
+        },
+        {
+          "feature": "feedbackPositiveRange",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.2348377258
+        },
+        {
+          "feature": "userSaysSmoothEnding",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": 1.0360185388
+        },
+        {
+          "leaf": true,
+          "value": -0.0488419954
+        },
+        {
+          "leaf": true,
+          "value": 1.0509587508
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "viewerResponse",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.6991648674
+        },
+        {
+          "feature": "semanticEndingMetaNoise",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.7198027968
+        },
+        {
+          "feature": "userSaysHasConclusion",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": -0.1057105108
+        },
+        {
+          "leaf": true,
+          "value": 0.3383641951
+        },
+        {
+          "feature": "semanticDirectAnswer",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.656611532
+        },
+        {
+          "leaf": true,
+          "value": 1.071451253
+        },
+        {
+          "leaf": true,
+          "value": -1.0536210051
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.5607229769
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.2673339248
+        },
+        {
+          "leaf": true,
+          "value": -1.0286775982
+        },
+        {
+          "leaf": true,
+          "value": -1.0363869951
+        },
+        {
+          "feature": "arcBoundaryCleanliness",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.5300438255
+        },
+        {
+          "leaf": true,
+          "value": -1.065845048
+        },
+        {
+          "leaf": true,
+          "value": -1.0855002034
+        }
+      ],
+      "weight": 0.055
+    },
+    {
+      "nodes": [
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 1,
+          "right": 8,
+          "threshold": 0.5766522884
+        },
+        {
+          "feature": "semanticEndingResolution",
+          "leaf": false,
+          "left": 2,
+          "right": 5,
+          "threshold": 0.6168398857
+        },
+        {
+          "feature": "arcBoundaryCleanliness",
+          "leaf": false,
+          "left": 3,
+          "right": 4,
+          "threshold": 0.6209106445
+        },
+        {
+          "leaf": true,
+          "value": 0.0341853744
+        },
+        {
+          "leaf": true,
+          "value": 1.0738770114
+        },
+        {
+          "feature": "semanticEndingMetaNoise",
+          "leaf": false,
+          "left": 6,
+          "right": 7,
+          "threshold": 0.7198027968
+        },
+        {
+          "leaf": true,
+          "value": -1.0928924954
+        },
+        {
+          "leaf": true,
+          "value": 0.1817488482
+        },
+        {
+          "feature": "viewerResponse",
+          "leaf": false,
+          "left": 9,
+          "right": 12,
+          "threshold": 0.6211743653
+        },
+        {
+          "feature": "evidencePatternSearch",
+          "leaf": false,
+          "left": 10,
+          "right": 11,
+          "threshold": 0.5
+        },
+        {
+          "leaf": true,
+          "value": -1.0614502884
+        },
+        {
+          "leaf": true,
+          "value": -1.1751488775
+        },
+        {
+          "feature": "arcConclusion",
+          "leaf": false,
+          "left": 13,
+          "right": 14,
+          "threshold": 0.6097638607
+        },
+        {
+          "leaf": true,
+          "value": 0.8451730997
+        },
+        {
+          "leaf": true,
+          "value": -1.1305750977
+        }
+      ],
+      "weight": 0.055
+    }
+  ]
+}

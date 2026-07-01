@@ -18,6 +18,7 @@ struct ReviewScoringPreparationResult {
 	QString summary;
 	QString contentId;
 	QStringList contentIdAliases;
+	QString resolvedProfileId;
 	QJsonArray candidateDiagnostics;
 };
 

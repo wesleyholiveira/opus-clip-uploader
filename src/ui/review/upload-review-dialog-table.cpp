@@ -1,9 +1,10 @@
 #include <obs-module.h>
-#include <obs-frontend-api.h>
-#include <plugin-support.h>
 
 #include "ui/upload-review-dialog.hpp"
 
+#include "curation/curation-preset-profile.hpp"
+
+#include "ui/review/review-clip-table-widget.hpp"
 #include "ui/review/upload-review-dialog-utils.hpp"
 #include "ui/ui-common.hpp"
 #include "ui/video-marker-editor.hpp"
@@ -40,9 +41,9 @@ void UploadReviewDialog::refreshClipTable(const QVector<ClipDuration> &ranges)
 	Curation::Feedback::FeedbackRangeMemory persistedReviewMemory;
 	{
 		const CurationSettings settings = curationSettings();
-		QString presetId = settings.curationPreset.trimmed();
-		if (presetId.isEmpty())
-			presetId = QStringLiteral("viewer_message_response");
+		QString presetId = !lastSemanticSuggestionTrainingProfile.trimmed().isEmpty()
+					   ? lastSemanticSuggestionTrainingProfile.trimmed()
+					   : Curation::resolvePresetProfileId(settings, settings.aiPrompt);
 		QStringList contentIds;
 		const QString fileContentId = Curation::Feedback::CurationFeedbackStore::fileContentId(videoPath);
 		if (!fileContentId.isEmpty())
@@ -163,7 +164,13 @@ void UploadReviewDialog::refreshClipTable(const QVector<ClipDuration> &ranges)
 		const QString reason = diagnosticReasonLabel(diagnostic);
 		const double finalScore = diagnostic.value(QStringLiteral("final_score")).toDouble(0.0);
 		const QString state = diagnosticReviewState(i);
-		const QString stateLabel = diagnosticStateLabel(state);
+		int pendingSuggestedIndex = -1;
+		const QString pendingDecision =
+			state.trimmed().isEmpty()
+				? this->pendingExplicitFeedbackDecisionForRange(range, &pendingSuggestedIndex)
+				: QString{};
+		const QString displayState = !state.trimmed().isEmpty() ? state : pendingDecision.trimmed().toLower();
+		const QString stateLabel = diagnosticStateLabel(displayState);
 
 		auto *markerItem =
 			new QTableWidgetItem(QStringLiteral("Diagnostic #%1  [%2%3]  %4 → %5  (%6s)  %7  final=%8")
@@ -203,16 +210,19 @@ void UploadReviewDialog::refreshClipTable(const QVector<ClipDuration> &ranges)
 		feedbackLayout->setContentsMargins(2, 0, 2, 0);
 		feedbackLayout->setSpacing(4);
 		const QString persistedDecision =
-			state.trimmed().isEmpty() ? persistedFeedbackDecisionForRange(range, persistedReviewMemory)
-						  : QString{};
-		const bool alreadyReviewed = !state.trimmed().isEmpty() || !persistedDecision.trimmed().isEmpty();
+			displayState.trimmed().isEmpty()
+				? persistedFeedbackDecisionForRange(range, persistedReviewMemory)
+				: QString{};
+		const bool alreadyReviewed = !displayState.trimmed().isEmpty() ||
+					     !persistedDecision.trimmed().isEmpty();
 		if (alreadyReviewed) {
 			startItem->setFlags(startItem->flags() & ~Qt::ItemIsEditable);
 			endItem->setFlags(endItem->flags() & ~Qt::ItemIsEditable);
 			startItem->setToolTip(QStringLiteral(
 				"This reviewed diagnostic/probe is locked. It cannot be edited or rated again in this session."));
 			endItem->setToolTip(startItem->toolTip());
-			const QString displayDecision = !state.trimmed().isEmpty() ? state : persistedDecision;
+			const QString displayDecision = !displayState.trimmed().isEmpty() ? displayState
+											  : persistedDecision;
 			auto *reviewedLabel = new QLabel(reviewDecisionDisplayLabel(displayDecision), feedbackWidget);
 			reviewedLabel->setToolTip(QStringLiteral(
 				"This diagnostic/probe already has feedback saved or pending. It is locked to avoid asking for feedback twice."));
@@ -562,9 +572,9 @@ void UploadReviewDialog::applyEditedRangeTime(int row, int column, const QString
 		return;
 	{
 		const CurationSettings settings = curationSettings();
-		QString presetId = settings.curationPreset.trimmed();
-		if (presetId.isEmpty())
-			presetId = QStringLiteral("viewer_message_response");
+		QString presetId = !lastSemanticSuggestionTrainingProfile.trimmed().isEmpty()
+					   ? lastSemanticSuggestionTrainingProfile.trimmed()
+					   : Curation::resolvePresetProfileId(settings, settings.aiPrompt);
 		QStringList contentIds;
 		const QString fileContentId = Curation::Feedback::CurationFeedbackStore::fileContentId(videoPath);
 		if (!fileContentId.isEmpty())
@@ -709,7 +719,9 @@ void UploadReviewDialog::removeSelectedRangeWithoutFeedbackDecision()
 		return;
 
 	QVector<ClipDuration> keptRanges;
+	QVector<ClipDuration> removedRanges;
 	keptRanges.reserve(ranges.size());
+	removedRanges.reserve(rowsToRemove.size());
 	int removedCount = 0;
 	for (int i = 0; i < ranges.size(); ++i) {
 		const bool shouldRemove = std::binary_search(rowsToRemove.constBegin(), rowsToRemove.constEnd(), i);
@@ -718,7 +730,9 @@ void UploadReviewDialog::removeSelectedRangeWithoutFeedbackDecision()
 			continue;
 		}
 
-		const int suggestedIndex = suggestedIndexForRange(ranges.at(i));
+		const ClipDuration removedRange = ranges.at(i);
+		removedRanges.append(removedRange);
+		const int suggestedIndex = suggestedIndexForRange(removedRange);
 		if (suggestedIndex >= 0) {
 			explicitReviewDecisions.remove(suggestedIndex);
 			explicitReviewFeedbackDetails.remove(suggestedIndex);
@@ -728,6 +742,21 @@ void UploadReviewDialog::removeSelectedRangeWithoutFeedbackDecision()
 
 	if (removedCount <= 0)
 		return;
+
+	const Curation::Feedback::FeedbackPurgeResult purgeResult =
+		Curation::Feedback::CurationFeedbackStore::removeFeedbackForRanges(
+			videoPath, curationSettings(), removedRanges, QStringLiteral("review_marker_deleted"));
+	if (purgeResult.attempted && !purgeResult.succeeded) {
+		blog(LOG_WARNING,
+		     "[clip-cropper] Failed to remove persisted feedback for deleted review marker. video=%s error=%s removedRanges=%d",
+		     videoPath.toUtf8().constData(), purgeResult.error.toUtf8().constData(),
+		     static_cast<int>(removedRanges.size()));
+	} else if (purgeResult.recordsRemoved > 0) {
+		blog(LOG_INFO,
+		     "[clip-cropper] Deleted review marker also removed persisted feedback records. video=%s ranges=%d recordsRemoved=%d",
+		     videoPath.toUtf8().constData(), static_cast<int>(removedRanges.size()),
+		     purgeResult.recordsRemoved);
+	}
 
 	boundaryFeedbackSaved = false;
 	if (finishReviewButton) {

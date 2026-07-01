@@ -12,6 +12,7 @@
 #include <QFileInfo>
 #include <QObject>
 #include <QPointer>
+#include <QStandardPaths>
 #include <QWidget>
 
 #include <cmath>
@@ -175,6 +176,39 @@ int estimate_opus_credits(double durationSeconds)
 QString get_opus_api_key()
 {
 	return PluginConfig::getValue("opus_api_key").trimmed();
+}
+
+bool opus_upload_enabled()
+{
+	const QString value = PluginConfig::getValue("opus_upload_enabled", QStringLiteral("true")).trimmed().toLower();
+	return !(value == QStringLiteral("false") || value == QStringLiteral("0") ||
+		 value == QStringLiteral("no") || value == QStringLiteral("off"));
+}
+
+QString default_local_export_directory()
+{
+	QString baseDir = QStandardPaths::writableLocation(QStandardPaths::MoviesLocation);
+	if (baseDir.trimmed().isEmpty())
+		baseDir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+	if (baseDir.trimmed().isEmpty())
+		baseDir = QDir::homePath();
+	return QDir(baseDir).filePath(QStringLiteral("Clip Cropper Exports"));
+}
+
+QString local_export_directory()
+{
+	QString configured = PluginConfig::getValue("local_export_directory").trimmed();
+	if (configured.isEmpty())
+		configured = default_local_export_directory();
+	return QDir::fromNativeSeparators(configured);
+}
+
+QString video_quality_preset()
+{
+	const QString value = PluginConfig::getValue("video_quality", QStringLiteral("medium")).trimmed().toLower();
+	if (value == QStringLiteral("high") || value == QStringLiteral("medium") || value == QStringLiteral("low"))
+		return value;
+	return QStringLiteral("medium");
 }
 
 QStringList whisper_model_search_paths(const QString &modelFile)

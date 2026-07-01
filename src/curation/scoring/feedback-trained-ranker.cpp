@@ -1,6 +1,7 @@
 #include "curation/scoring/feedback-trained-ranker.hpp"
 
 #include "utils/config.hpp"
+#include "curation/curation-preset-profile.hpp"
 
 #include <QDir>
 #include <QFile>
@@ -65,9 +66,35 @@ QString FeedbackTrainedRanker::defaultModelPath()
 		.filePath(QStringLiteral("feedback-ranker.json"));
 }
 
+QString FeedbackTrainedRanker::modelPathForPreset(const QString &presetId)
+{
+	const QString profile = Curation::normalizePresetProfileId(presetId);
+	const QString profileKey = QStringLiteral("%1.%2").arg(QString::fromLatin1(CONFIG_FEEDBACK_RANKER_MODEL_PATH), profile);
+	const QString configuredProfile = PluginConfig::getValue(profileKey, QString()).trimmed();
+	if (!configuredProfile.isEmpty())
+		return configuredProfile;
+
+	const QString profileGbdt = Curation::Feedback::CurationFeedbackStore::feedbackRankerModelPathForProfile(
+		profile, QStringLiteral("feedback-ranker-gbdt.json"));
+	if (QFile::exists(profileGbdt))
+		return profileGbdt;
+
+	const QString profileLogistic = Curation::Feedback::CurationFeedbackStore::feedbackRankerModelPathForProfile(
+		profile, QStringLiteral("feedback-ranker.json"));
+	if (QFile::exists(profileLogistic))
+		return profileLogistic;
+
+	return defaultModelPath();
+}
+
 FeedbackTrainedRankerModel FeedbackTrainedRanker::loadDefaultModel()
 {
 	return loadModel(defaultModelPath());
+}
+
+FeedbackTrainedRankerModel FeedbackTrainedRanker::loadModelForPreset(const QString &presetId)
+{
+	return loadModel(modelPathForPreset(presetId));
 }
 
 FeedbackTrainedRankerModel FeedbackTrainedRanker::loadModel(const QString &path)
@@ -529,15 +556,18 @@ QVector<ClipCandidate> FeedbackTrainedRanker::apply(QVector<ClipCandidate> candi
 {
 	if (candidates.isEmpty() || !memory.loaded)
 		return candidates;
-	const FeedbackTrainedRankerModel model = loadDefaultModel();
+	const FeedbackTrainedRankerModel model = loadModelForPreset(presetId);
 	if (!model.loaded)
 		return candidates;
 	if (!model.presetId.isEmpty() && !presetId.isEmpty() && model.presetId != presetId &&
 	    model.presetId != QStringLiteral("all"))
 		return candidates;
 
+	const bool softShadowGbdt = model.modelType == QStringLiteral("gbdt_tree_ensemble");
 	int scored = 0;
 	int rejected = 0;
+	int softBoosted = 0;
+	int softPenalized = 0;
 	double best = 0.0;
 	for (ClipCandidate &candidate : candidates) {
 		FeedbackSimilarityFeatures features;
@@ -555,7 +585,69 @@ QVector<ClipCandidate> FeedbackTrainedRanker::apply(QVector<ClipCandidate> candi
 		candidate.evidence.append(
 			QStringLiteral("feedback_trained_ranker_model_records:%1").arg(model.records));
 		candidate.evidence.append(QStringLiteral("feedback_trained_ranker_model_type:%1").arg(model.modelType));
+		candidate.evidence.append(QStringLiteral("feedback_trained_ranker_model_profile:%1").arg(model.presetId.isEmpty() ? QStringLiteral("all") : model.presetId));
 		candidate.evidence.removeDuplicates();
+
+		const double acceptThreshold = std::clamp(model.acceptAbove, 0.42, 0.72);
+		const double strongThreshold = std::max(model.strongAcceptAbove, 0.76);
+		const bool structurallyBacked =
+			!candidate.rejectedByQualityGate &&
+			(candidate.scores.arcCompleteness >= 0.28 || candidate.scores.semanticViewerMessage >= 0.70 ||
+			 candidate.startsNearViewerCue ||
+			 rankerHasEvidence(candidate, QStringLiteral("exchange_arc_state_machine:valid")));
+
+		if (softShadowGbdt) {
+			candidate.evidence.append(QStringLiteral("feedback_trained_ranker_mode:soft_shadow"));
+
+			const double beforeFinal = candidate.scores.final;
+			const double veryLowThreshold = (model.rejectBelow > 0.0) ? std::min(model.rejectBelow, 0.08) : 0.08;
+			bool boosted = false;
+			bool penalized = false;
+
+			if (positiveGroundTruth) {
+				candidate.scores.final = std::max(0.88, std::max(candidate.scores.final, learnedScore));
+				candidate.evidence.append(QStringLiteral("feedback_trained_ranker_soft_ground_truth_boost"));
+				boosted = candidate.scores.final > beforeFinal + 1e-6;
+			} else if ((positiveBacked || structurallyBacked) && !negativeContaminated && !hardContextBlocked &&
+				   learnedScore >= strongThreshold) {
+				candidate.scores.final = bounded(candidate.scores.final + std::min(0.06, (1.0 - candidate.scores.final) * 0.18));
+				candidate.evidence.append(QStringLiteral("feedback_trained_ranker_soft_strong_boost"));
+				boosted = candidate.scores.final > beforeFinal + 1e-6;
+			} else if ((positiveBacked || structurallyBacked) && !negativeContaminated && !hardContextBlocked &&
+				   learnedScore >= acceptThreshold) {
+				candidate.scores.final = bounded(candidate.scores.final + std::min(0.035, (1.0 - candidate.scores.final) * 0.10));
+				candidate.evidence.append(QStringLiteral("feedback_trained_ranker_soft_boost"));
+				boosted = candidate.scores.final > beforeFinal + 1e-6;
+			} else if (!positiveGroundTruth && learnedScore < veryLowThreshold) {
+				candidate.scores.final = bounded(candidate.scores.final - std::min(0.04, candidate.scores.final * 0.08));
+				candidate.evidence.append(QStringLiteral("feedback_trained_ranker_soft_low_score_penalty"));
+				penalized = candidate.scores.final + 1e-6 < beforeFinal;
+			}
+
+			if (!positiveGroundTruth && negativeContaminated) {
+				candidate.evidence.append(QStringLiteral("feedback_trained_ranker_soft_negative_contamination"));
+				if (learnedScore < acceptThreshold) {
+					const double beforePenalty = candidate.scores.final;
+					candidate.scores.final = bounded(candidate.scores.final - std::min(0.025, candidate.scores.final * 0.05));
+					penalized = penalized || candidate.scores.final + 1e-6 < beforePenalty;
+				}
+			}
+			if (!positiveGroundTruth && hardContextBlocked) {
+				candidate.evidence.append(QStringLiteral("feedback_trained_ranker_soft_context_blocker"));
+				if (!positiveBacked && learnedScore < strongThreshold) {
+					const double beforePenalty = candidate.scores.final;
+					candidate.scores.final = bounded(candidate.scores.final - std::min(0.025, candidate.scores.final * 0.05));
+					penalized = penalized || candidate.scores.final + 1e-6 < beforePenalty;
+				}
+			}
+
+			if (boosted)
+				++softBoosted;
+			if (penalized)
+				++softPenalized;
+			candidate.evidence.removeDuplicates();
+			continue;
+		}
 
 		if (hardContextBlocked && !positiveGroundTruth && !positiveBacked) {
 			candidate.rejectedByQualityGate = true;
@@ -591,13 +683,6 @@ QVector<ClipCandidate> FeedbackTrainedRanker::apply(QVector<ClipCandidate> candi
 		candidate.scores.final = positiveGroundTruth
 						 ? std::max(0.88, std::max(candidate.scores.final, learnedScore))
 						 : bounded(blended);
-		const double acceptThreshold = std::clamp(model.acceptAbove, 0.42, 0.72);
-		const double strongThreshold = std::max(model.strongAcceptAbove, 0.76);
-		const bool structurallyBacked =
-			!candidate.rejectedByQualityGate &&
-			(candidate.scores.arcCompleteness >= 0.28 || candidate.scores.semanticViewerMessage >= 0.70 ||
-			 candidate.startsNearViewerCue ||
-			 rankerHasEvidence(candidate, QStringLiteral("exchange_arc_state_machine:valid")));
 		if ((positiveBacked || !hardContextBlocked) && learnedScore >= acceptThreshold &&
 		    !(negativeContaminated && !positiveGroundTruth) && (positiveBacked || structurallyBacked)) {
 			candidate.evidence.append(QStringLiteral("feedback_trained_ranker_accept"));
@@ -611,9 +696,10 @@ QVector<ClipCandidate> FeedbackTrainedRanker::apply(QVector<ClipCandidate> candi
 	}
 
 	blog(LOG_INFO,
-	     "[clip-cropper] Feedback-trained ranker applied. video=%s model=%s candidates=%d rejected=%d best=%.2f records=%d positives=%d negatives=%d",
-	     videoPath.toUtf8().constData(), model.path.toUtf8().constData(), scored, rejected, best, model.records,
-	     model.positives, model.negatives);
+	     "[clip-cropper] Feedback-trained ranker applied. video=%s model=%s mode=%s candidates=%d rejected=%d softBoosted=%d softPenalized=%d best=%.2f records=%d positives=%d negatives=%d",
+	     videoPath.toUtf8().constData(), model.path.toUtf8().constData(),
+	     softShadowGbdt ? "soft_shadow" : "active", scored, rejected, softBoosted, softPenalized, best,
+	     model.records, model.positives, model.negatives);
 	return candidates;
 }
 

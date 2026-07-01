@@ -58,9 +58,17 @@ void TimelineWidget::setSelectedMarkerIndex(int index)
 	update();
 }
 
+void TimelineWidget::setSelectedClipRangeIndex(int index)
+{
+	selectedClipRangeIndex = index >= 0 && index < clipRanges.size() ? index : -1;
+	update();
+}
+
 void TimelineWidget::setClipRanges(const QVector<ClipDuration> &newRanges)
 {
 	clipRanges = newRanges;
+	if (selectedClipRangeIndex >= clipRanges.size())
+		selectedClipRangeIndex = -1;
 	update();
 }
 
@@ -85,7 +93,8 @@ void TimelineWidget::paintEvent(QPaintEvent *)
 	const qint64 viewStart = visibleStart();
 	const qint64 viewEnd = visibleEnd();
 	const qreal scale = zoomScale();
-	for (const auto &range : clipRanges) {
+	for (int i = 0; i < clipRanges.size(); ++i) {
+		const auto &range = clipRanges.at(i);
 		const qint64 startMs = static_cast<qint64>(range.startSec * 1000.0);
 		const qint64 endMs = static_cast<qint64>(range.endSec * 1000.0);
 		if (durationMs <= 0 || endMs <= startMs || endMs < viewStart || startMs > viewEnd)
@@ -94,8 +103,9 @@ void TimelineWidget::paintEvent(QPaintEvent *)
 		QRectF rangeRect = track.adjusted(0.0, -4.0 * scale, 0.0, 4.0 * scale);
 		rangeRect.setLeft(xForPosition(std::max(startMs, viewStart)));
 		rangeRect.setRight(xForPosition(std::min(endMs, viewEnd)));
-		painter.setPen(QPen(QColor(255, 210, 60), 2));
-		painter.setBrush(QColor(255, 193, 7, 170));
+		const bool selectedRange = i == selectedClipRangeIndex;
+		painter.setPen(QPen(selectedRange ? QColor(255, 255, 255) : QColor(255, 210, 60), selectedRange ? 3 : 2));
+		painter.setBrush(selectedRange ? QColor(255, 213, 79, 210) : QColor(255, 193, 7, 170));
 		painter.drawRoundedRect(rangeRect, rangeRect.height() / 2.0, rangeRect.height() / 2.0);
 		painter.setPen(Qt::NoPen);
 	}
@@ -154,7 +164,23 @@ void TimelineWidget::mousePressEvent(QMouseEvent *event)
 		return;
 	}
 
+	const int rangeIndex = clipRangeIndexAt(event->position().x(), event->position().y());
+	if (rangeIndex >= 0) {
+		draggingPosition = false;
+		draggingMarker = false;
+		selectedMarkerIndex = -1;
+		selectedClipRangeIndex = rangeIndex;
+		update();
+		if (markerSelected)
+			markerSelected(-1);
+		if (clipRangeSelected)
+			clipRangeSelected(rangeIndex);
+		event->accept();
+		return;
+	}
+
 	selectedMarkerIndex = -1;
+	selectedClipRangeIndex = -1;
 	if (markerSelected)
 		markerSelected(-1);
 	draggingPosition = true;
@@ -325,6 +351,35 @@ int TimelineWidget::markerIndexAt(qreal x, qreal y) const
 	}
 
 	return bestIndex;
+}
+
+int TimelineWidget::clipRangeIndexAt(qreal x, qreal y) const
+{
+	if (durationMs <= 0 || clipRanges.isEmpty())
+		return -1;
+
+	const QRectF track = trackRect();
+	const qint64 viewStart = visibleStart();
+	const qint64 viewEnd = visibleEnd();
+	const qreal scale = zoomScale();
+	const QPointF point(x, y);
+
+	for (int i = 0; i < clipRanges.size(); ++i) {
+		const ClipDuration &range = clipRanges.at(i);
+		const qint64 startMs = static_cast<qint64>(range.startSec * 1000.0);
+		const qint64 endMs = static_cast<qint64>(range.endSec * 1000.0);
+		if (endMs <= startMs || endMs < viewStart || startMs > viewEnd)
+			continue;
+
+		QRectF rangeRect = track.adjusted(0.0, -8.0 * scale, 0.0, 8.0 * scale);
+		rangeRect.setLeft(xForPosition(std::max(startMs, viewStart)));
+		rangeRect.setRight(xForPosition(std::min(endMs, viewEnd)));
+		rangeRect = rangeRect.normalized();
+		if (rangeRect.contains(point))
+			return i;
+	}
+
+	return -1;
 }
 
 void TimelineWidget::setPositionFromMouse(qreal x, bool forceSeek)

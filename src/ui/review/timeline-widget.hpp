@@ -21,11 +21,13 @@ public:
 	qint64 position() const;
 	void setMarkers(const QList<qint64> &newMarkers);
 	void setSelectedMarkerIndex(int index);
+	void setSelectedClipRangeIndex(int index);
 	void setClipRanges(const QVector<ClipDuration> &newRanges);
 
 	std::function<void(qint64)> previewSeekRequested;
 	std::function<void(qint64)> commitSeekRequested;
 	std::function<void(int)> markerSelected;
+	std::function<void(int)> clipRangeSelected;
 	std::function<void(int, qint64)> markerMovePreviewRequested;
 	std::function<void(int, qint64)> markerMoveCommitted;
 
@@ -46,6 +48,7 @@ private:
 	bool draggingPosition = false;
 	bool draggingMarker = false;
 	int selectedMarkerIndex = -1;
+	int selectedClipRangeIndex = -1;
 	QElapsedTimer seekThrottle;
 
 	QRectF trackRect() const;
@@ -59,6 +62,7 @@ private:
 	qreal xForPosition(qint64 value) const;
 	qint64 positionForX(qreal x) const;
 	int markerIndexAt(qreal x, qreal y) const;
+	int clipRangeIndexAt(qreal x, qreal y) const;
 	void setPositionFromMouse(qreal x, bool forceSeek);
 	void setMarkerFromMouse(qreal x, bool commit);
 	void zoomAt(qreal x, int wheelDelta);

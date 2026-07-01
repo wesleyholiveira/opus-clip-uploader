@@ -35,6 +35,8 @@ public slots:
 	void seekToSeconds(double seconds);
 	void seekToMilliseconds(qint64 positionMs);
 	void addMarkerAtCurrentPosition();
+	void undoMarkerAction();
+	void redoMarkerAction();
 	void removeSelectedRange();
 	void removeSelectedMarker();
 	void deleteSelectedMarkerOrRange();
@@ -53,6 +55,7 @@ public slots:
 
 signals:
 	void rangesChanged(const QVector<ClipDuration> &ranges);
+	void rangeSelected(int index);
 	void positionChanged(qint64 positionMs);
 	void durationChanged(qint64 durationMs);
 	void reviewRequested();
@@ -87,12 +90,27 @@ private:
 	PlaybackIconButton *playPauseControl = nullptr;
 	QToolButton *fullscreenControl = nullptr;
 	QPushButton *reviewActionButton = nullptr;
+	QPushButton *undoActionButton = nullptr;
+	QPushButton *redoActionButton = nullptr;
 	QLabel *currentTimeLabel = nullptr;
 	QLabel *durationTimeLabel = nullptr;
 	QLabel *selectedClipLabel = nullptr;
 	QLabel *seekStatusLabel = nullptr;
 
 	QVector<double> clipMarkersSec;
+	bool hasPendingManualMarkerStart = false;
+	double pendingManualMarkerStartSec = 0.0;
+
+	struct MarkerEditorState {
+		QVector<double> markers;
+		bool hasPendingManualMarkerStart = false;
+		double pendingManualMarkerStartSec = 0.0;
+		int selectedRangeIndex = -1;
+		int selectedMarkerIndex = -1;
+	};
+	QVector<MarkerEditorState> undoStack;
+	QVector<MarkerEditorState> redoStack;
+	bool restoringMarkerHistory = false;
 
 	void setupShortcuts();
 	bool shouldHandleShortcut(const QKeySequence &sequence) const;
@@ -111,6 +129,13 @@ private:
 	void updateMarkerAtIndex(int index, double markerSec, bool commit);
 	void selectMarker(int index);
 	void clearSelectedMarker();
+	MarkerEditorState currentMarkerEditorState() const;
+	void restoreMarkerEditorState(const MarkerEditorState &state);
+	void pushUndoState();
+	void clearRedoStack();
+	void updateUndoRedoControls();
+	void setPendingManualMarkerStart(double startSec);
+	void clearPendingManualMarkerStart();
 	void loadSavedMarkers();
 	void saveMarkers() const;
 	QString markerConfigKey() const;

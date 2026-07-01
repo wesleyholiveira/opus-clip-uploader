@@ -12,21 +12,24 @@
 
 #include <utils/config.hpp>
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDir>
 #include <QDialog>
 #include <QDoubleSpinBox>
+#include <QFileDialog>
 #include <QFormLayout>
 #include <QFrame>
+#include <QGroupBox>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QSize>
 #include <QSpinBox>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QStandardPaths>
-#include <QTreeWidget>
-#include <QTreeWidgetItem>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -78,14 +81,16 @@ void open_settings_impl(void *private_data)
 
 	QDialog dialog(parent);
 	dialog.setWindowTitle(title);
-	dialog.resize(820, 620);
+	dialog.resize(920, 720);
 
 	QVBoxLayout *mainLayout = new QVBoxLayout(&dialog);
 	mainLayout->setContentsMargins(20, 20, 20, 12);
 	mainLayout->setSpacing(12);
 
 	QFormLayout *formLayout = new QFormLayout();
-	formLayout->setLabelAlignment(Qt::AlignLeft);
+	formLayout->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+	formLayout->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+	formLayout->setRowWrapPolicy(QFormLayout::WrapLongRows);
 
 	QLineEdit *apiKeyInput = new QLineEdit(&dialog);
 	apiKeyInput->setEchoMode(QLineEdit::Password);
@@ -94,6 +99,40 @@ void open_settings_impl(void *private_data)
 
 	formLayout->addRow(obsText("Settings.OpusApiKey"), apiKeyInput);
 
+	QCheckBox *opusUploadEnabledInput = new QCheckBox(obsText("Settings.OpusUploadEnabled"), &dialog);
+	opusUploadEnabledInput->setChecked(opus_upload_enabled());
+	opusUploadEnabledInput->setToolTip(obsText("Tooltip.OpusUploadEnabled"));
+	formLayout->addRow(QString(), opusUploadEnabledInput);
+
+	QWidget *localExportWidget = new QWidget(&dialog);
+	auto *localExportLayout = new QHBoxLayout(localExportWidget);
+	localExportLayout->setContentsMargins(0, 0, 0, 0);
+	localExportLayout->setSpacing(6);
+	QLineEdit *localExportDirectoryInput = new QLineEdit(localExportWidget);
+	localExportDirectoryInput->setText(local_export_directory());
+	localExportDirectoryInput->setPlaceholderText(default_local_export_directory());
+	localExportDirectoryInput->setToolTip(obsText("Tooltip.LocalExportDirectory"));
+	QPushButton *localExportBrowseButton = new QPushButton(obsText("Button.Browse"), localExportWidget);
+	localExportLayout->addWidget(localExportDirectoryInput, 1);
+	localExportLayout->addWidget(localExportBrowseButton);
+	formLayout->addRow(obsText("Settings.LocalExportDirectory"), localExportWidget);
+
+	QObject::connect(localExportBrowseButton, &QPushButton::clicked, &dialog, [&dialog, localExportDirectoryInput]() {
+		const QString startDir = localExportDirectoryInput->text().trimmed().isEmpty()
+			? default_local_export_directory()
+			: localExportDirectoryInput->text().trimmed();
+		const QString selected = QFileDialog::getExistingDirectory(&dialog, obsText("Dialog.SelectLocalExportDirectory"), startDir);
+		if (!selected.trimmed().isEmpty())
+			localExportDirectoryInput->setText(QDir::fromNativeSeparators(selected));
+	});
+
+	QComboBox *videoQualityInput = new QComboBox(&dialog);
+	videoQualityInput->addItem(obsText("Option.VideoQualityHigh"), QStringLiteral("high"));
+	videoQualityInput->addItem(obsText("Option.VideoQualityMedium"), QStringLiteral("medium"));
+	videoQualityInput->addItem(obsText("Option.VideoQualityLow"), QStringLiteral("low"));
+	set_combo_current_data(videoQualityInput, video_quality_preset(), 1);
+	videoQualityInput->setToolTip(obsText("Tooltip.VideoQuality"));
+	formLayout->addRow(obsText("Settings.VideoQuality"), videoQualityInput);
 
 	QComboBox *whisperModelInput = new QComboBox(&dialog);
 	whisperModelInput->addItem(obsText("WhisperModel.Tiny"), QStringLiteral("ggml-tiny.bin"));
@@ -104,49 +143,36 @@ void open_settings_impl(void *private_data)
 	set_combo_current_data(whisperModelInput, PluginConfig::getValue("whisper_model_file", "ggml-base.bin"), 1);
 	formLayout->addRow(obsText("Settings.WhisperModel"), whisperModelInput);
 
-	QTreeWidget *treeWidget = new QTreeWidget(&dialog);
-	treeWidget->setColumnCount(2);
-	treeWidget->setHeaderHidden(true);
-	treeWidget->setRootIsDecorated(true);
-	treeWidget->setItemsExpandable(true);
-	treeWidget->setAnimated(true);
-	treeWidget->setMinimumHeight(330);
-	treeWidget->setFrameShape(QFrame::NoFrame);
-	treeWidget->setAutoFillBackground(false);
-	treeWidget->setAttribute(Qt::WA_TranslucentBackground);
-	treeWidget->viewport()->setAutoFillBackground(false);
-	treeWidget->viewport()->setAttribute(Qt::WA_TranslucentBackground);
+	QScrollArea *advancedScrollArea = new QScrollArea(&dialog);
+	advancedScrollArea->setWidgetResizable(true);
+	advancedScrollArea->setFrameShape(QFrame::NoFrame);
+	advancedScrollArea->setMinimumHeight(300);
 
-	treeWidget->setStyleSheet(R"(
-	QTreeWidget {
-		background: transparent;
-		border: none;
-	}
-	QTreeWidget::viewport {
-		background: transparent;
-	}
-	QTreeWidget::item {
-		background: transparent;
-	}
-)");
+	QWidget *advancedContainer = new QWidget(advancedScrollArea);
+	QVBoxLayout *advancedLayout = new QVBoxLayout(advancedContainer);
+	advancedLayout->setContentsMargins(0, 0, 0, 0);
+	advancedLayout->setSpacing(10);
 
-	auto *advancedItem = new QTreeWidgetItem();
-	advancedItem->setText(0, obsText("AdvancedSettings"));
-	advancedItem->setExpanded(false);
-	treeWidget->addTopLevelItem(advancedItem);
+	auto createSection = [advancedContainer, advancedLayout](const QString &sectionTitle) -> QFormLayout * {
+		auto *group = new QGroupBox(sectionTitle, advancedContainer);
+		auto *layout = new QFormLayout(group);
+		layout->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+		layout->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+		layout->setRowWrapPolicy(QFormLayout::WrapLongRows);
+		layout->setHorizontalSpacing(12);
+		layout->setVerticalSpacing(8);
+		advancedLayout->addWidget(group);
+		return layout;
+	};
 
-	auto *brandItem = new QTreeWidgetItem(advancedItem);
-	brandItem->setText(0, obsText("Settings.BrandTemplateId"));
+	QFormLayout *advancedForm = createSection(obsText("AdvancedSettings"));
 
-	QLineEdit *brandTemplateIdInput = new QLineEdit(treeWidget);
+	QLineEdit *brandTemplateIdInput = new QLineEdit(advancedContainer);
 	brandTemplateIdInput->setPlaceholderText("Brand Template ID");
 	brandTemplateIdInput->setText(PluginConfig::getValue("opus_brand_template_id"));
-	treeWidget->setItemWidget(brandItem, 1, brandTemplateIdInput);
+	advancedForm->addRow(obsText("Settings.BrandTemplateId"), brandTemplateIdInput);
 
-	auto *resampleThresholdItem = new QTreeWidgetItem(advancedItem);
-	resampleThresholdItem->setText(0, obsText("Settings.UploadResampleThresholdPercent"));
-
-	QDoubleSpinBox *resampleThresholdInput = new QDoubleSpinBox(treeWidget);
+	QDoubleSpinBox *resampleThresholdInput = new QDoubleSpinBox(advancedContainer);
 	resampleThresholdInput->setRange(0.0, 100.0);
 	resampleThresholdInput->setDecimals(0);
 	resampleThresholdInput->setSingleStep(5.0);
@@ -158,12 +184,11 @@ void open_settings_impl(void *private_data)
 			.toDouble(&resampleThresholdOk);
 	resampleThresholdInput->setValue(resampleThresholdOk ? savedResampleThreshold : 60.0);
 	resampleThresholdInput->setToolTip(obsText("Tooltip.UploadResampleThresholdPercent"));
-	treeWidget->setItemWidget(resampleThresholdItem, 1, resampleThresholdInput);
+	advancedForm->addRow(obsText("Settings.UploadResampleThresholdPercent"), resampleThresholdInput);
 
-	auto *whisperXBackendItem = new QTreeWidgetItem(advancedItem);
-	whisperXBackendItem->setText(0, obsText("Settings.WhisperXBackend"));
+	QFormLayout *whisperXForm = createSection(obsText("Settings.SectionWhisperX"));
 
-	QComboBox *whisperXBackendInput = new QComboBox(treeWidget);
+	QComboBox *whisperXBackendInput = new QComboBox(advancedContainer);
 	whisperXBackendInput->addItem(obsText("Combobox.Disabled"),
 					 QString::fromLatin1(Transcription::WHISPERX_BACKEND_DISABLED));
 	whisperXBackendInput->addItem(obsText("Combobox.WhisperXAlignmentOnly"),
@@ -173,142 +198,104 @@ void open_settings_impl(void *private_data)
 	set_combo_current_data(whisperXBackendInput,
 		PluginConfig::getValue(QString::fromLatin1(Transcription::CONFIG_WHISPERX_BACKEND),
 			QString::fromLatin1(Transcription::WHISPERX_BACKEND_DISABLED)), 0);
-	treeWidget->setItemWidget(whisperXBackendItem, 1, whisperXBackendInput);
+	whisperXForm->addRow(obsText("Settings.WhisperXBackend"), whisperXBackendInput);
 
-	auto *whisperXPythonPathItem = new QTreeWidgetItem(advancedItem);
-	whisperXPythonPathItem->setText(0, obsText("Settings.WhisperXPythonPath"));
-
-	QLineEdit *whisperXPythonPathInput = new QLineEdit(treeWidget);
+	QLineEdit *whisperXPythonPathInput = new QLineEdit(advancedContainer);
 	whisperXPythonPathInput->setPlaceholderText(QStringLiteral("C:/path/to/.venv-whisperx/Scripts/python.exe"));
 	whisperXPythonPathInput->setText(PluginConfig::getValue(
 		QString::fromLatin1(Transcription::CONFIG_WHISPERX_PYTHON_PATH)));
-	treeWidget->setItemWidget(whisperXPythonPathItem, 1, whisperXPythonPathInput);
+	whisperXForm->addRow(obsText("Settings.WhisperXPythonPath"), whisperXPythonPathInput);
 
-	auto *whisperXWorkerPathItem = new QTreeWidgetItem(advancedItem);
-	whisperXWorkerPathItem->setText(0, obsText("Settings.WhisperXWorkerPath"));
-
-	QLineEdit *whisperXWorkerPathInput = new QLineEdit(treeWidget);
+	QLineEdit *whisperXWorkerPathInput = new QLineEdit(advancedContainer);
 	whisperXWorkerPathInput->setPlaceholderText(Transcription::defaultWhisperXWorkerPath());
 	whisperXWorkerPathInput->setText(PluginConfig::getValue(
 		QString::fromLatin1(Transcription::CONFIG_WHISPERX_WORKER_PATH),
 		Transcription::defaultWhisperXWorkerPath()));
-	treeWidget->setItemWidget(whisperXWorkerPathItem, 1, whisperXWorkerPathInput);
+	whisperXForm->addRow(obsText("Settings.WhisperXWorkerPath"), whisperXWorkerPathInput);
 
-	auto *whisperXDeviceItem = new QTreeWidgetItem(advancedItem);
-	whisperXDeviceItem->setText(0, obsText("Settings.WhisperXDevice"));
-
-	QComboBox *whisperXDeviceInput = new QComboBox(treeWidget);
+	QComboBox *whisperXDeviceInput = new QComboBox(advancedContainer);
 	whisperXDeviceInput->addItem(QStringLiteral("CUDA/GPU"), QStringLiteral("cuda"));
 	whisperXDeviceInput->addItem(QStringLiteral("CPU"), QStringLiteral("cpu"));
 	set_combo_current_data(whisperXDeviceInput, PluginConfig::getValue(
 		QString::fromLatin1(Transcription::CONFIG_WHISPERX_DEVICE), QStringLiteral("cuda")), 0);
-	treeWidget->setItemWidget(whisperXDeviceItem, 1, whisperXDeviceInput);
+	whisperXForm->addRow(obsText("Settings.WhisperXDevice"), whisperXDeviceInput);
 
-	auto *whisperXFfmpegPathItem = new QTreeWidgetItem(advancedItem);
-	whisperXFfmpegPathItem->setText(0, obsText("Settings.WhisperXFfmpegPath"));
-
-	QLineEdit *whisperXFfmpegPathInput = new QLineEdit(treeWidget);
+	QLineEdit *whisperXFfmpegPathInput = new QLineEdit(advancedContainer);
 	whisperXFfmpegPathInput->setPlaceholderText(QStringLiteral("Optional ffmpeg.exe or ffmpeg bin directory"));
 	whisperXFfmpegPathInput->setText(PluginConfig::getValue(
 		QString::fromLatin1(Transcription::CONFIG_WHISPERX_FFMPEG_PATH)));
-	treeWidget->setItemWidget(whisperXFfmpegPathItem, 1, whisperXFfmpegPathInput);
+	whisperXForm->addRow(obsText("Settings.WhisperXFfmpegPath"), whisperXFfmpegPathInput);
 
-	auto *whisperXModelItem = new QTreeWidgetItem(advancedItem);
-	whisperXModelItem->setText(0, obsText("Settings.WhisperXModel"));
-
-	QLineEdit *whisperXModelInput = new QLineEdit(treeWidget);
+	QLineEdit *whisperXModelInput = new QLineEdit(advancedContainer);
 	whisperXModelInput->setPlaceholderText(QStringLiteral("large-v3"));
 	whisperXModelInput->setText(PluginConfig::getValue(
 		QString::fromLatin1(Transcription::CONFIG_WHISPERX_MODEL), QStringLiteral("large-v3")));
-	treeWidget->setItemWidget(whisperXModelItem, 1, whisperXModelInput);
+	whisperXForm->addRow(obsText("Settings.WhisperXModel"), whisperXModelInput);
 
-	auto *whisperXComputeTypeItem = new QTreeWidgetItem(advancedItem);
-	whisperXComputeTypeItem->setText(0, obsText("Settings.WhisperXComputeType"));
-
-	QComboBox *whisperXComputeTypeInput = new QComboBox(treeWidget);
+	QComboBox *whisperXComputeTypeInput = new QComboBox(advancedContainer);
 	whisperXComputeTypeInput->addItem(QStringLiteral("float16"), QStringLiteral("float16"));
 	whisperXComputeTypeInput->addItem(QStringLiteral("int8_float16"), QStringLiteral("int8_float16"));
 	whisperXComputeTypeInput->addItem(QStringLiteral("int8"), QStringLiteral("int8"));
 	whisperXComputeTypeInput->addItem(QStringLiteral("float32"), QStringLiteral("float32"));
 	set_combo_current_data(whisperXComputeTypeInput, PluginConfig::getValue(
 		QString::fromLatin1(Transcription::CONFIG_WHISPERX_COMPUTE_TYPE), QStringLiteral("float16")), 0);
-	treeWidget->setItemWidget(whisperXComputeTypeItem, 1, whisperXComputeTypeInput);
+	whisperXForm->addRow(obsText("Settings.WhisperXComputeType"), whisperXComputeTypeInput);
 
-	auto *whisperXBatchSizeItem = new QTreeWidgetItem(advancedItem);
-	whisperXBatchSizeItem->setText(0, obsText("Settings.WhisperXBatchSize"));
-
-	QSpinBox *whisperXBatchSizeInput = new QSpinBox(treeWidget);
+	QSpinBox *whisperXBatchSizeInput = new QSpinBox(advancedContainer);
 	whisperXBatchSizeInput->setRange(1, 128);
 	whisperXBatchSizeInput->setValue(PluginConfig::getValue(
 		QString::fromLatin1(Transcription::CONFIG_WHISPERX_BATCH_SIZE), QStringLiteral("8")).toInt());
-	treeWidget->setItemWidget(whisperXBatchSizeItem, 1, whisperXBatchSizeInput);
+	whisperXForm->addRow(obsText("Settings.WhisperXBatchSize"), whisperXBatchSizeInput);
 
-	auto *localEmbeddingBackendItem = new QTreeWidgetItem(advancedItem);
-	localEmbeddingBackendItem->setText(0, obsText("Settings.LocalEmbeddingBackend"));
+	QFormLayout *localModelsForm = createSection(obsText("Settings.SectionLocalSemanticModels"));
 
-	QComboBox *localEmbeddingBackendInput = new QComboBox(treeWidget);
+	QComboBox *localEmbeddingBackendInput = new QComboBox(advancedContainer);
 	localEmbeddingBackendInput->addItem(QStringLiteral("llama.cpp native (in-process)"),
 						 QString::fromLatin1(Curation::Scoring::LOCAL_EMBEDDING_BACKEND_LLAMA_CPP));
 	localEmbeddingBackendInput->addItem(QStringLiteral("llama-server HTTP"),
 						 QString::fromLatin1(Curation::Scoring::LOCAL_EMBEDDING_BACKEND_LLAMA_SERVER));
 	set_combo_current_data(localEmbeddingBackendInput, Curation::Scoring::localEmbeddingBackendFromConfig(), 0);
-	treeWidget->setItemWidget(localEmbeddingBackendItem, 1, localEmbeddingBackendInput);
+	localModelsForm->addRow(obsText("Settings.LocalEmbeddingBackend"), localEmbeddingBackendInput);
 
-	auto *localEmbeddingEndpointItem = new QTreeWidgetItem(advancedItem);
-	localEmbeddingEndpointItem->setText(0, obsText("Settings.LocalEmbeddingEndpoint"));
-
-	QLineEdit *localEmbeddingEndpointInput = new QLineEdit(treeWidget);
+	QLineEdit *localEmbeddingEndpointInput = new QLineEdit(advancedContainer);
 	localEmbeddingEndpointInput->setPlaceholderText(QStringLiteral("http://127.0.0.1:8080/v1/embeddings"));
 	localEmbeddingEndpointInput->setText(PluginConfig::getValue(
 		QString::fromLatin1(Curation::Scoring::CONFIG_LOCAL_EMBEDDING_ENDPOINT),
 		QStringLiteral("http://127.0.0.1:8080/v1/embeddings")));
-	treeWidget->setItemWidget(localEmbeddingEndpointItem, 1, localEmbeddingEndpointInput);
+	localModelsForm->addRow(obsText("Settings.LocalEmbeddingEndpoint"), localEmbeddingEndpointInput);
 
-	auto *localEmbeddingModelItem = new QTreeWidgetItem(advancedItem);
-	localEmbeddingModelItem->setText(0, obsText("Settings.LocalEmbeddingModel"));
-
-	QLineEdit *localEmbeddingModelInput = new QLineEdit(treeWidget);
+	QLineEdit *localEmbeddingModelInput = new QLineEdit(advancedContainer);
 	localEmbeddingModelInput->setPlaceholderText(QStringLiteral("qwen3-embedding-0.6b-q8_0"));
 	localEmbeddingModelInput->setText(PluginConfig::getValue(
 		QString::fromLatin1(Curation::Scoring::CONFIG_LOCAL_EMBEDDING_MODEL_ID),
 		QStringLiteral("qwen3-embedding-0.6b-q8_0")));
-	treeWidget->setItemWidget(localEmbeddingModelItem, 1, localEmbeddingModelInput);
+	localModelsForm->addRow(obsText("Settings.LocalEmbeddingModel"), localEmbeddingModelInput);
 
-	auto *localRerankerBackendItem = new QTreeWidgetItem(advancedItem);
-	localRerankerBackendItem->setText(0, obsText("Settings.LocalRerankerBackend"));
-
-	QComboBox *localRerankerBackendInput = new QComboBox(treeWidget);
+	QComboBox *localRerankerBackendInput = new QComboBox(advancedContainer);
 	localRerankerBackendInput->addItem(QStringLiteral("llama.cpp native (in-process)"),
 						 QString::fromLatin1(Curation::Scoring::LOCAL_RERANKER_BACKEND_LLAMA_CPP));
 	localRerankerBackendInput->addItem(QStringLiteral("llama-server HTTP /v1/rerank"),
 						 QString::fromLatin1(Curation::Scoring::LOCAL_RERANKER_BACKEND_LLAMA_SERVER));
 	set_combo_current_data(localRerankerBackendInput, Curation::Scoring::localRerankerBackendFromConfig(), 0);
-	treeWidget->setItemWidget(localRerankerBackendItem, 1, localRerankerBackendInput);
+	localModelsForm->addRow(obsText("Settings.LocalRerankerBackend"), localRerankerBackendInput);
 
-	auto *localRerankerEndpointItem = new QTreeWidgetItem(advancedItem);
-	localRerankerEndpointItem->setText(0, obsText("Settings.LocalRerankerEndpoint"));
-
-	QLineEdit *localRerankerEndpointInput = new QLineEdit(treeWidget);
+	QLineEdit *localRerankerEndpointInput = new QLineEdit(advancedContainer);
 	localRerankerEndpointInput->setPlaceholderText(QStringLiteral("http://127.0.0.1:8081/v1/rerank"));
 	localRerankerEndpointInput->setText(PluginConfig::getValue(
 		QString::fromLatin1(Curation::Scoring::CONFIG_LOCAL_RERANKER_ENDPOINT),
 		QStringLiteral("http://127.0.0.1:8081/v1/rerank")));
-	treeWidget->setItemWidget(localRerankerEndpointItem, 1, localRerankerEndpointInput);
+	localModelsForm->addRow(obsText("Settings.LocalRerankerEndpoint"), localRerankerEndpointInput);
 
-	auto *localRerankerModelItem = new QTreeWidgetItem(advancedItem);
-	localRerankerModelItem->setText(0, obsText("Settings.LocalRerankerModel"));
-
-	QLineEdit *localRerankerModelInput = new QLineEdit(treeWidget);
+	QLineEdit *localRerankerModelInput = new QLineEdit(advancedContainer);
 	localRerankerModelInput->setPlaceholderText(QStringLiteral("qwen3-reranker-0.6b-q8_0"));
 	localRerankerModelInput->setText(PluginConfig::getValue(
 		QString::fromLatin1(Curation::Scoring::CONFIG_LOCAL_RERANKER_MODEL_ID),
 		QStringLiteral("qwen3-reranker-0.6b-q8_0")));
-	treeWidget->setItemWidget(localRerankerModelItem, 1, localRerankerModelInput);
+	localModelsForm->addRow(obsText("Settings.LocalRerankerModel"), localRerankerModelInput);
 
-	auto *feedbackRankerModelPathItem = new QTreeWidgetItem(advancedItem);
-	feedbackRankerModelPathItem->setText(0, QStringLiteral("Feedback ranker model path"));
+	QFormLayout *feedbackForm = createSection(obsText("Settings.SectionFeedbackLearning"));
 
-	QLineEdit *feedbackRankerModelPathInput = new QLineEdit(treeWidget);
+	QLineEdit *feedbackRankerModelPathInput = new QLineEdit(advancedContainer);
 	feedbackRankerModelPathInput->setPlaceholderText(
 		QStringLiteral("Optional feedback-ranker.json or GBDT ranker JSON path"));
 	feedbackRankerModelPathInput->setText(PluginConfig::getValue(
@@ -316,7 +303,7 @@ void open_settings_impl(void *private_data)
 	feedbackRankerModelPathInput->setToolTip(QStringLiteral(
 		"Leave empty to use the default feedback/feedback-ranker.json. This can point to a logistic_regression "
 		"or gbdt_tree_ensemble artifact produced by tools/train_feedback_ranker.py or tools/train_gbdt_ranker.py."));
-	treeWidget->setItemWidget(feedbackRankerModelPathItem, 1, feedbackRankerModelPathInput);
+	feedbackForm->addRow(obsText("Settings.FeedbackRankerModelPath"), feedbackRankerModelPathInput);
 
 	auto updateWhisperXFields = [whisperXBackendInput, whisperXPythonPathInput, whisperXWorkerPathInput,
 					   whisperXDeviceInput, whisperXFfmpegPathInput, whisperXModelInput, whisperXComputeTypeInput,
@@ -356,6 +343,18 @@ void open_settings_impl(void *private_data)
 								    : QStringLiteral("qwen3-reranker-0.6b-q8_0.gguf or full GGUF path"));
 	};
 
+	auto updateOpusModeFields = [opusUploadEnabledInput, apiKeyInput, brandTemplateIdInput,
+				    localExportDirectoryInput, localExportBrowseButton]() {
+		const bool opusEnabled = opusUploadEnabledInput->isChecked();
+		apiKeyInput->setEnabled(opusEnabled);
+		brandTemplateIdInput->setEnabled(opusEnabled);
+		localExportDirectoryInput->setEnabled(!opusEnabled);
+		localExportBrowseButton->setEnabled(!opusEnabled);
+	};
+
+	QObject::connect(opusUploadEnabledInput, &QCheckBox::toggled, &dialog,
+			 [&updateOpusModeFields](bool) { updateOpusModeFields(); });
+
 	QObject::connect(localEmbeddingBackendInput, qOverload<int>(&QComboBox::currentIndexChanged), &dialog,
 			 [&updateLocalEmbeddingFields](int) { updateLocalEmbeddingFields(); });
 	QObject::connect(localRerankerBackendInput, qOverload<int>(&QComboBox::currentIndexChanged), &dialog,
@@ -365,13 +364,13 @@ void open_settings_impl(void *private_data)
 	updateWhisperXFields();
 	updateLocalEmbeddingFields();
 	updateLocalRerankerFields();
+	updateOpusModeFields();
 
-	auto *purgeCachesItem = new QTreeWidgetItem(advancedItem);
-	purgeCachesItem->setText(0, obsText("Settings.PurgePluginCaches"));
+	QFormLayout *maintenanceForm = createSection(obsText("Settings.SectionMaintenance"));
 
-	QPushButton *purgeCachesButton = new QPushButton(obsText("Button.PurgePluginCaches"), treeWidget);
+	QPushButton *purgeCachesButton = new QPushButton(obsText("Button.PurgePluginCaches"), advancedContainer);
 	purgeCachesButton->setToolTip(obsText("Tooltip.PurgePluginCaches"));
-	treeWidget->setItemWidget(purgeCachesItem, 1, purgeCachesButton);
+	maintenanceForm->addRow(obsText("Settings.PurgePluginCaches"), purgeCachesButton);
 
 	QObject::connect(purgeCachesButton, &QPushButton::clicked, &dialog, [&dialog]() {
 		const QMessageBox::StandardButton answer =
@@ -393,31 +392,28 @@ void open_settings_impl(void *private_data)
 		QMessageBox::information(&dialog, title, obsText("Message.PurgePluginCachesDone").arg(removedKeys));
 	});
 
-	treeWidget->resizeColumnToContents(0);
+	advancedLayout->addStretch();
+	advancedScrollArea->setWidget(advancedContainer);
 
 	QPushButton *btn = new QPushButton(obsText("Button.Save"), &dialog);
 
 	mainLayout->addLayout(formLayout);
-	mainLayout->addWidget(treeWidget);
+	mainLayout->addWidget(advancedScrollArea, 1);
 	mainLayout->addWidget(btn);
-	mainLayout->addStretch();
-
-	QObject::connect(treeWidget, &QTreeWidget::itemClicked, [advancedItem](QTreeWidgetItem *item, int column) {
-		Q_UNUSED(column);
-
-		if (item == advancedItem)
-			advancedItem->setExpanded(!advancedItem->isExpanded());
-	});
 
 	QObject::connect(
 		btn, &QPushButton::clicked,
-		[&dialog, apiKeyInput, whisperModelInput, brandTemplateIdInput, resampleThresholdInput,
+		[&dialog, apiKeyInput, opusUploadEnabledInput, localExportDirectoryInput, videoQualityInput, whisperModelInput,
+		 brandTemplateIdInput, resampleThresholdInput,
 		 whisperXBackendInput, whisperXPythonPathInput, whisperXWorkerPathInput, whisperXDeviceInput,
 		 whisperXFfmpegPathInput, whisperXModelInput, whisperXComputeTypeInput, whisperXBatchSizeInput,
 		 localEmbeddingBackendInput, localEmbeddingEndpointInput, localEmbeddingModelInput,
 		 localRerankerBackendInput, localRerankerEndpointInput, localRerankerModelInput,
 		 feedbackRankerModelPathInput]() {
 			PluginConfig::setValue("opus_api_key", apiKeyInput->text().trimmed());
+			PluginConfig::setValue("opus_upload_enabled", opusUploadEnabledInput->isChecked() ? QStringLiteral("true") : QStringLiteral("false"));
+			PluginConfig::setValue("local_export_directory", localExportDirectoryInput->text().trimmed());
+			PluginConfig::setValue("video_quality", videoQualityInput->currentData().toString().trimmed());
 			PluginConfig::setValue("opus_brand_template_id", brandTemplateIdInput->text().trimmed());
 			const QString selectedWhisperModel = whisperModelInput->currentData().toString().trimmed();
 			PluginConfig::setValue("whisper_model_file", selectedWhisperModel);
@@ -465,6 +461,11 @@ void open_settings_impl(void *private_data)
 
 void ensure_opus_api_key_impl(QWidget *parent)
 {
+	if (!opus_upload_enabled()) {
+		blog(LOG_INFO, "Opus Clip upload is disabled; local export mode does not require an API key.");
+		return;
+	}
+
 	const QString apiKey = get_opus_api_key();
 
 	if (!apiKey.isEmpty()) {

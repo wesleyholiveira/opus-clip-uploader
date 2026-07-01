@@ -201,6 +201,26 @@ bool isViewerMessageResponsePrompt(const QString &prompt)
 	       promptContainsAll(prompt, {QStringLiteral("pergunta"), QStringLiteral("chat")});
 }
 
+bool isExplanationProfilePrompt(const QString &prompt)
+{
+	const QString lower = prompt.toLower();
+	return lower.contains(QStringLiteral("explanation")) ||
+	       lower.contains(QStringLiteral("explaining")) || lower.contains(QStringLiteral("explain")) ||
+	       lower.contains(QStringLiteral("explicação")) || lower.contains(QStringLiteral("explicacao")) ||
+	       lower.contains(QStringLiteral("explicar")) || lower.contains(QStringLiteral("concept")) ||
+	       lower.contains(QStringLiteral("conceito")) || lower.contains(QStringLiteral("method")) ||
+	       lower.contains(QStringLiteral("método")) || lower.contains(QStringLiteral("metodo")) ||
+	       lower.contains(QStringLiteral("language learning")) || lower.contains(QStringLiteral("learning german")) ||
+	       lower.contains(QStringLiteral("learn german")) || lower.contains(QStringLiteral("german learning")) ||
+	       lower.contains(QStringLiteral("german vocabulary")) || lower.contains(QStringLiteral("aprender alemão")) ||
+	       lower.contains(QStringLiteral("aprender alemao")) || lower.contains(QStringLiteral("alemão")) ||
+	       lower.contains(QStringLiteral("alemao")) || lower.contains(QStringLiteral("spaced repetition")) ||
+	       lower.contains(QStringLiteral("spaced repetitions")) || lower.contains(QStringLiteral("flashcard")) ||
+	       lower.contains(QStringLiteral("vocabulary retention")) || lower.contains(QStringLiteral("unlock method")) ||
+	       lower.contains(QStringLiteral("dolly")) || lower.contains(QStringLiteral("sensei")) ||
+	       lower.contains(QStringLiteral("academic"));
+}
+
 QString resolvePresetProfileId(const CurationSettings &settings, const QString &prompt)
 {
 	const QString explicitPreset = normalizePresetProfileId(settings.curationPreset);
@@ -214,20 +234,37 @@ QString resolvePresetProfileId(const CurationSettings &settings, const QString &
 				  QLatin1Char(' ') + prompt + QLatin1Char(' ') + settings.aiPrompt)
 					 .toLower();
 
+	const bool tutorialMetadata =
+		metadata.contains(QStringLiteral("tutorial")) || metadata.contains(QStringLiteral("step by step")) ||
+		metadata.contains(QStringLiteral("passo a passo")) || metadata.contains(QStringLiteral("how to configure")) ||
+		metadata.contains(QStringLiteral("como configurar"));
+	if (tutorialMetadata)
+		return QStringLiteral("tutorial_step");
+
+	const bool adviceMetadata =
+		metadata.contains(QStringLiteral("advice")) || metadata.contains(QStringLiteral("conselho")) ||
+		metadata.contains(QStringLiteral("recommendation")) || metadata.contains(QStringLiteral("recomendação")) ||
+		metadata.contains(QStringLiteral("recomendacao")) || metadata.contains(QStringLiteral("relationship")) ||
+		metadata.contains(QStringLiteral("relacionamento"));
+	if (adviceMetadata)
+		return QStringLiteral("advice_answer");
+
+	// Educational topics should resolve to the explanation profile even when the file title
+	// contains generic live/stream words. Otherwise Auto incorrectly falls into the viewer
+	// Q&A gate and rejects useful explanatory clips as missing a viewer-message cue.
+	if (isExplanationProfilePrompt(metadata))
+		return QStringLiteral("explanation");
+
 	const bool liveOrViewerMetadata =
 		metadata.contains(QStringLiteral("chat")) || metadata.contains(QStringLiteral("q&a")) ||
 		metadata.contains(QStringLiteral("viewer")) || metadata.contains(QStringLiteral("comment")) ||
-		metadata.contains(QStringLiteral("message")) || metadata.contains(QStringLiteral("live")) ||
-		metadata.contains(QStringLiteral("stream")) || metadata.contains(QStringLiteral("espectador")) ||
-		metadata.contains(QStringLiteral("comentário")) || metadata.contains(QStringLiteral("comentario")) ||
-		metadata.contains(QStringLiteral("mensagem")) || metadata.contains(QStringLiteral("pergunta"));
+		metadata.contains(QStringLiteral("message")) || metadata.contains(QStringLiteral("stream")) ||
+		metadata.contains(QStringLiteral("espectador")) || metadata.contains(QStringLiteral("comentário")) ||
+		metadata.contains(QStringLiteral("comentario")) || metadata.contains(QStringLiteral("mensagem")) ||
+		metadata.contains(QStringLiteral("pergunta"));
 
 	if (liveOrViewerMetadata)
 		return viewerMessageResponsePresetProfileId();
-
-	if (metadata.contains(QStringLiteral("advice")) || metadata.contains(QStringLiteral("conselho")) ||
-	    metadata.contains(QStringLiteral("relationship")) || metadata.contains(QStringLiteral("relacionamento")))
-		return QStringLiteral("advice_answer");
 
 	return autoPresetProfileId();
 }

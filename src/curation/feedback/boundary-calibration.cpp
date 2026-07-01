@@ -1,9 +1,13 @@
 #include "curation/feedback/boundary-calibration.hpp"
 
 #include "curation/feedback/curation-feedback-store.hpp"
+#include "curation/curation-preset-profile.hpp"
 
+#include <QHash>
 #include <QJsonObject>
 #include <QJsonValue>
+#include <QMutex>
+#include <QMutexLocker>
 
 #include <algorithm>
 #include <cmath>
@@ -43,16 +47,30 @@ static BoundaryCalibrationProfile fromObject(const QJsonObject &object)
 
 BoundaryCalibrationProfile BoundaryCalibration::profileForPreset(const QString &presetId)
 {
-	const QJsonObject root = CurationFeedbackStore::loadCalibrationRoot();
-	if (root.isEmpty())
-		return {};
+	const QString normalizedPreset = Curation::normalizePresetProfileId(presetId);
+	static QMutex cacheMutex;
+	static QHash<QString, BoundaryCalibrationProfile> cache;
+	{
+		QMutexLocker locker(&cacheMutex);
+		const auto it = cache.constFind(normalizedPreset);
+		if (it != cache.constEnd())
+			return it.value();
+	}
 
-	const QString normalizedPreset = presetId.trimmed().isEmpty() ? QStringLiteral("auto") : presetId.trimmed();
-	if (root.value(normalizedPreset).isObject())
-		return fromObject(root.value(normalizedPreset).toObject());
-	if (root.value(QStringLiteral("default")).isObject())
-		return fromObject(root.value(QStringLiteral("default")).toObject());
-	return {};
+	BoundaryCalibrationProfile profile;
+	const QJsonObject root = CurationFeedbackStore::loadCalibrationRootForProfile(normalizedPreset);
+	if (!root.isEmpty()) {
+		if (root.value(normalizedPreset).isObject())
+			profile = fromObject(root.value(normalizedPreset).toObject());
+		else if (root.value(QStringLiteral("profile")).isObject())
+			profile = fromObject(root.value(QStringLiteral("profile")).toObject());
+		else if (root.value(QStringLiteral("default")).isObject())
+			profile = fromObject(root.value(QStringLiteral("default")).toObject());
+	}
+
+	QMutexLocker locker(&cacheMutex);
+	cache.insert(normalizedPreset, profile);
+	return profile;
 }
 
 } // namespace Curation::Feedback

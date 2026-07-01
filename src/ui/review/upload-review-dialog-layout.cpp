@@ -30,7 +30,9 @@ extern "C" {
 #include <QPlainTextEdit>
 #include <QPointer>
 #include <QPushButton>
+#include <QItemSelectionModel>
 #include <QScrollArea>
+#include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QTableWidget>
 #include <QVBoxLayout>
@@ -89,6 +91,21 @@ UploadReviewDialog::UploadReviewDialog(const QString &videoPath, const CurationS
 				Q_UNUSED(ranges);
 				refreshClipTable(videoEditor ? videoEditor->clipRanges() : QVector<ClipDuration>{});
 			});
+		connect(videoEditor, &VideoMarkerEditor::rangeSelected, this, [this](int row) {
+			if (!clipTable || !videoEditor || row < 0)
+				return;
+
+			const int rangeCount = videoEditor->clipRanges().size();
+			if (row >= rangeCount || row >= clipTable->rowCount())
+				return;
+
+			const QSignalBlocker blocker(clipTable);
+			clipTable->setCurrentCell(row, 0, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+			clipTable->selectRow(row);
+			if (QTableWidgetItem *item = clipTable->item(row, 0))
+				clipTable->scrollToItem(item, QAbstractItemView::PositionAtCenter);
+			updateDiagnosticModeControls();
+		});
 		connect(clipTable, &QTableWidget::currentCellChanged, this, [this](int currentRow, int, int, int) {
 			if (!videoEditor || currentRow < 0)
 				return;

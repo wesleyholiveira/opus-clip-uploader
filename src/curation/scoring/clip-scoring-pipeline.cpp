@@ -50,7 +50,7 @@ ClipScoringResult ClipScoringPipeline::score(const RecordingTranscript &transcri
 
 	const bool viewerPreset = isViewerMessagePreset(options);
 	Curation::Feedback::FeedbackRangeMemory feedbackMemory;
-	if (viewerPreset && !options.videoPath.trimmed().isEmpty()) {
+	if (!options.videoPath.trimmed().isEmpty() && !options.scoring.presetId.trimmed().isEmpty()) {
 		feedbackMemory = Curation::Feedback::CurationFeedbackStore::loadRangeMemoryForVideo(
 			options.videoPath, options.scoring.presetId, options.contentIds);
 	}
@@ -97,7 +97,7 @@ ClipScoringResult ClipScoringPipeline::score(const RecordingTranscript &transcri
 					 28);
 	}
 
-	if (viewerPreset && feedbackMemory.loaded) {
+	if (feedbackMemory.loaded) {
 		FeedbackGuidedCandidateStage feedbackStage;
 		candidates = feedbackStage.appendCandidates(index, std::move(candidates), feedbackMemory,
 							    feedbackGuidedStageOptionsFromOptions(options));
@@ -254,11 +254,11 @@ ClipScoringResult ClipScoringPipeline::score(const RecordingTranscript &transcri
 						 options.videoPath);
 	}
 	candidates = viewerArcGate.apply(std::move(candidates), arcGateOptions);
-	if (viewerPreset) {
+	if (feedbackMemory.loaded) {
 		blog(LOG_INFO,
-		     "[clip-cropper] Feedback-guided candidate gate summary. video=%s total=%d usable=%d rejected=%d positive=%d learned=%d",
-		     options.videoPath.toUtf8().constData(), static_cast<int>(candidates.size()),
-		     usableCandidateCount(candidates), rejectedCandidateCount(candidates),
+		     "[clip-cropper] Feedback-guided candidate gate summary. video=%s preset=%s total=%d usable=%d rejected=%d positive=%d learned=%d",
+		     options.videoPath.toUtf8().constData(), options.scoring.presetId.toUtf8().constData(),
+		     static_cast<int>(candidates.size()), usableCandidateCount(candidates), rejectedCandidateCount(candidates),
 		     positiveFeedbackCandidateCount(candidates), learnedFeedbackAcceptedCandidateCount(candidates));
 		blog(LOG_INFO, "[clip-cropper] Feedback-guided candidate rejection diagnostics. video=%s %s",
 		     options.videoPath.toUtf8().constData(),
@@ -268,10 +268,9 @@ ClipScoringResult ClipScoringPipeline::score(const RecordingTranscript &transcri
 	const QVector<ClipCandidate> rejectedAfterArcGate =
 		topRejectedCandidatesForDiagnostics(candidates, 12, feedbackMemory.loaded ? &feedbackMemory : nullptr);
 	const QVector<ClipCandidate> relaxedRejectedAfterArcGate =
-		viewerPreset && feedbackMemory.loaded
-			? topRejectedCandidatesForDiagnostics(candidates, 12, &feedbackMemory,
-							      DiagnosticReviewedRangeMode::RelaxedExploration)
-			: rejectedAfterArcGate;
+		feedbackMemory.loaded ? topRejectedCandidatesForDiagnostics(candidates, 12, &feedbackMemory,
+								      DiagnosticReviewedRangeMode::RelaxedExploration)
+				      : rejectedAfterArcGate;
 	candidates.erase(std::remove_if(candidates.begin(), candidates.end(), isRejectedCandidate), candidates.end());
 	const int suppressedExistingExactSeeds =
 		suppressExistingReviewRangeExactSeeds(candidates, options.existingReviewRanges);
@@ -284,7 +283,7 @@ ClipScoringResult ClipScoringPipeline::score(const RecordingTranscript &transcri
 	}
 	int suppressedReviewedExactSeeds = 0;
 	int suppressedReviewedFeedbackCandidates = 0;
-	if (viewerPreset && feedbackMemory.loaded) {
+	if (feedbackMemory.loaded) {
 		suppressedReviewedExactSeeds = suppressAlreadyReviewedExactPositiveSeeds(candidates, feedbackMemory);
 		if (suppressedReviewedExactSeeds > 0) {
 			blog(LOG_INFO,
@@ -308,7 +307,7 @@ ClipScoringResult ClipScoringPipeline::score(const RecordingTranscript &transcri
 		return result;
 	PipelineProgress::report(options, QStringLiteral("Selecting final marker suggestions..."), 92);
 
-	if (candidates.isEmpty() && viewerPreset && feedbackMemory.loaded &&
+	if (candidates.isEmpty() && feedbackMemory.loaded &&
 	    (suppressedExistingExactSeeds > 0 || suppressedReviewedExactSeeds > 0 ||
 	     suppressedReviewedFeedbackCandidates > 0)) {
 		blog(LOG_INFO,
@@ -317,7 +316,7 @@ ClipScoringResult ClipScoringPipeline::score(const RecordingTranscript &transcri
 		     suppressedReviewedFeedbackCandidates);
 	}
 
-	if (candidates.isEmpty() && viewerPreset && feedbackMemory.loaded && rejectedAfterArcGate.isEmpty() &&
+	if (candidates.isEmpty() && feedbackMemory.loaded && rejectedAfterArcGate.isEmpty() &&
 	    suppressedExistingExactSeeds <= 0 && suppressedReviewedExactSeeds <= 0 &&
 	    suppressedReviewedFeedbackCandidates <= 0) {
 		// Positive feedback ranges are ground-truth examples, not fresh suggestions. Replaying
@@ -352,7 +351,7 @@ ClipScoringResult ClipScoringPipeline::score(const RecordingTranscript &transcri
 		const int feedbackSuppressedAfterArcGate =
 			feedbackSuppressedCandidateCount(candidatesBeforeRejectedErase);
 		const int rejectedAfterArcGateCount = rejectedCandidateCount(candidatesBeforeRejectedErase);
-		if (viewerPreset && feedbackMemory.loaded && diagnostics.size() < 4 &&
+		if (feedbackMemory.loaded && diagnostics.size() < 4 &&
 		    (feedbackSuppressedAfterArcGate > 0 || rejectedAfterArcGateCount > 0 ||
 		     suppressedExistingExactSeeds > 0 || suppressedReviewedExactSeeds > 0)) {
 			PipelineProgress::report(
@@ -482,7 +481,7 @@ ClipScoringResult ClipScoringPipeline::score(const RecordingTranscript &transcri
 			     rerankMs, boundaryMs, gateMs, static_cast<long long>(noveltyTimer.elapsed()));
 		}
 
-		if (candidates.isEmpty() && diagnostics.size() < 6 && viewerPreset && feedbackMemory.loaded) {
+		if (candidates.isEmpty() && diagnostics.size() < 6 && feedbackMemory.loaded) {
 			const int beforeCoverageDiagnostics = diagnostics.size();
 			QVector<ClipCandidate> coverageDiagnostics =
 				buildExhaustionCoverageDiagnostics(index, options, feedbackMemory, 6);
@@ -519,10 +518,10 @@ ClipScoringResult ClipScoringPipeline::score(const RecordingTranscript &transcri
 	int feedbackDpSelectedCount = 0;
 	QVector<ClipCandidate> feedbackDpSelectedCandidates;
 	QVector<ClipCandidate> rejectedAfterFinalFeedbackGate;
-	if (viewerPreset && feedbackMemory.loaded) {
+	if (feedbackMemory.loaded) {
 		FeedbackConsistencyGate feedbackGate;
 		FeedbackConsistencyGateOptions feedbackGateOptions;
-		feedbackGateOptions.viewerMessagePreset = true;
+		feedbackGateOptions.viewerMessagePreset = viewerPreset;
 		candidates = feedbackGate.apply(std::move(candidates), index, feedbackMemory, feedbackGateOptions);
 		FeedbackTrainedRanker trainedRanker;
 		candidates = trainedRanker.apply(std::move(candidates), index, feedbackMemory, options.scoring.presetId,
@@ -575,7 +574,7 @@ ClipScoringResult ClipScoringPipeline::score(const RecordingTranscript &transcri
 		}
 	}
 
-	if (viewerPreset && feedbackMemory.loaded) {
+	if (feedbackMemory.loaded) {
 		QVector<ClipCandidate> diagnostics = rejectedAfterArcGate;
 		appendUniqueDiagnosticCandidates(diagnostics, relaxedRejectedAfterArcGate, 12);
 		for (const ClipCandidate &candidate : rejectedAfterFinalFeedbackGate) {

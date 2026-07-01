@@ -3,6 +3,7 @@
 #include "ui/review/diagnostics-dialogs.hpp"
 #include "ui/review/upload-review-dialog-utils.hpp"
 #include "ui/video-marker-editor.hpp"
+#include "curation/curation-preset-profile.hpp"
 #include "curation/scoring/cheap-clip-scorer.hpp"
 #include "curation/scoring/exchange-arc-boundary-refiner.hpp"
 #include "curation/scoring/transcript-index.hpp"
@@ -43,6 +44,7 @@ void UploadReviewDialog::captureInitialSemanticSuggestion()
 	lastSemanticSuggestion.contentIdAliases.clear();
 	lastSemanticSuggestion.source = QStringLiteral("initial_review_suggestion");
 	lastSemanticSuggestion.summary = QStringLiteral("initial semantic suggestion ranges");
+	lastSemanticSuggestionTrainingProfile = Curation::resolvePresetProfileId(initialSettings, initialSettings.aiPrompt);
 	diagnosticReviewStates.clear();
 	diagnosticEditedRanges.clear();
 	diagnosticFeedbackSuggestedIndices.clear();
@@ -79,6 +81,8 @@ void UploadReviewDialog::ensureReviewFeedbackSnapshot(const QString &source)
 								   : source.trimmed();
 	lastSemanticSuggestion.summary = QStringLiteral("baseline marker list captured for feedback");
 	lastSemanticSuggestion.candidateDiagnostics = preservedDiagnostics;
+	const CurationSettings settings = curationSettings();
+	lastSemanticSuggestionTrainingProfile = Curation::resolvePresetProfileId(settings, settings.aiPrompt);
 	explicitReviewDecisions.clear();
 	explicitReviewFeedbackDetails.clear();
 	boundaryFeedbackSaved = false;
@@ -103,6 +107,59 @@ int UploadReviewDialog::suggestedIndexForRange(const ClipDuration &range) const
 		}
 	}
 	return bestScore >= 0.18 ? bestIndex : -1;
+}
+
+
+QString UploadReviewDialog::pendingExplicitFeedbackDecisionForRange(const ClipDuration &range, int *outSuggestedIndex) const
+{
+	if (outSuggestedIndex)
+		*outSuggestedIndex = -1;
+	if (!reviewRangeValid(range))
+		return {};
+
+	for (auto it = explicitReviewDecisions.constBegin(); it != explicitReviewDecisions.constEnd(); ++it) {
+		const int suggestedIndex = it.key();
+		if (suggestedIndex < 0 || suggestedIndex >= lastSemanticSuggestion.ranges.size())
+			continue;
+		const ClipDuration pendingRange = lastSemanticSuggestion.ranges.at(suggestedIndex);
+		if (!reviewRangeValid(pendingRange))
+			continue;
+
+		const double similarity = reviewRangeSimilarity(range, pendingRange);
+		const double boundaryDistance = std::fabs(range.startSec - pendingRange.startSec) +
+							std::fabs(range.endSec - pendingRange.endSec);
+		const double minDuration = std::min(range.endSec - range.startSec,
+							 pendingRange.endSec - pendingRange.startSec);
+		const bool sameRange = similarity >= 0.94 || boundaryDistance <= 6.0 ||
+					   (minDuration > 0.0 &&
+					    std::fabs(reviewRangeCenter(range) - reviewRangeCenter(pendingRange)) <= 8.0 &&
+					    reviewOverlapSec(range, pendingRange) >= minDuration * 0.90);
+		if (!sameRange)
+			continue;
+
+		if (outSuggestedIndex)
+			*outSuggestedIndex = suggestedIndex;
+		return it.value().trimmed();
+	}
+
+	for (auto it = explicitReviewFeedbackDetails.constBegin(); it != explicitReviewFeedbackDetails.constEnd(); ++it) {
+		const QJsonObject detail = it.value();
+		const double startSec = detail.value(QStringLiteral("range_start_sec"))
+						.toDouble(std::numeric_limits<double>::quiet_NaN());
+		const double endSec = detail.value(QStringLiteral("range_end_sec"))
+					      .toDouble(std::numeric_limits<double>::quiet_NaN());
+		const ClipDuration detailRange{startSec, endSec};
+		if (!reviewRangeValid(detailRange))
+			continue;
+		if (reviewRangeSimilarity(range, detailRange) < 0.94)
+			continue;
+		if (outSuggestedIndex)
+			*outSuggestedIndex = it.key();
+		const QString decision = detail.value(QStringLiteral("decision")).toString().trimmed();
+		return decision.isEmpty() ? QStringLiteral("pending") : decision;
+	}
+
+	return {};
 }
 
 int UploadReviewDialog::ensureFeedbackSuggestionForRange(const ClipDuration &range, const QString &source)
@@ -255,8 +312,9 @@ QJsonObject UploadReviewDialog::reevaluateFeedbackRange(const ClipDuration &rang
 
 	const CurationSettings settings = curationSettings();
 	Curation::Scoring::CheapScoringContext context;
-	context.presetId = settings.curationPreset.trimmed().isEmpty() ? QStringLiteral("viewer_message_response")
-								       : settings.curationPreset.trimmed();
+	context.presetId = !lastSemanticSuggestionTrainingProfile.trimmed().isEmpty()
+					   ? lastSemanticSuggestionTrainingProfile.trimmed()
+					   : Curation::resolvePresetProfileId(settings, settings.aiPrompt);
 	context.mainTarget = settings.topicKeywords.join(QStringLiteral(", ")).trimmed();
 	context.transcriptionLanguage = settings.transcriptionLanguage;
 	context.sourceLanguage = settings.sourceLanguage;
@@ -504,11 +562,24 @@ void UploadReviewDialog::setDiagnosticReviewDecision(int row, const QString &dec
 		refreshDiagnosticCandidateTable();
 		return;
 	}
+	int pendingSuggestedIndex = -1;
+	const QString pendingDecision = this->pendingExplicitFeedbackDecisionForRange(range, &pendingSuggestedIndex);
+	if (!pendingDecision.trimmed().isEmpty()) {
+		diagnosticReviewStates.insert(diagnosticIndex, pendingDecision.trimmed().toLower());
+		if (pendingSuggestedIndex >= 0)
+			diagnosticFeedbackSuggestedIndices.insert(diagnosticIndex, pendingSuggestedIndex);
+		blog(LOG_INFO,
+		     "Ignored duplicate diagnostic feedback decision for pending marker range. video=%s row=%d diagnosticIndex=%d decision=%s previous=%s suggestionIndex=%d range=%.2f-%.2f",
+		     videoPath.toUtf8().constData(), row, diagnosticIndex, normalizedDecision.toUtf8().constData(),
+		     pendingDecision.toUtf8().constData(), pendingSuggestedIndex, range.startSec, range.endSec);
+		refreshDiagnosticCandidateTable();
+		return;
+	}
 	{
 		const CurationSettings settings = curationSettings();
-		QString presetId = settings.curationPreset.trimmed();
-		if (presetId.isEmpty())
-			presetId = QStringLiteral("viewer_message_response");
+		QString presetId = !lastSemanticSuggestionTrainingProfile.trimmed().isEmpty()
+					 ? lastSemanticSuggestionTrainingProfile.trimmed()
+					 : Curation::resolvePresetProfileId(settings, settings.aiPrompt);
 		QStringList contentIds;
 		const QString fileContentId = Curation::Feedback::CurationFeedbackStore::fileContentId(videoPath);
 		if (!fileContentId.isEmpty())
@@ -661,9 +732,9 @@ void UploadReviewDialog::setClipReviewDecision(int row, const QString &decision)
 	const QString normalizedDecision = decision.trimmed().toLower();
 	{
 		const CurationSettings settings = curationSettings();
-		QString presetId = settings.curationPreset.trimmed();
-		if (presetId.isEmpty())
-			presetId = QStringLiteral("viewer_message_response");
+		QString presetId = !lastSemanticSuggestionTrainingProfile.trimmed().isEmpty()
+					 ? lastSemanticSuggestionTrainingProfile.trimmed()
+					 : Curation::resolvePresetProfileId(settings, settings.aiPrompt);
 		QStringList contentIds;
 		const QString fileContentId = Curation::Feedback::CurationFeedbackStore::fileContentId(videoPath);
 		if (!fileContentId.isEmpty())
@@ -779,33 +850,95 @@ void UploadReviewDialog::saveBoundaryFeedback(const QString &eventName)
 	if (lastSemanticSuggestion.contentId.trimmed().isEmpty())
 		lastSemanticSuggestion.contentId = Curation::Feedback::CurationFeedbackStore::fileContentId(videoPath);
 	CurationSettings settings = curationSettings();
+	if (!lastSemanticSuggestionTrainingProfile.trimmed().isEmpty())
+		settings.curationPreset = lastSemanticSuggestionTrainingProfile.trimmed();
+	else if (Curation::normalizePresetProfileId(settings.curationPreset) == Curation::autoPresetProfileId())
+		settings.curationPreset = Curation::resolvePresetProfileId(settings, settings.aiPrompt);
 	settings.reviewSettingsKey = currentReviewSettingsKey();
-	QVector<ClipDuration> userRanges = videoEditor->clipRanges();
-	if (isDefaultNoMarkerPlaceholderRange(videoEditor && videoEditor->hasExplicitClipMarkers(),
-								 videoEditor ? videoEditor->durationMilliseconds() : 0, userRanges))
-		userRanges.clear();
+
+	// Persist only the ranges that received an explicit user decision in this pending
+	// session.  The review dialog may contain many previously accepted markers; writing
+	// the whole visible marker list again on review_finished duplicates positive samples
+	// and biases boundary calibration.  Explicit decisions are remapped to a compact
+	// per-save snapshot so appendReviewFeedback() cannot infer extra accepted/added rows
+	// from unrelated visible markers.
+	Curation::Feedback::FeedbackSuggestionSnapshot explicitSuggestion;
+	explicitSuggestion.contentId = lastSemanticSuggestion.contentId;
+	explicitSuggestion.contentIdAliases = lastSemanticSuggestion.contentIdAliases;
+	explicitSuggestion.source = lastSemanticSuggestion.source.trimmed().isEmpty()
+						      ? QStringLiteral("explicit_review_feedback")
+						      : lastSemanticSuggestion.source;
+	explicitSuggestion.summary = lastSemanticSuggestion.summary.trimmed().isEmpty()
+						       ? QStringLiteral("explicit review feedback only")
+						       : lastSemanticSuggestion.summary;
+
+	QMap<int, QString> decisionsToSave;
+	QMap<int, QJsonObject> feedbackToSave;
+	QVector<int> savedOriginalSuggestedIndices;
 	for (auto it = explicitReviewDecisions.constBegin(); it != explicitReviewDecisions.constEnd(); ++it) {
-		const int suggestedIndex = it.key();
+		const int originalIndex = it.key();
 		const QString decision = it.value().trimmed().toLower();
-		if (decision != QStringLiteral("liked"))
+		if (decision.isEmpty())
 			continue;
-		if (suggestedIndex < 0 || suggestedIndex >= lastSemanticSuggestion.ranges.size())
+		if (originalIndex < 0 || originalIndex >= lastSemanticSuggestion.ranges.size()) {
+			blog(LOG_WARNING,
+			     "Skipping explicit feedback with stale suggestion index. video=%s event=%s index=%d decision=%s ranges=%d",
+			     videoPath.toUtf8().constData(), eventName.toUtf8().constData(), originalIndex,
+			     decision.toUtf8().constData(), static_cast<int>(lastSemanticSuggestion.ranges.size()));
 			continue;
-		const ClipDuration acceptedRange = lastSemanticSuggestion.ranges.at(suggestedIndex);
-		bool alreadyPresent = false;
-		for (const ClipDuration &range : std::as_const(userRanges)) {
-			if (reviewRangeSimilarity(range, acceptedRange) >= 0.99) {
-				alreadyPresent = true;
-				break;
+		}
+
+		const int newIndex = explicitSuggestion.ranges.size();
+		const ClipDuration range = lastSemanticSuggestion.ranges.at(originalIndex);
+		explicitSuggestion.ranges.append(range);
+		savedOriginalSuggestedIndices.append(originalIndex);
+		decisionsToSave.insert(newIndex, decision);
+
+		QJsonObject structuredFeedback = explicitReviewFeedbackDetails.value(originalIndex);
+		if (!structuredFeedback.isEmpty())
+			structuredFeedback.insert(QStringLiteral("suggested_index"), newIndex);
+		feedbackToSave.insert(newIndex, structuredFeedback);
+
+		bool copiedDiagnostic = false;
+		for (const QJsonValue &value : std::as_const(lastSemanticSuggestion.candidateDiagnostics)) {
+			if (!value.isObject())
+				continue;
+			QJsonObject diagnostic = value.toObject();
+			if (diagnostic.value(QStringLiteral("index")).toInt(-1) != originalIndex)
+				continue;
+			diagnostic.insert(QStringLiteral("index"), newIndex);
+			explicitSuggestion.candidateDiagnostics.append(diagnostic);
+			copiedDiagnostic = true;
+		}
+		if (!copiedDiagnostic) {
+			QJsonObject diagnostic = diagnosticForRange(range, originalIndex);
+			if (!diagnostic.isEmpty()) {
+				diagnostic.insert(QStringLiteral("index"), newIndex);
+				explicitSuggestion.candidateDiagnostics.append(diagnostic);
 			}
 		}
-		if (!alreadyPresent)
-			userRanges.append(acceptedRange);
 	}
+
+	if (decisionsToSave.isEmpty()) {
+		blog(LOG_INFO,
+		     "Skipping boundary feedback save because all pending explicit decisions were stale. video=%s event=%s pending=%d",
+		     videoPath.toUtf8().constData(), eventName.toUtf8().constData(),
+		     static_cast<int>(explicitReviewDecisions.size()));
+		return;
+	}
+
 	if (Curation::Feedback::CurationFeedbackStore::appendReviewFeedback(
-		    videoPath, settings, lastSemanticSuggestion, userRanges, eventName, {}, explicitReviewDecisions,
-		    explicitReviewFeedbackDetails)) {
-		boundaryFeedbackSaved = true;
+		    videoPath, settings, explicitSuggestion, QVector<ClipDuration>{}, eventName, {}, decisionsToSave,
+		    feedbackToSave)) {
+		for (int originalIndex : std::as_const(savedOriginalSuggestedIndices)) {
+			explicitReviewDecisions.remove(originalIndex);
+			explicitReviewFeedbackDetails.remove(originalIndex);
+		}
+		boundaryFeedbackSaved = explicitReviewDecisions.isEmpty();
+		blog(LOG_INFO,
+		     "Saved explicit-only boundary feedback. video=%s event=%s saved=%d remainingPending=%d",
+		     videoPath.toUtf8().constData(), eventName.toUtf8().constData(),
+		     static_cast<int>(decisionsToSave.size()), static_cast<int>(explicitReviewDecisions.size()));
 	}
 }
 

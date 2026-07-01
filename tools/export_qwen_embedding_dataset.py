@@ -27,7 +27,7 @@ from build_feedback_ranker_dataset import (
 )
 
 from training_common import load_transcript_indexes, range_text_from_transcripts
-from candidate_snapshot_join import enrich_feedback_rows_with_snapshots, load_candidate_snapshot_index
+from candidate_snapshot_join import enrich_feedback_rows_with_snapshots, load_candidate_snapshot_index, normalize_profile, row_profile
 
 POSITIVE_DECISIONS = {"accepted", "approved_adjusted", "added_by_user"}
 NEGATIVE_DECISIONS = {"rejected", "adjusted"}
@@ -52,6 +52,7 @@ def row_meta(row: dict[str, Any]) -> dict[str, Any]:
         "line_no": row.get("__line_no"),
         "decision": row.get("decision"),
         "preset": row.get("preset"),
+        "training_profile": row_profile(row),
         "video_file_name": row.get("video_file_name"),
         "content_id": row.get("content_id"),
         "candidate_source": row.get("candidate_source"),
@@ -60,9 +61,12 @@ def row_meta(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def build_triplets(rows: list[dict[str, Any]], *, min_text_chars: int, max_text_chars: int, max_triplets_per_group: int, transcripts: dict[str, list[dict[str, Any]]] | None = None) -> list[dict[str, Any]]:
+def build_triplets(rows: list[dict[str, Any]], *, min_text_chars: int, max_text_chars: int, max_triplets_per_group: int, transcripts: dict[str, list[dict[str, Any]]] | None = None, profile: str | None = None) -> list[dict[str, Any]]:
+    selected_profile = normalize_profile(profile) if profile else None
     grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
+        if selected_profile and row_profile(row) != selected_profile:
+            continue
         if not is_calibratable(row) or is_ignored_or_weak_training_signal(row) or is_default_no_marker_placeholder(row):
             continue
         text = clean_text(candidate_text(row), max_text_chars)
@@ -113,6 +117,7 @@ def main() -> int:
     parser.add_argument("--transcript-path", type=Path, action="append", default=[], help="Transcript JSON/JSONL file or directory used to reconstruct candidate text when feedback rows do not contain text.")
     parser.add_argument("--candidate-snapshot-path", type=Path, action="append", default=[],
                         help="candidate-snapshots.jsonl file or feedback directory used to enrich rows with original text/features/scores before transcript fallback.")
+    parser.add_argument("--profile", help="Training profile/preset id to export independently.")
     args = parser.parse_args()
 
     rows = load_jsonl(args.feedback_jsonl)
@@ -127,6 +132,7 @@ def main() -> int:
         max_text_chars=args.max_text_chars,
         max_triplets_per_group=args.max_triplets_per_group,
         transcripts=load_transcript_indexes(args.transcript_path) if args.transcript_path else {},
+        profile=args.profile,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("w", encoding="utf-8") as handle:

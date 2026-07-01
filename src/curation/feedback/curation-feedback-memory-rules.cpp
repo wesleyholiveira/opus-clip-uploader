@@ -1,4 +1,5 @@
 #include "curation/feedback/curation-feedback-detail.hpp"
+#include "curation/curation-preset-profile.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -142,9 +143,11 @@ bool isDefaultNoMarkerPlaceholderFeedback(const QJsonObject &record)
 
 bool presetMatchesFeedback(const QString &recordPreset, const QString &requestedPreset)
 {
-	const QString rowPreset = recordPreset.trimmed().isEmpty() ? QStringLiteral("auto") : recordPreset.trimmed();
-	const QString preset = requestedPreset.trimmed().isEmpty() ? QStringLiteral("auto") : requestedPreset.trimmed();
-	return rowPreset == preset || rowPreset == QStringLiteral("auto") || preset == QStringLiteral("auto");
+	const QString rowPreset = Curation::normalizePresetProfileId(recordPreset);
+	const QString preset = Curation::normalizePresetProfileId(requestedPreset);
+	if (preset == QStringLiteral("auto"))
+		return rowPreset == QStringLiteral("auto");
+	return rowPreset == preset;
 }
 
 bool rangeLooksLikeColdStartPrelude(const ClipDuration &range)

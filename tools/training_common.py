@@ -60,7 +60,7 @@ def group_id_for_item(item: dict[str, Any]) -> str:
     metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
     return "::".join(
         str(metadata.get(key) or "")
-        for key in ("video_file_name", "preset")
+        for key in ("video_file_name", "training_profile")
     )
 
 

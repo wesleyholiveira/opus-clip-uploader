@@ -83,9 +83,32 @@ def _range_similarity(a: tuple[float, float] | None, b: tuple[float, float] | No
     return max(0.0, min(1.0, iou * 0.48 + coverage * 0.26 + start_score * 0.16 + end_score * 0.10))
 
 
+def normalize_profile(value: Any) -> str:
+    text = str(value or "auto").strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "": "auto",
+        "viewer": "viewer_message_response",
+        "chat": "viewer_message_response",
+        "q&a": "viewer_message_response",
+        "qa": "viewer_message_response",
+        "viewer_response": "viewer_message_response",
+        "viewer_message": "viewer_message_response",
+        "advice": "advice_answer",
+        "emotional": "emotional_reaction",
+        "story": "story_arc",
+        "hot_take": "opinion",
+        "tutorial": "tutorial_step",
+    }
+    return aliases.get(text, text or "auto")
+
+
+def row_profile(row: dict[str, Any]) -> str:
+    return normalize_profile(row.get("training_profile") or row.get("preset") or "auto")
+
+
 def _snapshot_index_key(row: dict[str, Any]) -> tuple[str, str, int] | None:
     video_id = str(row.get("video_id") or "")
-    preset = str(row.get("preset") or "auto")
+    preset = row_profile(row)
     suggested = row.get("suggested_index")
     if suggested is None:
         suggested = row.get("matched_user_index")
@@ -159,7 +182,7 @@ def merge_snapshot_into_feedback(row: dict[str, Any], snapshot: dict[str, Any]) 
     merged.setdefault("candidate_snapshot_line_no", snapshot.get("__snapshot_line_no"))
 
     passthrough_if_missing = [
-        "scores", "classifier_labels", "evidence", "candidate_source", "candidate_final_score",
+        "training_profile", "scores", "classifier_labels", "evidence", "candidate_source", "candidate_final_score",
         "final_score", "rejection_reason", "diagnostic_kind", "selected_rank", "snapshot_kind",
         "text_preview", "timed_text_preview", "candidate_text",
     ]

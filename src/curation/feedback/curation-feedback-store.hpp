@@ -33,6 +33,16 @@ struct FeedbackRangeSignal {
 	bool ignoreForTraining = false;
 };
 
+
+struct FeedbackPurgeResult {
+	bool attempted = false;
+	bool succeeded = false;
+	int recordsRead = 0;
+	int recordsRemoved = 0;
+	QString backupPath;
+	QString error;
+};
+
 struct FeedbackRangeMemory {
 	QVector<FeedbackRangeSignal> negativeRanges;
 	QVector<FeedbackRangeSignal> positiveRanges;
@@ -71,14 +81,22 @@ public:
 					 const QMap<int, QJsonObject> &explicitFeedbackBySuggestedIndex = {});
 
 	static QString feedbackDirectoryPath();
+	static QString feedbackProfileDirectoryPath(const QString &profileId);
 	static QString feedbackJsonlPath();
 	static QString candidateSnapshotsJsonlPath();
 	static QString calibrationJsonPath();
+	static QString calibrationJsonPathForProfile(const QString &profileId);
+	static QString feedbackRankerModelPathForProfile(const QString &profileId, const QString &fileName = {});
 	static QJsonObject loadCalibrationRoot();
+	static QJsonObject loadCalibrationRootForProfile(const QString &profileId);
 	static QString transcriptContentId(const RecordingTranscript &transcript);
 	static QString fileContentId(const QString &videoPath);
 	static FeedbackRangeMemory loadRangeMemoryForVideo(const QString &videoPath, const QString &presetId,
 							   const QStringList &contentIds = QStringList{});
+
+	static FeedbackPurgeResult removeFeedbackForRanges(const QString &videoPath, const CurationSettings &settings,
+							     const QVector<ClipDuration> &ranges,
+							     const QString &reason = {});
 };
 
 } // namespace Curation::Feedback

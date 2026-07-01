@@ -427,7 +427,7 @@ Estados importantes:
 |---|---|
 | `semanticSuggestionInProgress` | Evita disparar sugestão concorrente. |
 | `diagnosticReviewMode` | Tabela está mostrando candidatos rejeitados/diagnósticos. |
-| `boundaryFeedbackSaved` | Evita salvar feedback duplicado no mesmo ciclo. |
+| `boundaryFeedbackSaved` | Indica que não há decisões explícitas pendentes para salvar. |
 | `feedbackTranscriptLoaded` | Indica que transcript necessário para feedback foi carregado. |
 | `restoredReviewedPositiveMarkersFromMemory` | Indica recuperação de ranges aprovados previamente. |
 
@@ -1306,6 +1306,8 @@ Feedback influencia por:
 - calibrar boundary;
 - fornecer dataset offline para ranker.
 
+O salvamento final da revisão persiste somente decisões explícitas pendentes. Ele não regrava todos os markers visíveis como aceitos no `review_finished`, porque isso duplica exemplos positivos já avaliados e contamina a calibração. Depois que `appendReviewFeedback()` confirma a gravação, os maps de decisões explícitas pendentes são removidos da sessão; se o usuário editar/avaliar outro marker depois, apenas essa nova decisão será salva.
+
 ### 24.5 Conflitos
 
 Se um range aparece como positivo e negativo, `curation-feedback-memory-conflicts.cpp` tenta resolver considerando overlap, source, decisão explícita e pares original/corrigido.
@@ -2148,7 +2150,280 @@ Esse treino LoRA exige dependências Python pesadas (`torch`, `transformers`, `d
 O agregador sempre escreve um manifesto em:
 
 ```text
-artifacts/training/training-run-manifest.json
+artifacts/training/<profile>/training-run-manifest.json
 ```
 
-Esse manifesto registra feedback usado, snapshots usados, transcript paths, datasets gerados, modelos gerados e o modo escolhido. Ele é útil para reproduzir experimentos e evitar confundir datasets/modelos de execuções diferentes.
+Além disso, ele materializa entradas filtradas por profile em:
+
+```text
+artifacts/training/<profile>/reports/boundary-feedback.filtered.jsonl
+artifacts/training/<profile>/reports/candidate-snapshots.filtered.jsonl
+```
+
+Esses arquivos são os que os passos seguintes usam para calibração, dataset tabular, GBDT e exporters Qwen. Os arquivos runtime brutos continuam globais e append-only:
+
+```text
+feedback/boundary-feedback.jsonl
+feedback/candidate-snapshots.jsonl
+```
+
+O manifesto registra tanto os caminhos brutos (`feedback`, `source_candidate_snapshot_paths`) quanto os caminhos filtrados (`filtered_feedback`, `candidate_snapshot_paths`) e as contagens em `profile_input_stats`. Isso deixa claro se um profile está realmente treinando só com seus próprios registros.
+
+### 38.10 Perfis independentes de preset
+
+O treinamento agora deve ser tratado por **profile de preset**, não como um modelo único global por padrão. O profile é o id normalizado do preset, por exemplo:
+
+```text
+viewer_message_response
+advice_answer
+emotional_reaction
+explanation
+story_arc
+opinion
+tutorial_step
+```
+
+O agregador aceita `--profile` e grava os artefatos em uma pasta independente:
+
+```bat
+python tools\train_model.py ^
+  --model current ^
+  --profile viewer_message_response
+```
+
+Saída padrão:
+
+```text
+artifacts/training/viewer_message_response/
+  datasets/
+  models/
+  reports/
+  training-run-manifest.json
+```
+
+Para outro preset/profile:
+
+```bat
+python tools\train_model.py ^
+  --model current ^
+  --profile emotional_reaction
+```
+
+Saída:
+
+```text
+artifacts/training/emotional_reaction/
+  datasets/
+  models/
+  reports/
+  training-run-manifest.json
+```
+
+Isso evita misturar labels de critérios editoriais diferentes no mesmo dataset pequeno. O `boundary-feedback.jsonl` e o `candidate-snapshots.jsonl` podem continuar globais, mas o agregador agora cria arquivos filtrados por profile em `reports/` e passa esses arquivos filtrados para as tools.
+
+Exemplo de manifesto esperado:
+
+```json
+{
+  "feedback": ".../feedback/boundary-feedback.jsonl",
+  "filtered_feedback": ".../artifacts/training/explanation/reports/boundary-feedback.filtered.jsonl",
+  "source_candidate_snapshot_paths": [".../feedback/candidate-snapshots.jsonl"],
+  "candidate_snapshot_paths": [".../artifacts/training/explanation/reports/candidate-snapshots.filtered.jsonl"],
+  "profile_input_stats": {
+    "source_feedback_rows": 500,
+    "filtered_feedback_rows": 42,
+    "source_candidate_snapshot_rows": 500,
+    "filtered_candidate_snapshot_rows": 42
+  }
+}
+```
+
+Se `candidate_snapshot_paths` apontar para o arquivo global bruto, isso é um bug. Ele deve apontar para o arquivo filtrado usado no treino; o bruto fica em `source_candidate_snapshot_paths`.
+
+O runtime C++ também foi preparado para carregar artefatos por profile. Para um profile `viewer_message_response`, ele procura primeiro:
+
+```text
+%APPDATA%/obs-studio/plugin_config/clip-cropper/feedback/profiles/viewer_message_response/boundary-calibration.json
+%APPDATA%/obs-studio/plugin_config/clip-cropper/feedback/profiles/viewer_message_response/feedback-ranker-gbdt.json
+%APPDATA%/obs-studio/plugin_config/clip-cropper/feedback/profiles/viewer_message_response/feedback-ranker.json
+```
+
+Depois cai no fallback global antigo:
+
+```text
+%APPDATA%/obs-studio/plugin_config/clip-cropper/feedback/boundary-calibration.json
+%APPDATA%/obs-studio/plugin_config/clip-cropper/feedback/feedback-ranker.json
+```
+
+Também há override por config para o ranker:
+
+```text
+feedback_ranker_model_path.viewer_message_response
+feedback_ranker_model_path.emotional_reaction
+feedback_ranker_model_path
+```
+
+A ordem é: override específico do profile, artefato no diretório `profiles/<profile>/`, override global, artefato global.
+
+Para instalar automaticamente os artefatos gerados no diretório runtime do plugin:
+
+```bat
+python tools\train_model.py ^
+  --model current ^
+  --profile viewer_message_response ^
+  --install-runtime-artifacts
+```
+
+Isso copia, quando existirem:
+
+```text
+reports/boundary-calibration.json -> feedback/profiles/<profile>/boundary-calibration.json
+models/feedback-ranker.json -> feedback/profiles/<profile>/feedback-ranker.json
+models/feedback-ranker-gbdt.json -> feedback/profiles/<profile>/feedback-ranker-gbdt.json
+```
+
+Use `--plugin-profile-dir` se quiser instalar em outro diretório.
+
+### Profile isolation fix for Auto and educational explanation clips
+
+Recent feedback runs showed that `auto` could be resolved as `viewer_message_response` only because the video title contained live/stream metadata. That made explanatory clips, such as language-learning/spaced-repetition content, go through the viewer-message arc gate and get rejected as `incomplete_viewer_arc` / `missing_viewer_message_cue`.
+
+The runtime now resolves Auto more conservatively:
+
+- Explicit preset selection still wins.
+- Explicit viewer-message prompts still resolve to `viewer_message_response`.
+- Educational/topic keywords such as `learning German`, `spaced repetition`, `flashcards`, `vocabulary`, `method`, `academic`, `explain/explanation` resolve to `explanation`, even if the file title contains `LIVE`.
+- Ambiguous Auto remains `auto`; it is no longer forced into `viewer_message_response`.
+
+Feedback persistence now stores the resolved profile in `training_profile`, so a review session started from Auto but resolved to `explanation` trains the `explanation` profile instead of polluting `auto` or `viewer_message_response`.
+
+Runtime feedback memory now loads only exact profile matches. Historical rows with `training_profile=auto` are not injected into `viewer_message_response` or `explanation`. Regenerate/approve new feedback after this patch to build clean per-profile memories.
+
+### Migrating legacy Auto feedback into a concrete profile
+
+Older builds could save educational explanation sessions as `training_profile=auto` when the user started from Auto. Do not hand-edit `boundary-feedback.jsonl`. Use the migration tool to create an audited copy:
+
+```bat
+python tools\migrate_auto_feedback_profile.py ^
+  "%APPDATA%\obs-studio\plugin_config\clip-cropper\feedback\boundary-feedback.jsonl" ^
+  --target-profile explanation ^
+  --include-video-name "Learning German LIVE" ^
+  -o artifacts\training\explanation\reports\boundary-feedback.auto-to-explanation.jsonl ^
+  --report artifacts\training\explanation\reports\boundary-feedback.auto-to-explanation.report.json
+```
+
+The tool preserves the original file and annotates migrated rows with:
+
+```text
+profile_migration_original_preset
+profile_migration_original_training_profile
+profile_migration_from_profile
+profile_migration_to_profile
+profile_migration_reason
+```
+
+Rows rejected only because Auto incorrectly resolved to the viewer-message gate keep their audit trail, but their viewer-specific rejection reason is rewritten to `wrong_profile_viewer_gate` in the migrated copy. That prevents explanation calibration from learning `missing_viewer_message_cue` as if it were a real explanation defect.
+
+Then regenerate the explanation calibration from the migrated copy:
+
+```bat
+python tools\train_model.py ^
+  --model calibration ^
+  --profile explanation ^
+  --feedback artifacts\training\explanation\reports\boundary-feedback.auto-to-explanation.jsonl ^
+  --install-runtime-artifacts
+```
+
+Only replace the global `boundary-feedback.jsonl` after reviewing the report. The safer workflow is to keep the raw file untouched and use the migrated JSONL as the input for that one training/calibration run.
+
+### Removing persisted feedback when a reviewed marker is deleted
+
+When a marker is removed from the review table, the plugin now tries to remove matching persisted rows from `feedback/boundary-feedback.jsonl` for the current video and resolved training profile. This lets the user undo a previous accepted/adjusted/disliked decision by deleting that marker instead of leaving stale feedback that would keep influencing future suggestions.
+
+The rewrite is conservative and auditable:
+
+- it matches only the current `video_id` and resolved `training_profile`;
+- it compares the removed marker against `user_*`, `generated_*`, diagnostic original range, and structured feedback range fields;
+- it ignores `removed_unrated` rows;
+- it creates a backup before rewriting, named like `boundary-feedback.before-marker-delete-YYYYMMDD-HHMMSS-ms.jsonl`.
+
+`candidate-snapshots.jsonl` remains append-only. Snapshots without matching feedback are harmless and are ignored by profile-filtered training inputs unless referenced by the filtered feedback rows.
+
+### 43. GBDT experimental com negativos diagnósticos
+
+O treino GBDT agora é utilizável para testes com o volume atual de feedback do profile `explanation`.
+
+Diferença importante em relação ao dataset tabular antigo:
+
+```text
+calibration
+  ignora ignored_diagnostic / weak_negative
+
+GBDT ranker
+  pode usar ignored_diagnostic, disliked e weak_negative como negativos fracos
+```
+
+Isso é necessário porque o GBDT aprende ranking. Ele precisa ver não apenas os cortes bons, mas também candidatos que pareciam plausíveis para o pipeline e mesmo assim foram descartados pelo reviewer.
+
+O comando recomendado é:
+
+```bat
+python tools\train_model.py ^
+  --model gbdt ^
+  --profile explanation ^
+  --feedback "%APPDATA%\obs-studio\plugin_config\clip-cropper\feedback\boundary-feedback.jsonl" ^
+  --candidate-snapshot-path "%APPDATA%\obs-studio\plugin_config\clip-cropper\feedback\candidate-snapshots.jsonl" ^
+  --install-runtime-artifacts
+```
+
+O `--candidate-snapshot-path` é recomendado porque enriquece o feedback com scores/evidence/texto capturados quando o candidato foi mostrado. Sem snapshots o treino ainda roda, mas terá menos features para alguns feedbacks antigos.
+
+O modelo gerado é instalado em:
+
+```text
+%APPDATA%\obs-studio\plugin_config\clip-cropper\feedback\profiles\explanation\feedback-ranker-gbdt.json
+```
+
+O runtime procura primeiro `feedback-ranker-gbdt.json` no diretório do profile. Se existir, ele carrega o GBDT em **modo soft/shadow**: calcula `feedback_trained_ranker_score`, registra `feedback_trained_ranker_model_type:gbdt_tree_ensemble` e aplica apenas boosts/penalties leves no score final. O GBDT experimental não faz hard reject, não marca `feedback_trained_ranker_accept`/`strong_accept` e não bypassa gates estruturais. Se o arquivo não existir, o runtime cai para `feedback-ranker.json` logístico.
+
+Para smoke test com pouco dado:
+
+```bat
+python tools\train_model.py ^
+  --model gbdt ^
+  --profile explanation ^
+  --feedback boundary-feedback-34-calibration-safe-deduped.jsonl ^
+  --allow-small-data
+```
+
+O script `tools/train_gbdt_ranker.py` inclui negativos fracos por padrão. Para treinar sem eles:
+
+```bat
+python tools\train_gbdt_ranker.py boundary-feedback.jsonl ^
+  -o feedback-ranker-gbdt.json ^
+  --profile explanation ^
+  --exclude-weak-negatives
+```
+
+
+### 44. Configuração de qualidade de vídeo e settings sem Tree View
+
+A tela de configurações não usa mais `QTreeWidget` para os itens avançados. Os campos avançados agora ficam em seções com `QGroupBox` + `QFormLayout` dentro de uma área rolável, evitando labels truncadas e mantendo os campos de WhisperX, modelos locais, ranker e manutenção mais legíveis.
+
+Também foi adicionada a configuração **Video quality / Qualidade do vídeo**:
+
+```text
+High
+  copia os streams originais com FFmpeg (-c copy), sem recompressão visual.
+  Mantém a qualidade original, mas os cortes podem depender dos keyframes do arquivo.
+
+Medium
+  mantém o comportamento anterior: H.264 CRF 23 + AAC 160k.
+  É o padrão para preservar compatibilidade e tamanho equilibrado.
+
+Low
+  cria um MP4 480p bem comprimido: H.264 CRF 35 + áudio AAC 64k.
+  Útil quando tamanho importa mais que qualidade visual.
+```
+
+A opção é salva em `video_quality` e é aplicada sempre que o plugin precisa criar um vídeo via FFmpeg: exportação local, upload otimizado por ranges e upload independente de candidatos.

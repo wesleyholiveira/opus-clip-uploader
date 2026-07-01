@@ -4,6 +4,7 @@
 #include "ui/review/upload-review-dialog-utils.hpp"
 #include "ui/ui-common.hpp"
 #include "curation/curation-preset.hpp"
+#include "curation/curation-preset-profile.hpp"
 #include "ui/video-marker-editor.hpp"
 #include "utils/config.hpp"
 
@@ -191,6 +192,7 @@ void UploadReviewDialog::applySemanticClipSuggestionResult(const ReviewScoringPr
 		lastSemanticSuggestion.summary = result.summary;
 		lastSemanticSuggestion.source = QStringLiteral("semantic_review_diagnostics_only");
 		lastSemanticSuggestion.candidateDiagnostics = result.candidateDiagnostics;
+		lastSemanticSuggestionTrainingProfile = result.resolvedProfileId;
 		diagnosticReviewStates.clear();
 		diagnosticEditedRanges.clear();
 		diagnosticFeedbackSuggestedIndices.clear();
@@ -218,6 +220,7 @@ void UploadReviewDialog::applySemanticClipSuggestionResult(const ReviewScoringPr
 	lastSemanticSuggestion.summary = result.summary;
 	lastSemanticSuggestion.source = QStringLiteral("semantic_review_button");
 	lastSemanticSuggestion.candidateDiagnostics = result.candidateDiagnostics;
+	lastSemanticSuggestionTrainingProfile = result.resolvedProfileId;
 	diagnosticReviewStates.clear();
 	diagnosticEditedRanges.clear();
 	diagnosticFeedbackSuggestedIndices.clear();
@@ -246,9 +249,9 @@ bool UploadReviewDialog::restoreReviewedPositiveMarkersFromFeedbackIfEmpty(const
 		return false;
 
 	const CurationSettings settings = curationSettings();
-	QString presetId = settings.curationPreset.trimmed();
+	QString presetId = Curation::resolvePresetProfileId(settings, settings.aiPrompt);
 	if (presetId.isEmpty())
-		presetId = QStringLiteral("viewer_message_response");
+		presetId = Curation::autoPresetProfileId();
 	QStringList contentIds;
 	const QString fileContentId = Curation::Feedback::CurationFeedbackStore::fileContentId(videoPath);
 	if (!fileContentId.isEmpty())
@@ -266,6 +269,7 @@ bool UploadReviewDialog::restoreReviewedPositiveMarkersFromFeedbackIfEmpty(const
 	lastSemanticSuggestion.source = QStringLiteral("restored_reviewed_positive_markers");
 	lastSemanticSuggestion.summary = QStringLiteral("reviewed positive markers restored from feedback memory");
 	lastSemanticSuggestion.candidateDiagnostics = QJsonArray{};
+	lastSemanticSuggestionTrainingProfile = presetId;
 	explicitReviewDecisions.clear();
 	explicitReviewFeedbackDetails.clear();
 	diagnosticReviewStates.clear();

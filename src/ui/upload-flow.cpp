@@ -47,8 +47,9 @@ void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCance
 		  QLabel *uploadStatusLabel, const QString &apiKey, const CurationSettings &curationSettings)
 {
 	const QStringList recordingPaths = get_recording_paths_for_upload();
+	const bool useOpusUpload = opus_upload_enabled();
 
-	if (apiKey.trimmed().isEmpty()) {
+	if (useOpusUpload && apiKey.trimmed().isEmpty()) {
 		QMessageBox::warning(dialog, title, obsText("Message.ConfigureApiKeyBeforeUpload"));
 
 		btnUpload->setEnabled(true);
@@ -110,7 +111,8 @@ void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCance
 
 	if (uploadStatusLabel) {
 		uploadStatusLabel->show();
-		uploadStatusLabel->setText(obsText("Status.PreparingUpload").arg(state->paths.size()));
+		uploadStatusLabel->setText(useOpusUpload ? obsText("Status.PreparingUpload").arg(state->paths.size())
+							 : obsText("Status.PreparingLocalExport").arg(state->paths.size()));
 	}
 
 	resize_upload_dialog(dialog, true);
@@ -133,7 +135,7 @@ void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCance
 		}
 
 		if (currentStatus.trimmed().isEmpty()) {
-			currentStatus = obsText("Status.UploadingVideos")
+			currentStatus = (useOpusUpload ? obsText("Status.UploadingVideos") : obsText("Status.LocalExportingVideos"))
 						.arg(qMin(state->completed + state->running, state->paths.size()))
 						.arg(state->paths.size());
 		}
@@ -159,9 +161,11 @@ void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCance
 			QMessageBox::information(dialog, title, obsText("Message.UploadCanceled"));
 		} else if (state->failed > 0) {
 			QMessageBox::warning(dialog, title,
-					     obsText("Message.UploadFinishedWithFailures").arg(state->failed));
+					     useOpusUpload ? obsText("Message.UploadFinishedWithFailures").arg(state->failed)
+							 : obsText("Message.LocalExportFinishedWithFailures").arg(state->failed));
 		} else {
-			QMessageBox::information(dialog, title, obsText("Message.UploadSuccess"));
+			QMessageBox::information(dialog, title,
+						 useOpusUpload ? obsText("Message.UploadSuccess") : obsText("Message.LocalExportSuccess"));
 		}
 
 		mark_progress_window_finished(dialog);
@@ -230,7 +234,8 @@ void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCance
 			FileInfo fInfo(recordingPath.toStdString());
 			fInfo.parseFile();
 
-			blog(LOG_INFO, "Uploading part %d/%d to Opus Clip - Path: %s, Name: %s, Mime: %s", index + 1,
+			blog(LOG_INFO, "%s part %d/%d - Path: %s, Name: %s, Mime: %s",
+			     useOpusUpload ? "Uploading to Opus Clip" : "Exporting locally", index + 1,
 			     state->paths.size(), fInfo.filePath.c_str(), fInfo.fileName.c_str(),
 			     fInfo.mimeType.c_str());
 
@@ -293,12 +298,15 @@ void start_upload(QDialog *dialog, QPushButton *btnUpload, QPushButton *btnCance
 			QObject::connect(
 				worker, &UploadWorker::finished, dialog,
 				[=](const QString &projectId) mutable {
-					blog(LOG_INFO, "Opus Clip project created: %s", projectId.toUtf8().constData());
+					blog(LOG_INFO, "%s: %s",
+					     useOpusUpload ? "Opus Clip project created" : "Local export completed",
+					     projectId.toUtf8().constData());
 
 					state->running--;
 					state->completed++;
 					state->progress[index] = 100;
-					state->statusMessages[index] = obsText("Status.ProjectCreated").arg(projectId);
+					state->statusMessages[index] = useOpusUpload ? obsText("Status.ProjectCreated").arg(projectId)
+									      : obsText("Status.LocalExportSaved").arg(projectId);
 
 					updateProgress();
 

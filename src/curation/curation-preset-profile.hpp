@@ -78,5 +78,6 @@ CurationPresetProfile presetProfileForId(const QString &presetId);
 CurationPresetProfile presetProfileForSettings(const CurationSettings &settings, const QString &prompt = QString());
 QString presetProfileLabelForId(const QString &presetId);
 bool isViewerMessageResponsePrompt(const QString &prompt);
+bool isExplanationProfilePrompt(const QString &prompt);
 
 } // namespace Curation

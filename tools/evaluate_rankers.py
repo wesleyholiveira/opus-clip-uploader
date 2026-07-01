@@ -122,11 +122,13 @@ def main() -> int:
     parser.add_argument("model_json", type=Path)
     parser.add_argument("--dataset", type=Path)
     parser.add_argument("--feedback-jsonl", type=Path)
-    parser.add_argument("--preset", default="viewer_message_response")
+    parser.add_argument("--preset", default="viewer_message_response", help="Legacy alias for --profile.")
+    parser.add_argument("--profile", help="Training profile/preset id. Defaults to --preset.")
     args = parser.parse_args()
 
     model = json.loads(args.model_json.read_text(encoding="utf-8"))
-    dataset = load_dataset(args.dataset, args.feedback_jsonl, args.preset)
+    profile = args.profile or args.preset
+    dataset = load_dataset(args.dataset, args.feedback_jsonl, profile)
     result = evaluate(model, dataset)
     print(json.dumps(result, indent=2, ensure_ascii=False, sort_keys=True))
     return 0 if result.get("examples", 0) else 1
